@@ -12,10 +12,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from crater.db.models import Chunk, SchematicNode
-from crater.db.session import get_session
-from crater.schematic.graph import get_graph_for_document, trace_path_in_document
-from crater.schematic.highlight import highlight_nodes
+from backend.db.models import Chunk, SchematicNode
+from backend.db.session import get_session
+from backend.schematic.graph import get_graph_for_document, trace_path_in_document
+from backend.schematic.highlight import highlight_nodes
 
 router = APIRouter(prefix="/schematics", tags=["schematics"])
 
