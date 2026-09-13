@@ -1,1052 +1,200 @@
-# AI Technical Intelligence
+# Crater.ai — Phases 1, 2 & 3
 
-> **An AI technical expert for complex physical products.**
+This is the scaffold for **Phase 1 (Product Knowledge)**, **Phase 2
+(Diagnostic Agent)**, and **Phase 3 (Schematic Intelligence)** of the
+Crater.ai roadmap (`PLAN.md` §33): turning raw manuals/schematics into a
+queryable, revision-aware **Product Brain**, with hybrid retrieval, a
+structured troubleshooting loop, and a real component/connection graph
+extracted from diagram images, all on top of each other. It's deliberately
+generic — no single product family is hardcoded — so the same pipeline can
+onboard multiple manufacturers/products later just by creating new
+`Product`/`Revision` rows and ingesting their docs.
 
-AI support for products where the answer cannot be found by simply
-searching a FAQ.
+Not in scope yet (later phases): visualization UI beyond a single
+highlighted image (Phase 4), expert interviews (Phase 5), digital twin /
+simulation (Phase 6-7), camera/voice (Phase 9).
 
-The system turns manuals, schematics, service history, expert knowledge,
-images, and troubleshooting procedures into a multimodal **Product
-Brain** that can reason through technical problems and guide technicians
-toward validated solutions.
+## What's implemented
 
-------------------------------------------------------------------------
+### Phase 1 — Product Knowledge
 
-## The Problem
+| plan.md requirement | Where |
+|---|---|
+| PDF ingestion | `ingestion/pdf_loader.py` |
+| OCR (scanned pages + diagram captions) | `ingestion/ocr.py` |
+| Table extraction | `ingestion/pdf_loader.py` + `ingestion/chunking.py` |
+| Components / relationships / procedures | `knowledge/component_extraction.py` (Claude-based structured extraction) |
+| Revision modeling | `db/models.py` — every Document/Component/Procedure/FailureMode hangs off `Revision`, not just `Product` |
+| Hybrid retrieval (semantic + BM25 + metadata/revision filters + rerank) | `retrieval/hybrid.py`, `retrieval/vector_store.py`, `retrieval/bm25.py`, `retrieval/reranker.py` |
 
-Simple products have simple support.
+Diagram-aware retrieval in Phase 1 means: embedded images are extracted,
+OCR'd for label/terminal text, and stored as searchable "diagram" chunks.
+Turning those same images into an actual component/wire graph is Phase 3,
+below.
 
-Complex physical products do not.
+### Phase 2 — Diagnostic Agent
 
-Consider:
+| plan.md §6 / §33 requirement | Where |
+|---|---|
+| Diagnostic state (symptoms, observations, measurements, hypotheses, eliminated hypotheses, evidence, confidence) | `diagnostics/schema.py` |
+| Hypothesis generation + question selection (one LLM call, since they're entangled) | `diagnostics/agent.py::_run_llm_turn`, `diagnostics/prompts.py` |
+| Evidence retrieval | reuses Phase 1's `retrieval/hybrid.py::hybrid_retrieve`, scoped to the session's product/revision |
+| Structured troubleshooting loop, persisted across turns | `db/models.py::DiagnosticSession` (JSON state blob) + `diagnostics/agent.py::run_turn` / `start_session` |
+| Safety architecture (§25): never invent specs, escalate on low confidence or turn limits, flag safety notes | `diagnostics/prompts.py` (LLM-side rules) + `diagnostics/agent.py::_apply_forced_safeguards` (deterministic guardrail — enforced even if the LLM disagrees) |
+| API | `api/routes/diagnostics.py`: `POST /diagnose/start`, `POST /diagnose/{id}/respond`, `GET /diagnose/{id}` |
 
--   CNC machines
--   industrial pumps
--   HVAC systems
--   welding equipment
--   packaging machinery
--   EV chargers
--   industrial automation
--   compressors
--   electrical equipment
+**Deliberately not yet built** (later phases per plan.md §33): schematic
+component-graph tracing feeding hypothesis generation (Phase 3), visual
+highlighting of components (Phase 4), the "Capture Rajesh" expert-interview
+pipeline that would populate richer FailureMode data (Phase 5), and any
+actual digital-twin/simulation testing of hypotheses (Phase 6-7) — right now
+`overall_confidence` comes only from the LLM's read of retrieved evidence
+and structured Component/FailureMode rows, not from simulated verification.
 
-When something goes wrong, the answer may depend on:
+### Phase 3 — Schematic Intelligence
 
--   an exact model and hardware revision
--   a wiring diagram
--   a component relationship
--   a compatibility matrix
--   a service procedure
--   a previous failure
--   a senior technician's experience
+| plan.md §5 / §33 requirement | Where |
+|---|---|
+| Schematic parsing (treat the image as a structured system, not just OCR text) | `schematic/vision_extraction.py` — sends the diagram image itself to Claude's vision input |
+| Component extraction (symbols, labels, terminals) | same call, structured via `schematic/schema.py::SchematicExtractionResult` |
+| Connection graph (wires between components) | `db/models.py::SchematicNode` / `SchematicEdge`, persisted by `schematic/graph.py::persist_schematic` |
+| Signal tracing | `schematic/graph.py::trace_path` (pure BFS over labels) / `trace_path_in_document` (DB-backed wrapper) |
+| Visual highlighting | `schematic/highlight.py::highlight_nodes` — draws labeled boxes on the source image for a given component |
+| API | `api/routes/schematics.py`: `GET /schematics/{document_id}/graph`, `GET /schematics/{document_id}/trace`, `GET /schematics/{document_id}/highlight` |
 
-Today, that knowledge is fragmented across:
+Wired into ingestion: `ingestion/pipeline.py::ingest_pdf` now runs schematic
+extraction on every `diagram`-type chunk after Phase 1's text-based component
+extraction has run, so a `SchematicNode` can link to its matching Phase-1
+`Component` row by exact label match (case-insensitive) when one exists.
 
-``` text
-Manuals
-Schematics
-PDFs
-CAD
-Service tickets
-Maintenance records
-Photos
-Videos
-WhatsApp conversations
-Senior technicians
+**Honest limits**: node/edge extraction is a single vision-LLM call per
+diagram image, not true CV-based symbol/wire detection — quality depends
+entirely on how legible the source scan is and how well Claude's vision
+input reads it. Bounding boxes are the model's own estimate, not
+pixel-precise. `trace_path` only knows about wires the model actually
+extracted from that one image; a signal that continues onto a different
+page/diagram won't be traced across documents yet — that's a natural
+Phase 4 (or a schematic-graph-merging pass) extension.
+
+## Architecture
+
+```
+PDF ─▶ pdf_loader (text/tables/images) ─▶ chunking ─▶ SQL (Product Brain) + Qdrant
+                                                              │
+                                                    knowledge/component_extraction
+                                                    (Claude: components, relations,
+                                                     procedures, linked to source chunk)
+
+Question ─▶ hybrid_retrieve
+              ├─ semantic_search (Qdrant, filtered by product/revision/doc_type)
+              ├─ bm25_search     (SQL corpus, same filters)
+              ├─ reciprocal rank fusion
+              └─ rerank (Claude cross-encoder-style scoring)
+            ─▶ evidence-grounded chunks (source doc, page, chunk type)
+
+Diagram chunk ─▶ schematic/vision_extraction (Claude vision: nodes + edges)
+                    ─▶ schematic/graph.persist_schematic (SchematicNode/Edge rows,
+                                                           linked to Phase 1 Component by label)
+                    ─▶ schematic/graph.trace_path (signal tracing)
+                    ─▶ schematic/highlight.highlight_nodes (annotated image)
 ```
 
-The result is a support bottleneck:
+## Setup
 
-``` text
-Customer problem
-      ↓
-Support engineer
-      ↓
-Needs senior expert
-      ↓
-Expert investigates
-      ↓
-Technician repairs
-      ↓
-Knowledge disappears
+```bash
+pip install -e ".[dev]"
+cp .env.example .env   # fill in ANTHROPIC_API_KEY at minimum
+docker run -p 6333:6333 qdrant/qdrant   # or point QDRANT_URL at a hosted instance
 ```
 
-The company keeps solving the same problem repeatedly.
+System dependency: `tesseract-ocr` must be installed and on PATH (or set
+`TESSERACT_CMD` in `.env`) for the OCR fallback to work.
 
-------------------------------------------------------------------------
+## Running
 
-# The Idea
+```bash
+# API
+uvicorn crater.api.main:app --reload
 
-## Build an AI Technical Expert
-
-Instead of building another "chat with your PDF" application, this
-project creates a **product-specific technical intelligence layer**.
-
-A manufacturer provides its technical knowledge.
-
-The system builds a structured, multimodal representation of the
-product.
-
-Technicians can then ask:
-
-> "Why won't this motor start?"
-
-> "Which terminal should I test?"
-
-> "Is this part compatible with the 2023 revision?"
-
-> "Show me where the pressure sensor is."
-
-> "What should I inspect next?"
-
-> "This is what I see through the camera. What does it mean?"
-
-The AI does not merely retrieve a paragraph.
-
-It can run a **diagnostic workflow**.
-
-------------------------------------------------------------------------
-
-# Core Concept
-
-``` text
-                   COMPLEX PRODUCT
-                          │
-        ┌─────────────────┼─────────────────┐
-        ↓                 ↓                 ↓
-      Manuals          Schematics        Service Data
-        │                 │                 │
-        └─────────────────┼─────────────────┘
-                          ↓
-                 MULTIMODAL INGESTION
-                          │
-            ┌─────────────┼─────────────┐
-            ↓             ↓             ↓
-          Text          Visual       Structured
-        knowledge      knowledge      knowledge
-            │             │             │
-            └─────────────┼─────────────┘
-                          ↓
-                    PRODUCT BRAIN
-                          │
-                    TECHNICAL AGENT
-                          │
-          ┌───────────────┼────────────────┐
-          ↓               ↓                ↓
-        Chat            Voice            Camera
-          │               │                │
-          └───────────────┼────────────────┘
-                          ↓
-                      TECHNICIAN
-                          │
-                          ↓
-                    REPAIR OUTCOME
-                          │
-                          ↓
-                    SYSTEM LEARNS
+# CLI ingestion (no server needed)
+python scripts/ingest_docs.py path/to/manual.pdf \
+    --manufacturer "Acme" --family "CNC" --model "CNC-500X" \
+    --revision "Rev C" --doc-type manual --title "CNC-500X Service Manual"
 ```
 
-------------------------------------------------------------------------
+Then:
+```bash
+curl -X POST localhost:8000/query -H "Content-Type: application/json" \
+  -d '{"question": "How do I check the drive enable signal?", "product_id": "..."}'
 
-# What Makes This Different?
+# Phase 2: start a troubleshooting session, then keep feeding it observations
+curl -X POST localhost:8000/diagnose/start -H "Content-Type: application/json" \
+  -d '{"product_id": "...", "revision_id": "...", "symptom": "Motor will not start"}'
 
-## Not Generic Customer Support
+curl -X POST localhost:8000/diagnose/<session_id>/respond -H "Content-Type: application/json" \
+  -d '{"input": "Error code E207 is displayed", "input_kind": "observation"}'
 
-Zendesk-style support is excellent for:
-
--   order status
--   returns
--   account issues
--   simple product questions
-
-This project targets the other category:
-
-> **Products where solving the problem requires genuine technical
-> expertise.**
-
-------------------------------------------------------------------------
-
-## Not Just Predictive Maintenance
-
-Predictive maintenance asks:
-
-> **"Will this machine fail?"**
-
-This project asks:
-
-> **"The machine has a problem. What is happening, why is it happening,
-> what should I check, and how should I resolve it?"**
-
-Predictive-maintenance systems can eventually become inputs to the
-system.
-
-``` text
-Predictive maintenance
-        ↓
-"Pump P42 is abnormal."
-        ↓
-Technical Intelligence
-        ↓
-Understand product configuration
-        ↓
-Analyze manuals + history
-        ↓
-Run diagnosis
-        ↓
-Guide technician
-        ↓
-Confirm repair
+# Phase 3: inspect a schematic's extracted graph, trace a path, get a highlighted image
+curl localhost:8000/schematics/<document_id>/graph
+curl "localhost:8000/schematics/<document_id>/trace?from_label=Power&to_label=Motor"
+curl "localhost:8000/schematics/<document_id>/highlight?label=K17" --output k17_highlighted.png
 ```
 
-------------------------------------------------------------------------
+Each response's `state.current_step` tells you what to do next: ask the
+technician a `question`, request an `action` (a measurement/test), give a
+`conclusion` (evidence-cited recommendation), or `escalate` to a human
+expert. The session stops accepting `/respond` calls once it's concluded or
+escalated — start a new session to keep troubleshooting a different symptom.
 
-# Example
+## Tests
 
-### Technician
-
-> Spindle won't start.
-
-### AI
-
-Possible causes:
-
-1.  Power supply
-2.  Safety interlock
-3.  Drive fault
-4.  Controller fault
-5.  Motor fault
-
-### AI
-
-> Is error code E207 displayed?
-
-### Technician
-
-> Yes.
-
-### AI
-
-> Check voltage between terminals X12 and X14.
-
-The technician points a camera at the control panel.
-
-The AI identifies the relevant area.
-
-### Technician
-
-> 0 volts.
-
-### AI
-
-``` text
-Likely fault:
-Control relay failure
-
-Evidence:
-- E207 present
-- X12-X14 voltage = 0V
-- Safety interlock operational
-- Similar historical service cases
-
-Next action:
-Inspect relay K17 and connector J12.
-
-Source:
-Service Procedure 4.2
+```bash
+pytest
 ```
 
-This is **diagnostic reasoning**, not document search.
+Current tests cover pure chunking logic (no external services needed). The
+manual smoke-test sequence below exercises the rest without needing Qdrant or
+an Anthropic key:
 
-------------------------------------------------------------------------
-
-# The Initial Wedge
-
-## AI Technical Support OS for Industrial Equipment Manufacturers
-
-The initial customer is the **equipment manufacturer**, not the end
-factory.
-
-Ideal customers:
-
--   CNC manufacturers
--   packaging machinery manufacturers
--   textile machinery manufacturers
--   HVAC manufacturers
--   pump/compressor manufacturers
--   welding equipment manufacturers
--   industrial automation companies
--   electrical equipment manufacturers
-
-### Why manufacturers?
-
-One manufacturer may have:
-
-``` text
-1 product family
-        ↓
-10 variants
-        ↓
-1,000+ installed machines
-        ↓
-hundreds of technicians
-        ↓
-thousands of support cases
+```python
+from crater.db.session import SessionLocal, init_db
+from crater.db.models import Product, Revision
+init_db()
+# ... create Product/Revision, then crater.ingestion.pipeline.ingest_pdf(...)
 ```
 
-A single customer can therefore provide:
-
--   a concentrated knowledge base
--   a large installed base
--   recurring support problems
--   many users
--   valuable feedback loops
-
-------------------------------------------------------------------------
-
-# The "Capture Rajesh" Wedge
-
-Every industrial company has some version of:
-
-> **"Ask Rajesh. He knows how this machine works."**
-
-The company's most valuable technical knowledge may not exist in its
-manuals.
-
-It exists in experienced engineers.
-
-Build an AI interviewer that captures this knowledge.
-
-``` text
-AI:
-What normally causes this failure?
-
-Expert:
-Usually the bearing.
-
-AI:
-How do you distinguish it from a motor fault?
-
-Expert:
-Listen for...
-
-AI:
-What measurement confirms that?
-
-Expert:
-Check...
-
-AI:
-Does the procedure differ by revision?
-
-Expert:
-Yes, on the newer model...
-```
-
-The system converts this into:
-
-``` text
-Symptom
-   ↓
-Possible causes
-   ↓
-Diagnostic test
-   ↓
-Observation
-   ↓
-Next branch
-   ↓
-Repair
-   ↓
-Model/revision
-```
-
-The objective is not to store a transcript.
-
-The objective is:
-
-> **Extract the expert's mental model.**
-
-------------------------------------------------------------------------
-
-# Technical Moat
-
-The moat is not the LLM.
-
-It is not the UI.
-
-It is not basic RAG.
-
-The moat is the **technical knowledge engine + proprietary service
-outcome data**.
-
-## 1. Multimodal Product Representation
-
-Represent relationships between:
-
--   components
--   manuals
--   diagrams
--   tables
--   schematics
--   CAD
--   images
--   procedures
--   product revisions
-
-Example:
-
-``` text
-Machine
- ├── Controller
- │    ├── PLC
- │    ├── Relay K17
- │    └── Terminal J12
- │
- ├── Motor
- │    └── Bearing
- │
- └── Hydraulic System
-      └── Valve V14
-```
-
-------------------------------------------------------------------------
-
-## 2. Diagnostic Graphs
-
-Troubleshooting becomes a graph rather than a list of documents.
-
-``` text
-SYMPTOM
-   ↓
-QUESTION
-   ↓
-OBSERVATION
-   ├── Result A → Hypothesis A
-   └── Result B → Hypothesis B
-```
-
-The agent can choose the next question based on which observation will
-reduce uncertainty most.
-
-------------------------------------------------------------------------
-
-## 3. Product and Revision Awareness
-
-Complex equipment changes.
-
-``` text
-Model A
- ├── Revision 2021
- ├── Revision 2022
- └── Revision 2023
-```
-
-The system needs to know which:
-
--   manual
--   schematic
--   part
--   procedure
--   wiring configuration
-
-applies to which version.
-
-------------------------------------------------------------------------
-
-## 4. Expert Knowledge Capture
-
-Senior engineers continuously teach the system.
-
-The AI should identify:
-
--   missing information
--   undocumented failure modes
--   exceptions
--   revision differences
--   diagnostic heuristics
-
-------------------------------------------------------------------------
-
-## 5. Outcome Data
-
-Every interaction can create training data.
-
-``` text
-Problem
-   ↓
-AI diagnosis
-   ↓
-Recommended action
-   ↓
-Technician performs action
-   ↓
-Did it work?
-   ↓
-Validated / rejected
-```
-
-Over time:
-
-``` text
-symptom
-+
-configuration
-+
-observations
-+
-diagnostic path
-+
-action
-+
-outcome
-```
-
-becomes a proprietary technical dataset.
-
-That is the long-term flywheel.
-
-------------------------------------------------------------------------
-
-# Data Flywheel
-
-``` text
-More Customers
-      ↓
-More Technical Cases
-      ↓
-More Diagnoses
-      ↓
-More Human Validation
-      ↓
-More Structured Knowledge
-      ↓
-Better Product Brain
-      ↓
-Better Diagnoses
-      ↓
-Higher Customer ROI
-      ↓
-More Customers
-```
-
-This is the core defensibility thesis.
-
-------------------------------------------------------------------------
-
-# Product Roadmap
-
-## V0 --- Research Prototype
-
--   PDF ingestion
--   OCR
--   table extraction
--   diagram-aware retrieval
--   hybrid retrieval
--   product/component extraction
--   source-backed answers
-
-## V1 --- Diagnostic Agent
-
--   structured product knowledge
--   troubleshooting graphs
--   diagnostic questioning
--   hypothesis tracking
--   evidence-based answers
--   confidence estimation
--   expert escalation
-
-## V2 --- Multimodal Technician
-
--   camera input
--   component identification
--   visual grounding
--   diagram interaction
--   voice interface
--   field-service workflow
-
-## V3 --- Product Memory
-
--   service history
--   previous repairs
--   machine configuration
--   part replacements
--   technician observations
--   case similarity
-
-## V4 --- Knowledge Capture
-
--   AI expert interviews
--   tribal knowledge extraction
--   automatic gap detection
--   expert validation
--   continuous knowledge updates
-
-## V5 --- Technical Intelligence Platform
-
-Integrations with:
-
--   CMMS
--   EAM
--   ERP
--   CRM
--   IoT platforms
--   SCADA
--   PLC systems
--   predictive-maintenance platforms
-
-------------------------------------------------------------------------
-
-# Suggested Architecture
-
-``` text
-                 DOCUMENTS / DATA
-                        │
-          ┌─────────────┼─────────────┐
-          ↓             ↓             ↓
-        PDFs         Images/CAD     Service Data
-          │             │             │
-          └─────────────┼─────────────┘
-                        ↓
-               MULTIMODAL PARSER
-                        │
-          ┌─────────────┼─────────────┐
-          ↓             ↓             ↓
-       Entities      Relations     Procedures
-          │             │             │
-          └─────────────┼─────────────┘
-                        ↓
-               PRODUCT KNOWLEDGE
-                        │
-          ┌─────────────┼──────────────┐
-          ↓             ↓              ↓
-      Components     Failures      Compatibility
-          │             │              │
-          └─────────────┼──────────────┘
-                        ↓
-                RETRIEVAL ENGINE
-                        │
-                        ↓
-                DIAGNOSTIC AGENT
-                        │
-          ┌─────────────┼─────────────┐
-          ↓             ↓             ↓
-        Chat          Voice         Camera
-          │             │             │
-          └─────────────┼─────────────┘
-                        ↓
-                    TECHNICIAN
-                        │
-                        ↓
-                     OUTCOME
-                        │
-                        ↓
-                KNOWLEDGE UPDATE
-```
-
-------------------------------------------------------------------------
-
-# Research Directions
-
-This project is intentionally positioned at the intersection of:
-
--   LLMs
--   multimodal AI
--   retrieval
--   knowledge graphs
--   agentic reasoning
--   latent memory
--   computer vision
--   time-series intelligence
--   human-in-the-loop learning
-
-## Multimodal Knowledge Engines
-
-Research how to represent:
-
-``` text
-Text
-+
-Diagrams
-+
-Tables
-+
-Schematics
-+
-CAD
-+
-Images
-+
-Video
-```
-
-as a coherent technical representation.
-
-------------------------------------------------------------------------
-
-## Diagnostic Reasoning
-
-Research:
-
--   hypothesis tracking
--   active questioning
--   uncertainty estimation
--   sequential diagnosis
--   tool use
--   graph reasoning
--   expert-in-the-loop learning
-
-A key research question:
-
-> **Can an AI learn which question to ask next in order to reduce
-> diagnostic uncertainty?**
-
-------------------------------------------------------------------------
-
-## Hidden-State / Latent Memory
-
-A longer-term research direction is investigating whether transformer
-internal representations can be used as a compact form of technical
-memory.
-
-Potential pipeline:
-
-``` text
-Technical documents
-       ↓
-Encoder
-       ↓
-Latent technical representation
-       ↓
-Memory store
-       ↓
-Retriever
-       ↓
-Agent reasoning
-```
-
-This should be experimentally compared against strong text-RAG baselines
-using:
-
--   accuracy
--   factuality
--   latency
--   token cost
--   retrieval quality
--   robustness
-
-The hypothesis is interesting, but it must be validated experimentally
-rather than assumed.
-
-------------------------------------------------------------------------
-
-# Safety
-
-This system may provide information about physical equipment.
-
-Therefore:
-
--   do not hallucinate specifications
--   cite source evidence
--   verify product/revision
--   expose uncertainty
--   require human confirmation for consequential actions
--   enforce manufacturer-approved procedures
--   maintain audit logs
--   version technical knowledge
--   escalate when confidence is insufficient
-
-For hazardous electrical, mechanical, thermal, medical, or industrial
-operations:
-
-> **A safe refusal or escalation is better than a confident wrong
-> instruction.**
-
-------------------------------------------------------------------------
-
-# Business Model
-
-## Phase 1 --- Paid Pilot
-
-Start with:
-
--   one manufacturer
--   one product family
--   one support workflow
-
-Measure:
-
--   support resolution time
--   escalation rate
--   technician productivity
--   first-time-fix rate
-
-## Phase 2 --- Enterprise Subscription
-
-Pricing can be based on:
-
--   product families
--   users
--   service cases
--   deployment requirements
--   integrations
--   support
-
-## Phase 3 --- Outcome-Based
-
-Potentially price against measurable outcomes:
-
--   support cost reduction
--   reduced service visits
--   improved first-time-fix
--   reduced downtime
-
-The exact pricing should be validated through customer discovery.
-
-------------------------------------------------------------------------
-
-# Go-To-Market
-
-## Ideal Customer Profile
-
-An industrial equipment manufacturer with:
-
--   complex products
--   a large installed base
--   recurring service cases
--   geographically distributed customers
--   expensive senior engineers
--   substantial technical documentation
--   weak knowledge capture
-
-## Customer Discovery
-
-Interview 30--50 potential customers.
-
-Ask:
-
-1.  Which support issues require your most experienced engineers?
-2.  How often are cases escalated?
-3.  How long do difficult cases take?
-4.  What happens when a senior engineer is unavailable?
-5.  Where is your technical knowledge stored?
-6.  How often are manuals insufficient?
-7.  How much does a field-service visit cost?
-8.  How long does it take to train a new technician?
-9.  Which recurring problems generate the most cost?
-10. What would a 20--30% reduction in escalations be worth?
-
-Do not start by selling.
-
-First validate the problem.
-
-------------------------------------------------------------------------
-
-# Success Metrics
-
-## AI quality
-
--   diagnosis accuracy
--   retrieval recall
--   evidence correctness
--   hallucination rate
--   safe escalation rate
--   procedure correctness
-
-## Support
-
--   mean time to resolution
--   first-contact resolution
--   escalation rate
--   first-response time
-
-## Technician
-
--   first-time-fix rate
--   diagnostic time
--   onboarding time
--   expert interventions per case
-
-## Business
-
--   support cost saved
--   service visits avoided
--   downtime reduced
--   warranty cost reduced
-
-------------------------------------------------------------------------
-
-# Competitive Positioning
-
-The project sits between several categories.
-
-  -----------------------------------------------------------------------
-  Category                            Main question
-  ----------------------------------- -----------------------------------
-  Horizontal support AI               "How do I answer the customer?"
-
-  RAG/document AI                     "What does the document say?"
-
-  Predictive maintenance              "Will this machine fail?"
-
-  Computer vision                     "What is visible?"
-
-  Field-service software              "How do I manage the job?"
-
-  **Technical Intelligence**          **"What is wrong, why, and how do I
-                                      resolve it?"**
-  -----------------------------------------------------------------------
-
-The opportunity is to combine these capabilities into one
-product-specific reasoning layer.
-
-------------------------------------------------------------------------
-
-# Why This Could Become Defensible
-
-A new competitor can copy:
-
-``` text
-LLM
-+
-Vector DB
-+
-Chat UI
-```
-
-It is much harder to copy:
-
-``` text
-Product knowledge graph
-+
-Multimodal document understanding
-+
-Diagnostic graphs
-+
-Revision-aware knowledge
-+
-Expert tribal knowledge
-+
-Validated repair outcomes
-+
-Installed-base service history
-```
-
-The goal is to make the **Product Brain** a compounding asset.
-
-------------------------------------------------------------------------
-
-# Long-Term Vision
-
-The initial product is technical support.
-
-The eventual platform is broader:
-
-``` text
-                 PHYSICAL PRODUCT
-                        │
-        ┌───────────────┼────────────────┐
-        ↓               ↓                ↓
-     Design        Installation       Operation
-        │               │                │
-        └───────────────┼────────────────┘
-                        ↓
-                     Diagnosis
-                        ↓
-                     Repair
-                        ↓
-                   Maintenance
-                        ↓
-                   Service History
-                        ↓
-                   Product Memory
-                        ↓
-                  Better Intelligence
-```
-
-The ultimate vision:
-
-> **Every complex physical product gets an AI expert that understands
-> how it is built, how it behaves, how it fails, and how humans should
-> interact with it.**
-
-------------------------------------------------------------------------
-
-# Core Thesis
-
-> **The next generation of industrial support will not be a chatbot
-> searching manuals. It will be an executable technical knowledge system
-> that understands the product itself.**
-
-The moat comes from continuously transforming:
-
-**documentation + expert knowledge + service interactions + repair
-outcomes**
-
-into increasingly deep product intelligence.
-
-------------------------------------------------------------------------
-
-# Project Status
-
-### Current stage
-
-**Research / prototype / validation**
-
-### Immediate goal
-
-Prove that a multimodal diagnostic agent can outperform conventional
-document search for real technical-support cases.
-
-### First target
-
-**Indian industrial equipment manufacturers**
-
-### First product
-
-**AI Technical Expert for one complex product family**
-
-### Long-term goal
-
-**Technical Intelligence OS for complex physical products**
-
-------------------------------------------------------------------------
-
-# Related Research Themes
-
-This project can build on work in:
-
--   RAG
--   hybrid retrieval
--   multimodal embeddings
--   knowledge graphs
--   transformer hidden states
--   latent memory
--   agentic workflows
--   computer vision
--   voice agents
--   uncertainty estimation
--   human-in-the-loop learning
-
-------------------------------------------------------------------------
-
-# Philosophy
-
-The objective is not:
-
-> Make an LLM sound like an engineer.
-
-The objective is:
-
-> **Build a system that can actually reason over the technical structure
-> of a physical product and help an engineer make the right decision.**
-
-That distinction drives the architecture, research, evaluation, and
-eventual business.
-
-------------------------------------------------------------------------
-
-## One-Line Pitch
-
-**An AI technical expert that turns a complex physical product's
-manuals, schematics, service history, and expert knowledge into an
-executable diagnostic brain for every technician.**
+## Known gaps / next things to tighten
+
+- BM25 index is rebuilt from SQL on every query — fine for one pilot customer's
+  corpus, not for scale. Swap for a persisted/incremental index later.
+- Knowledge extraction runs per-chunk, so relationships referencing a component
+  named in a *different* chunk get silently dropped (see docstring in
+  `knowledge/component_extraction.py`). A cross-chunk name-resolution pass would
+  fix this — worth doing once real manuals show how often it matters.
+- `sentence-transformers` model download requires internet access; if the
+  deployment target doesn't have it, swap `retrieval/embeddings.py` for a
+  hosted embedding API behind the same `EmbeddingProvider` interface.
+- Ingestion runs synchronously in the API route — fine for now, move to a
+  background task queue before real files/pilot load.
+- No auth on any endpoint yet.
+- Diagnostic sessions are single-user/single-turn-at-a-time — no concurrency
+  control on `DiagnosticSession.state` if two requests race on the same
+  session id.
+- `overall_confidence` is entirely LLM self-assessed against retrieved text
+  evidence; there's no simulation-based verification yet (that's Phase 6-7),
+  so treat it as "how well the evidence supports this," not a calibrated
+  probability.
+- The forced-escalation thresholds (`_MAX_TURNS_BEFORE_FORCED_ESCALATION`,
+  `_LOW_CONFIDENCE_ESCALATION_THRESHOLD` in `diagnostics/agent.py`) are
+  reasonable starting guesses, not tuned against real cases — plan.md §29's
+  evaluation benchmark is exactly the tool to tune them once real
+  troubleshooting transcripts exist.
+- Schematic label matching (`schematic/graph.py::persist_schematic`) is exact,
+  case-insensitive string match only — "K17" won't link to a Phase-1
+  Component named "Relay K17". A fuzzy/LLM-assisted matching pass is a
+  reasonable upgrade once real manuals show how often labels disagree.
+- Schematic extraction is not yet wired into the diagnostic agent's
+  reasoning (Phase 2's `diagnostics/agent.py` still only sees Component/
+  FailureMode text knowledge, not the schematic graph) — that integration
+  (e.g. "trace the path implicated by the leading hypothesis and surface
+  it") is a natural next step, not yet built.

@@ -12,13 +12,13 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from crater.db.models import Chunk, Document, DocType
-from crater.ingestion.chunking import page_to_chunks
-from crater.ingestion.pdf_loader import load_pdf
-from crater.knowledge.component_extraction import extract_from_chunk_text, persist_extraction
-from crater.retrieval.vector_store import upsert_chunks
-from crater.schematic.graph import persist_schematic
-from crater.schematic.vision_extraction import extract_schematic
+from backend.schematic.vision_extraction import extract_schematic
+from backend.db.models import Chunk, Document, DocType
+from backend.ingestion.chunking import page_to_chunks
+from backend.ingestion.pdf_loader import load_pdf
+from backend.knowledge.component_extraction import extract_from_chunk_text, persist_extraction
+from backend.retrieval.vector_store import upsert_chunks
+from backend.schematic.graph import persist_schematic
 
 
 def ingest_pdf(

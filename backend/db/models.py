@@ -75,12 +75,6 @@ class ProcedureType(str, enum.Enum):
     verification = "verification"
 
 
-class IngestionStatus(str, enum.Enum):
-    processing = "processing"
-    completed = "completed"
-    failed = "failed"
-
-
 class Product(Base):
     """A product family, e.g. 'Vulcan OmniPro 220 welder', 'Acme CNC-500'."""
 
@@ -139,32 +133,6 @@ class Document(Base):
 
     revision: Mapped["Revision"] = relationship(back_populates="documents")
     chunks: Mapped[list["Chunk"]] = relationship(back_populates="document", cascade="all, delete-orphan")
-
-
-class IngestionJob(Base):
-    """Durable status and idempotency record for a document ingestion request."""
-
-    __tablename__ = "ingestion_jobs"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    revision_id: Mapped[str] = mapped_column(ForeignKey("revisions.id"), index=True)
-    document_id: Mapped[str | None] = mapped_column(ForeignKey("documents.id"), nullable=True)
-    idempotency_key: Mapped[str] = mapped_column(String)
-    content_sha256: Mapped[str] = mapped_column(String)
-    doc_type: Mapped[DocType] = mapped_column(Enum(DocType))
-    title: Mapped[str] = mapped_column(String)
-    source_path: Mapped[str] = mapped_column(String)
-    status: Mapped[IngestionStatus] = mapped_column(Enum(IngestionStatus), default=IngestionStatus.processing)
-    stage: Mapped[str] = mapped_column(String, default="queued")
-    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    attempt_count: Mapped[int] = mapped_column(Integer, default=1)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    __table_args__ = (
-        UniqueConstraint("revision_id", "idempotency_key", name="uq_ingestion_job_idempotency"),
-        UniqueConstraint("revision_id", "content_sha256", name="uq_ingestion_job_content"),
-    )
 
 
 class Chunk(Base):
@@ -231,6 +199,102 @@ class Procedure(Base):
     source_chunk_id: Mapped[str | None] = mapped_column(ForeignKey("chunks.id"), nullable=True)
 
     revision: Mapped["Revision"] = relationship(back_populates="procedures")
+
+
+class DiagnosticStatus(str, enum.Enum):
+    active = "active"          # still asking questions / gathering evidence
+    concluded = "concluded"    # agent reached a grounded recommendation
+    escalated = "escalated"    # confidence too low / safety constraint hit
+
+
+class DiagnosticSession(Base):
+    """
+    One troubleshooting conversation (plan.md §6 DiagnosticState), persisted
+    as JSON so the full history (symptoms, observations, hypotheses,
+    eliminated hypotheses, evidence, confidence) survives across turns
+    without needing a dozen join tables for an MVP.
+
+    `state` shape is defined by diagnostics.schema.DiagnosticState — kept as
+    JSON here rather than normalized columns because the state's hypothesis
+    list grows/shrinks every turn; normalizing it now would mean migrating
+    the schema before the diagnostic loop itself is even validated (see
+    plan.md §26 "prove the loop first").
+    """
+
+    __tablename__ = "diagnostic_sessions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    product_id: Mapped[str] = mapped_column(ForeignKey("products.id"), index=True)
+    revision_id: Mapped[str | None] = mapped_column(ForeignKey("revisions.id"), nullable=True, index=True)
+    status: Mapped[DiagnosticStatus] = mapped_column(Enum(DiagnosticStatus), default=DiagnosticStatus.active)
+    state: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class SymbolType(str, enum.Enum):
+    """Recognized schematic symbol categories (plan.md §5)."""
+
+    relay = "relay"
+    contactor = "contactor"
+    motor = "motor"
+    sensor = "sensor"
+    switch = "switch"
+    fuse = "fuse"
+    terminal = "terminal"
+    connector = "connector"
+    plc = "plc"
+    transformer = "transformer"
+    power_source = "power_source"
+    ground = "ground"
+    other = "other"
+
+
+class WireType(str, enum.Enum):
+    power = "power"
+    control = "control"
+    signal = "signal"
+    ground = "ground"
+    unknown = "unknown"
+
+
+class SchematicNode(Base):
+    """
+    One symbol/component identified inside a schematic image (plan.md §5:
+    "Extract: Components and symbols, Labels, Terminals ...").
+
+    Scoped to the diagram Chunk it was extracted from (not directly to
+    Revision) because a node's bbox is only meaningful against that one
+    image; `component_id` is the optional link back to the Phase 1
+    text-extracted Component with the same name, resolved by exact label
+    match at persistence time (see schematic/graph.py) — a fuzzier
+    match is a reasonable upgrade once real manuals show how often
+    labels disagree slightly (e.g. "K17" vs "Relay K17").
+    """
+
+    __tablename__ = "schematic_nodes"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    document_id: Mapped[str] = mapped_column(ForeignKey("documents.id"), index=True)
+    chunk_id: Mapped[str] = mapped_column(ForeignKey("chunks.id"), index=True)
+    component_id: Mapped[str | None] = mapped_column(ForeignKey("components.id"), nullable=True)
+    label: Mapped[str] = mapped_column(String, index=True)          # e.g. "K17", "X12", "M1"
+    symbol_type: Mapped[SymbolType] = mapped_column(Enum(SymbolType))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    bbox: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # {"x":0-1,"y":0-1,"w":0-1,"h":0-1} normalized
+
+
+class SchematicEdge(Base):
+    """A wire/connection between two schematic nodes within the same diagram."""
+
+    __tablename__ = "schematic_edges"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    document_id: Mapped[str] = mapped_column(ForeignKey("documents.id"), index=True)
+    from_node_id: Mapped[str] = mapped_column(ForeignKey("schematic_nodes.id"), index=True)
+    to_node_id: Mapped[str] = mapped_column(ForeignKey("schematic_nodes.id"), index=True)
+    wire_type: Mapped[WireType] = mapped_column(Enum(WireType), default=WireType.unknown)
+    label: Mapped[str | None] = mapped_column(String, nullable=True)  # wire number/label if visible
 
 
 class FailureMode(Base):

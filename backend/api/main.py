@@ -3,8 +3,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from crater.api.routes import diagnostics, ingestion, products, query, schematics
-from crater.db.session import init_db
+from backend.api.routes import diagnostics, ingestion, products, query, schematics
+from backend.db.session import init_db
 
 
 @asynccontextmanager
