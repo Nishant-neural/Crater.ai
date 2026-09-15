@@ -2,8 +2,8 @@
 Tests for the deterministic safety guardrails around the diagnostic loop —
 these must hold regardless of what the LLM decides, per plan.md §25.
 """
-from crater.diagnostics.agent import _apply_forced_safeguards
-from crater.diagnostics.schema import DiagnosticState
+from backend.diagnostics.agent import _apply_forced_safeguards
+from backend.diagnostics.schema import DiagnosticState
 
 
 def _base_result(confidence: float, step_type: str = "question") -> dict:
