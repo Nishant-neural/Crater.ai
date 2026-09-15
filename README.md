@@ -1,18 +1,20 @@
-# Crater.ai — Phases 1, 2 & 3
+# Crater.ai — Phases 1, 2, 3 & 4
 
 This is the scaffold for **Phase 1 (Product Knowledge)**, **Phase 2
-(Diagnostic Agent)**, and **Phase 3 (Schematic Intelligence)** of the
-Crater.ai roadmap (`PLAN.md` §33): turning raw manuals/schematics into a
-queryable, revision-aware **Product Brain**, with hybrid retrieval, a
-structured troubleshooting loop, and a real component/connection graph
-extracted from diagram images, all on top of each other. It's deliberately
-generic — no single product family is hardcoded — so the same pipeline can
-onboard multiple manufacturers/products later just by creating new
-`Product`/`Revision` rows and ingesting their docs.
+(Diagnostic Agent)**, **Phase 3 (Schematic Intelligence)**, and **Phase 4
+(Technical Visualization)** of the Crater.ai roadmap (`PLAN.md` §33): turning
+raw manuals/schematics into a queryable, revision-aware **Product Brain**,
+with hybrid retrieval, a structured troubleshooting loop, a real
+component/connection graph extracted from diagram images, and an interactive
+frontend to browse and visualize all of it, all on top of each other. It's
+deliberately generic — no single product family is hardcoded — so the same
+pipeline can onboard multiple manufacturers/products later just by creating
+new `Product`/`Revision` rows and ingesting their docs.
 
-Not in scope yet (later phases): visualization UI beyond a single
-highlighted image (Phase 4), expert interviews (Phase 5), digital twin /
-simulation (Phase 6-7), camera/voice (Phase 9).
+Not in scope yet (later phases): expert interviews (Phase 5), digital twin /
+simulation (Phase 6-7), camera/voice (Phase 9). See `docs/Phase4.md` for
+Phase 4's own honest limits (repair "animation" is a played-back image
+sequence, not video/3D).
 
 ## What's implemented
 
@@ -76,6 +78,23 @@ extracted from that one image; a signal that continues onto a different
 page/diagram won't be traced across documents yet — that's a natural
 Phase 4 (or a schematic-graph-merging pass) extension.
 
+### Phase 4 — Technical Visualization
+
+| plan.md §9 / §33 requirement | Where |
+|---|---|
+| Interactive diagrams (pan/zoom/click) | `backend/visualization/interactive_diagram.py`, `frontend/src/technical-viewer/DiagramViewer.jsx` |
+| Component explorer | `backend/visualization/component_explorer.py`, `frontend/src/components/ComponentExplorer.jsx` |
+| Annotated schematics | Same `DiagramViewer.jsx`, driven by either a manual node click or a procedure step's highlighted labels |
+| Procedure visualization | `backend/visualization/procedure_viz.py`, `frontend/src/components/ProcedureViewer.jsx` |
+| Repair animations | `procedure_viz.py`'s ordered `animation_frames`, played back by `ProcedureViewer.jsx` |
+| API | `backend/api/routes/visualization.py`: `GET /visualization/revisions/{revision_id}/components`, `GET /visualization/diagrams/{chunk_id}` (+ `/image`), `GET /visualization/procedures/{procedure_id}` (+ `/frames/{frame_index}`) |
+
+No new source-of-truth tables — everything here is a read-time re-projection
+of Phase 1's Component/ComponentRelationship data and Phase 3's schematic
+graph into shapes a frontend renders directly. Full details, including the
+deliberate "repair animation is a slideshow, not video" scoping, are in
+`docs/Phase4.md`.
+
 ## Architecture
 
 ```
@@ -97,6 +116,13 @@ Diagram chunk ─▶ schematic/vision_extraction (Claude vision: nodes + edges)
                                                            linked to Phase 1 Component by label)
                     ─▶ schematic/graph.trace_path (signal tracing)
                     ─▶ schematic/highlight.highlight_nodes (annotated image)
+
+Component/SchematicNode/Procedure ─▶ visualization/component_explorer,
+                                      visualization/interactive_diagram,
+                                      visualization/procedure_viz
+                                   ─▶ frontend/ (React: diagram viewer,
+                                                 component explorer,
+                                                 procedure/animation viewer)
 ```
 
 ## Setup
@@ -138,6 +164,20 @@ curl -X POST localhost:8000/diagnose/<session_id>/respond -H "Content-Type: appl
 curl localhost:8000/schematics/<document_id>/graph
 curl "localhost:8000/schematics/<document_id>/trace?from_label=Power&to_label=Motor"
 curl "localhost:8000/schematics/<document_id>/highlight?label=K17" --output k17_highlighted.png
+
+# Phase 4: browse a revision's components, an interactive diagram, and a procedure's steps
+curl localhost:8000/visualization/revisions/<revision_id>/components
+curl localhost:8000/visualization/diagrams/<chunk_id>
+curl localhost:8000/visualization/procedures/<procedure_id>
+```
+
+Then, for the Phase 4 frontend:
+
+```bash
+cd frontend
+npm install
+cp .env.example .env   # point VITE_API_BASE at the backend if not localhost:8000
+npm run dev
 ```
 
 Each response's `state.current_step` tells you what to do next: ask the
@@ -198,3 +238,9 @@ init_db()
   FailureMode text knowledge, not the schematic graph) — that integration
   (e.g. "trace the path implicated by the leading hypothesis and surface
   it") is a natural next step, not yet built.
+- Phase 4's "repair animation" is a played-back sequence of Phase 3's
+  annotated diagram images, not rendered video/3D, and step-to-component
+  matching is case-insensitive substring matching (same trade-off as
+  Phase 3's label matching) — see `docs/Phase4.md` "Honest limits" for the
+  full list, including the lack of a product/revision picker in the
+  frontend.
