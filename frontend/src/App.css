@@ -1,0 +1,133 @@
+:root {
+  color-scheme: dark;
+  --bg: #14161a;
+  --panel: #1c1f26;
+  --border: #2c2f38;
+  --text: #e6e8eb;
+  --muted: #8b909c;
+  --accent: #4da3ff;
+  --highlight: #ffb020;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body { margin: 0; background: var(--bg); color: var(--text); }
+
+.app { display: flex; flex-direction: column; height: 100vh; }
+
+.app__header {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.app__header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+
+.app__tabs { display: flex; gap: 8px; }
+.app__tabs button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.app__tabs button.active { color: var(--text); border-color: var(--accent); }
+
+.app__body { flex: 1; display: flex; min-height: 0; }
+
+.app__sidebar {
+  width: 340px;
+  border-right: 1px solid var(--border);
+  padding: 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.app__sidebar label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.app__sidebar input {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.app__main { flex: 1; min-width: 0; display: flex; }
+
+button { font: inherit; }
+.muted { color: var(--muted); }
+
+/* --- Diagram viewer --- */
+.diagram-viewer { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.diagram-viewer--empty { display: flex; align-items: center; justify-content: center; flex: 1; color: var(--muted); }
+.diagram-viewer__toolbar {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 16px; border-bottom: 1px solid var(--border); font-size: 13px;
+}
+.diagram-viewer__toolbar button {
+  background: var(--panel); border: 1px solid var(--border); color: var(--text);
+  border-radius: 6px; padding: 4px 10px; cursor: pointer;
+}
+.diagram-viewer__canvas {
+  flex: 1; overflow: hidden; position: relative; cursor: grab; background: #0b0c0f;
+}
+.diagram-viewer__stage { position: absolute; transform-origin: 0 0; }
+.diagram-viewer__stage img { display: block; user-select: none; pointer-events: none; max-width: none; }
+.diagram-viewer__overlay { position: absolute; inset: 0; }
+
+.node rect { fill: transparent; stroke: var(--accent); stroke-width: 2; cursor: pointer; }
+.node text { fill: var(--accent); font-size: 12px; pointer-events: none; }
+.node--highlighted rect { stroke: var(--highlight); stroke-width: 3; }
+.node--highlighted text { fill: var(--highlight); }
+.node--selected rect { fill: rgba(77, 163, 255, 0.15); }
+
+.wire { stroke: var(--muted); stroke-width: 1.5; }
+.wire--power { stroke: #ff6b6b; }
+.wire--control { stroke: #4da3ff; }
+.wire--signal { stroke: #4caf50; }
+.wire--ground { stroke: #8b909c; stroke-dasharray: 4 3; }
+
+.diagram-viewer__inspector {
+  padding: 10px 16px; border-top: 1px solid var(--border); font-size: 13px; background: var(--panel);
+}
+
+/* --- Component explorer --- */
+.component-explorer { flex: 1; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.component-explorer--empty { color: var(--muted); font-size: 13px; }
+.component-explorer__search {
+  background: var(--panel); border: 1px solid var(--border); color: var(--text);
+  padding: 6px 8px; border-radius: 6px; font-size: 13px;
+}
+.component-explorer__list { list-style: none; margin: 0; padding: 0; overflow-y: auto; }
+.component-explorer__item { border-bottom: 1px solid var(--border); }
+.component-explorer__row {
+  width: 100%; display: flex; justify-content: space-between; background: none; border: none;
+  color: var(--text); padding: 8px 4px; cursor: pointer; text-align: left; font-size: 13px;
+}
+.component-explorer__part-number { color: var(--muted); font-size: 11px; }
+.component-explorer__detail { padding: 4px 4px 10px; font-size: 12px; color: var(--muted); }
+.component-explorer__detail h4 { margin: 8px 0 4px; color: var(--text); font-size: 11px; text-transform: uppercase; }
+.component-explorer__detail ul { margin: 0; padding-left: 16px; }
+.component-explorer__detail button { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; font-size: 12px; }
+
+/* --- Procedure viewer --- */
+.procedure-viewer { display: flex; flex-direction: column; gap: 12px; }
+.procedure-viewer--empty { color: var(--muted); font-size: 13px; }
+.procedure-viewer__header { display: flex; flex-direction: column; gap: 6px; }
+.procedure-viewer__header h3 { margin: 0; font-size: 14px; }
+.procedure-viewer__header button {
+  background: var(--accent); border: none; color: #08111c; padding: 6px 10px;
+  border-radius: 6px; cursor: pointer; font-size: 12px; align-self: flex-start;
+}
+.procedure-viewer__header button:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
+.procedure-viewer__steps { list-style: decimal; padding-left: 20px; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.procedure-viewer__steps li { font-size: 13px; cursor: pointer; }
+.procedure-viewer__steps li.active { color: var(--highlight); }
+.procedure-viewer__refs { color: var(--muted); font-size: 11px; }
+.procedure-viewer__frame { display: flex; flex-direction: column; gap: 6px; }
+.procedure-viewer__frame img { width: 100%; border-radius: 6px; border: 1px solid var(--border); }
