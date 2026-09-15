@@ -31,9 +31,15 @@ def ingest_pdf(
     image_out_dir: str | Path,
     run_knowledge_extraction: bool = True,
     run_schematic_extraction: bool = True,
+    existing_document_id: str | None = None,
 ) -> Document:
     pdf_path = Path(pdf_path)
     pages = load_pdf(pdf_path, image_out_dir)
+
+    if existing_document_id:
+        document = session.get(Document, existing_document_id)
+        if document is not None:
+            return document
 
     document = Document(
         revision_id=revision_id,
