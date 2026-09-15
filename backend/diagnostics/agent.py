@@ -37,6 +37,19 @@ def _load_product_knowledge(db: DBSession, revision_id: str | None) -> str:
 
     components = db.query(Component).filter(Component.revision_id == revision_id).all()
     failure_modes = db.query(FailureMode).filter(FailureMode.revision_id == revision_id).all()
+    # Approved expert knowledge is part of the revision-scoped Product Brain.
+    # Draft/rejected knowledge is deliberately invisible to the diagnostic agent.
+    from backend.db.models import ExpertKnowledge, KnowledgeStatus, KnowledgeVersion
+    approved_versions = db.query(KnowledgeVersion).filter(
+        KnowledgeVersion.revision_id == revision_id,
+        KnowledgeVersion.status == KnowledgeStatus.approved,
+    ).all()
+    approved_version_ids = [v.id for v in approved_versions]
+    expert_knowledge = []
+    if approved_version_ids:
+        expert_knowledge = db.query(ExpertKnowledge).filter(
+            ExpertKnowledge.knowledge_version_id.in_(approved_version_ids)
+        ).all()
 
     lines: list[str] = []
     if components:
@@ -47,8 +60,18 @@ def _load_product_knowledge(db: DBSession, revision_id: str | None) -> str:
         lines.append("Known failure modes:")
         for f in failure_modes:
             lines.append(f"- Symptom: {f.symptom} | Possible causes: {', '.join(f.possible_causes)}")
+    if expert_knowledge:
+        lines.append("Approved senior-engineer knowledge:")
+        for k in expert_knowledge:
+            scope = ", ".join(k.applicable_revisions or []) or "revision scope from interview"
+            lines.append(
+                f"- {k.title} [{k.knowledge_type.value}; confidence={k.confidence:.2f}; scope={scope}] "
+                f"Symptom={k.symptom or 'n/a'} Condition={k.condition or 'n/a'} "
+                f"Action={k.action or 'n/a'} Expected={k.expected_observation or 'n/a'} "
+                f"Safety={'; '.join(k.safety_notes or []) or 'none stated'}"
+            )
 
-    return "\n".join(lines) if lines else "(no structured component/failure-mode knowledge extracted yet for this revision)"
+    return "\n".join(lines) if lines else "(no structured component/failure-mode/expert knowledge extracted yet for this revision)"
 
 
 def _build_query(state: DiagnosticState, latest_input: str) -> str:

@@ -1139,7 +1139,7 @@ Pricing must be validated through customer discovery.
 -   Repair animations
 -   Procedure visualization
 
-### Phase 5 --- Capture Rajesh
+### Phase 5 --- Capture Rajesh **(implemented)**
 
 -   AI expert interviewer
 -   Knowledge extraction

@@ -2,12 +2,13 @@ import { useState } from "react";
 import ComponentExplorer from "./components/ComponentExplorer";
 import ProcedureViewer from "./components/ProcedureViewer";
 import DiagramViewer from "./technical-viewer/DiagramViewer";
+import ExpertKnowledge from "./components/ExpertKnowledge";
 import "./App.css";
 
-const TABS = { EXPLORER: "explorer", PROCEDURE: "procedure" };
+const TABS = { EXPLORER: "explorer", PROCEDURE: "procedure", EXPERT: "expert" };
 
 /**
- * Phase 4 — Technical Visualization shell.
+ * Phases 4-5 — Technical Visualization + expert knowledge capture shell.
  *
  * There's no product/revision picker UI wired up yet (Phases 1-3 don't
  * expose a "browse everything I've ingested" endpoint) — a technician or
@@ -39,13 +40,16 @@ export default function App() {
   return (
     <div className="app">
       <header className="app__header">
-        <h1>Crater.ai — Technical Visualization</h1>
+        <h1>Crater.ai — Technical Intelligence</h1>
         <nav className="app__tabs">
           <button className={tab === TABS.EXPLORER ? "active" : ""} onClick={() => setTab(TABS.EXPLORER)}>
             Component Explorer
           </button>
           <button className={tab === TABS.PROCEDURE ? "active" : ""} onClick={() => setTab(TABS.PROCEDURE)}>
             Procedure Viewer
+          </button>
+          <button className={tab === TABS.EXPERT ? "active" : ""} onClick={() => setTab(TABS.EXPERT)}>
+            Capture Rajesh
           </button>
         </nav>
       </header>
@@ -70,10 +74,11 @@ export default function App() {
               <ProcedureViewer procedureId={procedureId} onFrameChange={onProcedureFrameChange} />
             </>
           )}
+
         </aside>
 
         <main className="app__main">
-          <DiagramViewer chunkId={activeChunkId} highlightLabels={highlightLabels} />
+          {tab === TABS.EXPERT ? <ExpertKnowledge /> : <DiagramViewer chunkId={activeChunkId} highlightLabels={highlightLabels} />}
         </main>
       </div>
     </div>

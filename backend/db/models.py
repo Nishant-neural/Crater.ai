@@ -25,6 +25,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Integer,
+    Float,
     String,
     Text,
     UniqueConstraint,
@@ -230,6 +231,171 @@ class DiagnosticSession(Base):
     state: Mapped[dict] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class InterviewStatus(str, enum.Enum):
+    active = "active"
+    completed = "completed"
+    cancelled = "cancelled"
+
+
+class KnowledgeStatus(str, enum.Enum):
+    draft = "draft"
+    in_review = "in_review"
+    approved = "approved"
+    rejected = "rejected"
+    superseded = "superseded"
+
+
+class KnowledgeType(str, enum.Enum):
+    rule = "rule"
+    failure_mode = "failure_mode"
+    diagnostic_test = "diagnostic_test"
+    repair = "repair"
+    exception = "exception"
+    heuristic = "heuristic"
+
+
+class GraphNodeType(str, enum.Enum):
+    symptom = "symptom"
+    question = "question"
+    observation = "observation"
+    hypothesis = "hypothesis"
+    action = "action"
+    outcome = "outcome"
+    safety = "safety"
+
+
+class GraphEdgeType(str, enum.Enum):
+    asks = "asks"
+    if_true = "if_true"
+    if_false = "if_false"
+    supports = "supports"
+    rules_out = "rules_out"
+    leads_to = "leads_to"
+    requires = "requires"
+
+
+class Expert(Base):
+    """Senior engineer/domain expert whose tacit knowledge is being captured."""
+
+    __tablename__ = "experts"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String)
+    role: Mapped[str | None] = mapped_column(String, nullable=True)
+    organization: Mapped[str | None] = mapped_column(String, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ExpertInterview(Base):
+    """A versioned interview session used to turn tacit expertise into reviewable knowledge."""
+
+    __tablename__ = "expert_interviews"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    expert_id: Mapped[str] = mapped_column(ForeignKey("experts.id"), index=True)
+    product_id: Mapped[str] = mapped_column(ForeignKey("products.id"), index=True)
+    revision_id: Mapped[str | None] = mapped_column(ForeignKey("revisions.id"), nullable=True, index=True)
+    topic: Mapped[str] = mapped_column(String)
+    status: Mapped[InterviewStatus] = mapped_column(Enum(InterviewStatus), default=InterviewStatus.active)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class ExpertInterviewTurn(Base):
+    """Immutable transcript turn; keeping speaker/content separate makes re-extraction possible."""
+
+    __tablename__ = "expert_interview_turns"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    interview_id: Mapped[str] = mapped_column(ForeignKey("expert_interviews.id"), index=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    speaker: Mapped[str] = mapped_column(String)  # interviewer | expert
+    content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("interview_id", "sequence", name="uq_interview_turn_sequence"),)
+
+
+class KnowledgeVersion(Base):
+    """A reviewable, immutable snapshot of knowledge extracted from an interview."""
+
+    __tablename__ = "knowledge_versions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    interview_id: Mapped[str] = mapped_column(ForeignKey("expert_interviews.id"), index=True)
+    revision_id: Mapped[str | None] = mapped_column(ForeignKey("revisions.id"), nullable=True, index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    status: Mapped[KnowledgeStatus] = mapped_column(Enum(KnowledgeStatus), default=KnowledgeStatus.draft)
+    extracted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reviewer: Mapped[str | None] = mapped_column(String, nullable=True)
+    review_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (UniqueConstraint("interview_id", "version", name="uq_knowledge_version"),)
+
+
+class ExpertKnowledge(Base):
+    """One atomic knowledge claim, always tied to a specific version and evidence turn."""
+
+    __tablename__ = "expert_knowledge"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    knowledge_version_id: Mapped[str] = mapped_column(ForeignKey("knowledge_versions.id"), index=True)
+    knowledge_type: Mapped[KnowledgeType] = mapped_column(Enum(KnowledgeType))
+    title: Mapped[str] = mapped_column(String)
+    symptom: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trigger: Mapped[str | None] = mapped_column(Text, nullable=True)
+    condition: Mapped[str | None] = mapped_column(Text, nullable=True)
+    action: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expected_observation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failure_mode: Mapped[str | None] = mapped_column(Text, nullable=True)
+    safety_notes: Mapped[list] = mapped_column(JSON, default=list)
+    applicable_models: Mapped[list] = mapped_column(JSON, default=list)
+    applicable_revisions: Mapped[list] = mapped_column(JSON, default=list)
+    evidence_turn_ids: Mapped[list] = mapped_column(JSON, default=list)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)  # stored as 0-100 for portable SQLite
+    source_quote: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class DiagnosticGraph(Base):
+    """Executable troubleshooting graph generated from approved expert knowledge."""
+
+    __tablename__ = "diagnostic_graphs"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    revision_id: Mapped[str | None] = mapped_column(ForeignKey("revisions.id"), nullable=True, index=True)
+    knowledge_version_id: Mapped[str] = mapped_column(ForeignKey("knowledge_versions.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    status: Mapped[KnowledgeStatus] = mapped_column(Enum(KnowledgeStatus), default=KnowledgeStatus.draft)
+    name: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class DiagnosticGraphNode(Base):
+    __tablename__ = "diagnostic_graph_nodes"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    graph_id: Mapped[str] = mapped_column(ForeignKey("diagnostic_graphs.id"), index=True)
+    node_type: Mapped[GraphNodeType] = mapped_column(Enum(GraphNodeType))
+    label: Mapped[str] = mapped_column(String)
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    knowledge_id: Mapped[str | None] = mapped_column(ForeignKey("expert_knowledge.id"), nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class DiagnosticGraphEdge(Base):
+    __tablename__ = "diagnostic_graph_edges"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    graph_id: Mapped[str] = mapped_column(ForeignKey("diagnostic_graphs.id"), index=True)
+    from_node_id: Mapped[str] = mapped_column(ForeignKey("diagnostic_graph_nodes.id"), index=True)
+    to_node_id: Mapped[str] = mapped_column(ForeignKey("diagnostic_graph_nodes.id"), index=True)
+    edge_type: Mapped[GraphEdgeType] = mapped_column(Enum(GraphEdgeType))
+    condition: Mapped[str | None] = mapped_column(Text, nullable=True)
+    knowledge_id: Mapped[str | None] = mapped_column(ForeignKey("expert_knowledge.id"), nullable=True)
 
 
 class SymbolType(str, enum.Enum):
