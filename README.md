@@ -244,3 +244,8 @@ init_db()
   Phase 3's label matching) — see `docs/Phase4.md` "Honest limits" for the
   full list, including the lack of a product/revision picker in the
   frontend.
+
+
+## Phase 7 — Simulation Agent
+
+The Simulation Agent runs isolated fault → intervention experiments against Phase 6 digital twins, compares outcomes, validates explicit state assertions, and can compare competing hypotheses without mutating the persisted twin. See `docs/Phase7.md`.

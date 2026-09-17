@@ -120,3 +120,21 @@ export async function runDigitalTwinCommand(twinId, payload) {
 export async function getDigitalTwinEvents(twinId) {
   return getJson(`/digital-twins/${twinId}/events`);
 }
+
+
+// Phase 7 — Simulation Agent
+export async function runSimulationExperiment(twinId, payload) {
+  const res = await fetch(`${API_BASE}/simulation/twins/${twinId}/experiment`, {
+    method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`simulation experiment -> ${res.status}`);
+  return res.json();
+}
+
+export async function runSimulationHypotheses(twinId, payload) {
+  const res = await fetch(`${API_BASE}/simulation/twins/${twinId}/hypotheses`, {
+    method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`simulation hypotheses -> ${res.status}`);
+  return res.json();
+}

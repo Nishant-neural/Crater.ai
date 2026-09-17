@@ -143,3 +143,10 @@ button { font: inherit; }
 .panel pre { white-space: pre-wrap; font-size: 12px; }
 .error { padding: 10px; border: 1px solid #c00; margin: 10px 0; }
 @media (max-width: 800px) { .twin__grid { grid-template-columns: 1fr; } }
+
+/* Phase 7 — Simulation Agent */
+.simulation__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.simulation-result { padding: 12px 0; border-top: 1px solid rgba(127,127,127,.2); }
+.badge { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: .8rem; margin-left: 8px; }
+.badge--ok { border: 1px solid currentColor; }
+@media (max-width: 900px) { .simulation__grid { grid-template-columns: 1fr; } }

@@ -4,9 +4,10 @@ import ProcedureViewer from "./components/ProcedureViewer";
 import DiagramViewer from "./technical-viewer/DiagramViewer";
 import ExpertKnowledge from "./components/ExpertKnowledge";
 import DigitalTwin from "./components/DigitalTwin";
+import SimulationAgent from "./components/SimulationAgent";
 import "./App.css";
 
-const TABS = { EXPLORER: "explorer", PROCEDURE: "procedure", EXPERT: "expert", TWIN: "twin" };
+const TABS = { EXPLORER: "explorer", PROCEDURE: "procedure", EXPERT: "expert", TWIN: "twin", SIMULATION: "simulation" };
 
 /**
  * Phases 4-5 — Technical Visualization + expert knowledge capture shell.
@@ -55,6 +56,9 @@ export default function App() {
           <button className={tab === TABS.TWIN ? "active" : ""} onClick={() => setTab(TABS.TWIN)}>
             Digital Twin
           </button>
+          <button className={tab === TABS.SIMULATION ? "active" : ""} onClick={() => setTab(TABS.SIMULATION)}>
+            Simulation Agent
+          </button>
         </nav>
       </header>
 
@@ -82,7 +86,7 @@ export default function App() {
         </aside>
 
         <main className="app__main">
-          {tab === TABS.EXPERT ? <ExpertKnowledge /> : tab === TABS.TWIN ? <DigitalTwin /> : <DiagramViewer chunkId={activeChunkId} highlightLabels={highlightLabels} />}
+          {tab === TABS.EXPERT ? <ExpertKnowledge /> : tab === TABS.TWIN ? <DigitalTwin /> : tab === TABS.SIMULATION ? <SimulationAgent /> : <DiagramViewer chunkId={activeChunkId} highlightLabels={highlightLabels} />}
         </main>
       </div>
     </div>

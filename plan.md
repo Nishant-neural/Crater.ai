@@ -1157,14 +1157,15 @@ Pricing must be validated through customer discovery.
 -   Signals
 -   State transitions
 
-### Phase 7 --- Simulation Agent
+### Phase 7 --- Simulation Agent **(implemented)**
 
--   Run hypotheses
--   Modify machine state
--   Simulate failure
--   Simulate intervention
--   Compare outcomes
--   Iterate solutions
+-   Run isolated hypotheses against the Phase 6 digital twin
+-   Reproduce failures in a virtual state
+-   Apply proposed interventions without mutating the persisted twin
+-   Compare baseline, fault, and final states
+-   Validate/reject expected machine-state assertions
+-   Compare competing hypotheses
+-   Expose explainable simulation traces
 
 ### Phase 8 --- Real-World Feedback
 
