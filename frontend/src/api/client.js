@@ -84,3 +84,39 @@ export async function generateExpertGraph(versionId) {
   if (!res.ok) throw new Error(`generate graph -> ${res.status}`);
   return res.json();
 }
+
+
+// Phase 6 — Functional Digital Twin
+export async function createDigitalTwin(payload) {
+  const res = await fetch(`${API_BASE}/digital-twins`, {
+    method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`create digital twin -> ${res.status}`);
+  return res.json();
+}
+
+export async function createDemoDigitalTwin(productId, revisionId) {
+  const res = await fetch(`${API_BASE}/digital-twins/demo/${productId}/${revisionId}`, {method: "POST"});
+  if (!res.ok) throw new Error(`create demo twin -> ${res.status}`);
+  return res.json();
+}
+
+export async function listDigitalTwins() {
+  return getJson("/digital-twins");
+}
+
+export async function getDigitalTwin(twinId) {
+  return getJson(`/digital-twins/${twinId}`);
+}
+
+export async function runDigitalTwinCommand(twinId, payload) {
+  const res = await fetch(`${API_BASE}/digital-twins/${twinId}/commands`, {
+    method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`digital twin command -> ${res.status}`);
+  return res.json();
+}
+
+export async function getDigitalTwinEvents(twinId) {
+  return getJson(`/digital-twins/${twinId}/events`);
+}

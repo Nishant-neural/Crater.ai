@@ -131,3 +131,15 @@ button { font: inherit; }
 .procedure-viewer__refs { color: var(--muted); font-size: 11px; }
 .procedure-viewer__frame { display: flex; flex-direction: column; gap: 6px; }
 .procedure-viewer__frame img { width: 100%; border-radius: 6px; border: 1px solid var(--border); }
+
+.twin { padding: 24px; max-width: 1100px; }
+.muted { opacity: .7; }
+.twin__setup, .twin__controls { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0; }
+.twin input, .twin select { padding: 9px; min-width: 180px; }
+.twin button { padding: 9px 12px; cursor: pointer; }
+.twin__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.panel { border: 1px solid #ddd; border-radius: 8px; padding: 12px; overflow: auto; }
+.panel h3 { margin-top: 0; }
+.panel pre { white-space: pre-wrap; font-size: 12px; }
+.error { padding: 10px; border: 1px solid #c00; margin: 10px 0; }
+@media (max-width: 800px) { .twin__grid { grid-template-columns: 1fr; } }

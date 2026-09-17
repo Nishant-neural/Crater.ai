@@ -3,9 +3,10 @@ import ComponentExplorer from "./components/ComponentExplorer";
 import ProcedureViewer from "./components/ProcedureViewer";
 import DiagramViewer from "./technical-viewer/DiagramViewer";
 import ExpertKnowledge from "./components/ExpertKnowledge";
+import DigitalTwin from "./components/DigitalTwin";
 import "./App.css";
 
-const TABS = { EXPLORER: "explorer", PROCEDURE: "procedure", EXPERT: "expert" };
+const TABS = { EXPLORER: "explorer", PROCEDURE: "procedure", EXPERT: "expert", TWIN: "twin" };
 
 /**
  * Phases 4-5 — Technical Visualization + expert knowledge capture shell.
@@ -51,6 +52,9 @@ export default function App() {
           <button className={tab === TABS.EXPERT ? "active" : ""} onClick={() => setTab(TABS.EXPERT)}>
             Capture Rajesh
           </button>
+          <button className={tab === TABS.TWIN ? "active" : ""} onClick={() => setTab(TABS.TWIN)}>
+            Digital Twin
+          </button>
         </nav>
       </header>
 
@@ -78,7 +82,7 @@ export default function App() {
         </aside>
 
         <main className="app__main">
-          {tab === TABS.EXPERT ? <ExpertKnowledge /> : <DiagramViewer chunkId={activeChunkId} highlightLabels={highlightLabels} />}
+          {tab === TABS.EXPERT ? <ExpertKnowledge /> : tab === TABS.TWIN ? <DigitalTwin /> : <DiagramViewer chunkId={activeChunkId} highlightLabels={highlightLabels} />}
         </main>
       </div>
     </div>
