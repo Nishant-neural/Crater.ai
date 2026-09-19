@@ -1,9 +1,8 @@
 """
-Reranking step. Uses Claude as a lightweight cross-encoder substitute:
+Reranking step. Uses the configured LLM provider as a lightweight cross-encoder substitute:
 given the query and a shortlist of candidate chunk texts, ask it to
-score relevance 0-100 and return sorted order. This piggybacks on the
-"Claude Agent SDK" direction called out in plan.md §35 instead of
-adding a separate cross-encoder model dependency, and doubles as the
+score relevance 0-100 and return sorted order. This avoids adding a
+separate cross-encoder model dependency, and doubles as the
 seam where evidence-grounding checks (plan.md §8) can be added later.
 
 Swap for a local cross-encoder (e.g. a sentence-transformers
@@ -14,9 +13,7 @@ from __future__ import annotations
 
 import json
 
-from anthropic import Anthropic
-
-from backend.config import settings
+from backend.llm import get_llm_provider
 
 _RERANK_PROMPT = """You are scoring how relevant each passage is to a technician's question \
 about a specific piece of industrial equipment. Score each passage 0-100 \
@@ -38,20 +35,17 @@ def rerank(query: str, candidates: list[tuple[str, str]], top_k: int) -> list[st
     """
     if not candidates:
         return []
-    if not settings.anthropic_api_key:
-        # No API key configured (e.g. local dev without Claude access yet) —
-        # fall back to the fusion order rather than hard-failing retrieval.
-        return [cid for cid, _ in candidates[:top_k]]
-
-    client = Anthropic(api_key=settings.anthropic_api_key)
+    provider = get_llm_provider()
     passages_block = "\n".join(f"[{i}] {text[:1000]}" for i, (_, text) in enumerate(candidates))
 
-    response = client.messages.create(
-        model=settings.anthropic_model,
-        max_tokens=500,
+    raw = provider.complete(
         messages=[{"role": "user", "content": _RERANK_PROMPT.format(query=query, passages=passages_block)}],
+        max_tokens=500,
     )
-    raw = response.content[0].text.strip()
+    if not raw:
+        # No provider configured (e.g. local dev without model access yet) —
+        # fall back to the fusion order rather than hard-failing retrieval.
+        return [cid for cid, _ in candidates[:top_k]]
 
     try:
         scores = json.loads(raw)

@@ -90,7 +90,7 @@ The interviewer prompt focuses on questions such as:
 - What is the safest next test before replacing a component?
 - Under what conditions does the rule not apply?
 
-When an Anthropic API key is not configured, the workflow falls back to deterministic technical questions so the interview workflow remains usable in local/development environments.
+When no LLM provider is configured, the workflow falls back to deterministic technical questions so the interview workflow remains usable in local/development environments.
 
 ---
 

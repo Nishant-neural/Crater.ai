@@ -17,11 +17,10 @@ from __future__ import annotations
 
 import json
 
-from anthropic import Anthropic
 from sqlalchemy.orm import Session
 
-from backend.config import settings
 from backend.db.models import Component, ComponentRelationship, Procedure, RelationType, ProcedureType
+from backend.llm import get_llm_provider
 from backend.knowledge.schema import ExtractionResult
 
 _EXTRACTION_PROMPT = """You are extracting structured technical knowledge from one page of an \
@@ -47,16 +46,12 @@ where nothing was found):
 
 
 def extract_from_chunk_text(content: str) -> ExtractionResult:
-    if not settings.anthropic_api_key:
-        return ExtractionResult()
-
-    client = Anthropic(api_key=settings.anthropic_api_key)
-    response = client.messages.create(
-        model=settings.anthropic_model,
-        max_tokens=2000,
+    raw = get_llm_provider().complete(
         messages=[{"role": "user", "content": _EXTRACTION_PROMPT.format(content=content)}],
+        max_tokens=2000,
     )
-    raw = response.content[0].text.strip()
+    if not raw:
+        return ExtractionResult()
     try:
         return ExtractionResult.model_validate(json.loads(raw))
     except (json.JSONDecodeError, ValueError):

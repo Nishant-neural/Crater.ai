@@ -18,7 +18,7 @@ simulation (Phase 6-7), camera/voice (Phase 9).
 | PDF ingestion | `ingestion/pdf_loader.py` |
 | OCR (scanned pages + diagram captions) | `ingestion/ocr.py` |
 | Table extraction | `ingestion/pdf_loader.py` + `ingestion/chunking.py` |
-| Components / relationships / procedures | `knowledge/component_extraction.py` (Claude-based structured extraction) |
+| Components / relationships / procedures | `knowledge/component_extraction.py` (provider-based structured extraction) |
 | Revision modeling | `db/models.py` — every Document/Component/Procedure/FailureMode hangs off `Revision`, not just `Product` |
 | Hybrid retrieval (semantic + BM25 + metadata/revision filters + rerank) | `retrieval/hybrid.py`, `retrieval/vector_store.py`, `retrieval/bm25.py`, `retrieval/reranker.py` |
 

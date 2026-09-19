@@ -16,13 +16,12 @@ from __future__ import annotations
 
 import json
 
-from anthropic import Anthropic
 from sqlalchemy.orm import Session as DBSession
 
-from backend.config import settings
 from backend.db.models import Component, DiagnosticSession, DiagnosticStatus, FailureMode
 from backend.diagnostics.prompts import DIAGNOSTIC_SYSTEM_PROMPT
 from backend.diagnostics.schema import DiagnosticState, EvidenceRef, Hypothesis, NextStep, NextStepType
+from backend.llm import get_llm_provider
 from backend.retrieval.hybrid import hybrid_retrieve
 
 _MAX_TURNS_BEFORE_FORCED_ESCALATION = 8
@@ -81,20 +80,7 @@ def _build_query(state: DiagnosticState, latest_input: str) -> str:
 
 
 def _run_llm_turn(state: DiagnosticState, evidence: list[EvidenceRef], knowledge_block: str) -> dict:
-    if not settings.anthropic_api_key:
-        # No key configured — degrade to a safe, honest placeholder rather than fabricate reasoning.
-        return {
-            "hypotheses": [h.model_dump() for h in state.hypotheses],
-            "eliminated_hypotheses": [h.model_dump() for h in state.eliminated_hypotheses],
-            "overall_confidence": state.confidence,
-            "next_step": {
-                "type": "escalate",
-                "content": "Diagnostic reasoning requires an Anthropic API key (ANTHROPIC_API_KEY not set).",
-                "rationale": "No LLM configured to reason over evidence.",
-                "safety_notes": [],
-            },
-        }
-
+    provider = get_llm_provider()
     evidence_block = "\n".join(
         f"[{e.chunk_id}] (p.{e.page_number}, {e.source_document}): {e.content[:800]}" for e in evidence
     ) or "(no relevant evidence retrieved)"
@@ -104,14 +90,24 @@ def _run_llm_turn(state: DiagnosticState, evidence: list[EvidenceRef], knowledge
         evidence_block=evidence_block,
         knowledge_block=knowledge_block,
     )
-
-    client = Anthropic(api_key=settings.anthropic_api_key)
-    response = client.messages.create(
-        model=settings.anthropic_model,
-        max_tokens=2000,
+    raw = provider.complete(
         messages=[{"role": "user", "content": prompt}],
+        max_tokens=2000,
     )
-    raw = response.content[0].text.strip()
+    if not raw:
+        # No provider configured — degrade to a safe, honest placeholder rather than fabricate reasoning.
+        return {
+            "hypotheses": [h.model_dump() for h in state.hypotheses],
+            "eliminated_hypotheses": [h.model_dump() for h in state.eliminated_hypotheses],
+            "overall_confidence": state.confidence,
+            "next_step": {
+                "type": "escalate",
+                "content": "Diagnostic reasoning requires a configured LLM provider.",
+                "rationale": "No LLM configured to reason over evidence.",
+                "safety_notes": [],
+            },
+        }
+
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
