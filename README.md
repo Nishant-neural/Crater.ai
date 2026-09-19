@@ -25,7 +25,7 @@ sequence, not video/3D).
 | PDF ingestion | `ingestion/pdf_loader.py` |
 | OCR (scanned pages + diagram captions) | `ingestion/ocr.py` |
 | Table extraction | `ingestion/pdf_loader.py` + `ingestion/chunking.py` |
-| Components / relationships / procedures | `knowledge/component_extraction.py` (Claude-based structured extraction) |
+| Components / relationships / procedures | `knowledge/component_extraction.py` (LLM-provider-based structured extraction) |
 | Revision modeling | `db/models.py` — every Document/Component/Procedure/FailureMode hangs off `Revision`, not just `Product` |
 | Hybrid retrieval (semantic + BM25 + metadata/revision filters + rerank) | `retrieval/hybrid.py`, `retrieval/vector_store.py`, `retrieval/bm25.py`, `retrieval/reranker.py` |
 
@@ -57,7 +57,7 @@ and structured Component/FailureMode rows, not from simulated verification.
 
 | plan.md §5 / §33 requirement | Where |
 |---|---|
-| Schematic parsing (treat the image as a structured system, not just OCR text) | `schematic/vision_extraction.py` — sends the diagram image itself to Claude's vision input |
+| Schematic parsing (treat the image as a structured system, not just OCR text) | `schematic/vision_extraction.py` — sends the diagram image itself through the configured LLM provider |
 | Component extraction (symbols, labels, terminals) | same call, structured via `schematic/schema.py::SchematicExtractionResult` |
 | Connection graph (wires between components) | `db/models.py::SchematicNode` / `SchematicEdge`, persisted by `schematic/graph.py::persist_schematic` |
 | Signal tracing | `schematic/graph.py::trace_path` (pure BFS over labels) / `trace_path_in_document` (DB-backed wrapper) |
@@ -71,8 +71,8 @@ extraction has run, so a `SchematicNode` can link to its matching Phase-1
 
 **Honest limits**: node/edge extraction is a single vision-LLM call per
 diagram image, not true CV-based symbol/wire detection — quality depends
-entirely on how legible the source scan is and how well Claude's vision
-input reads it. Bounding boxes are the model's own estimate, not
+entirely on how legible the source scan is and how well the configured
+provider's vision input reads it. Bounding boxes are the model's own estimate, not
 pixel-precise. `trace_path` only knows about wires the model actually
 extracted from that one image; a signal that continues onto a different
 page/diagram won't be traced across documents yet — that's a natural
