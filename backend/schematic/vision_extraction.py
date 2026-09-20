@@ -19,9 +19,7 @@ import base64
 import json
 from pathlib import Path
 
-from anthropic import Anthropic
-
-from backend.config import settings
+from backend.llm import get_llm_provider
 from backend.schematic.schema import SchematicExtractionResult
 
 _EXTENSION_TO_MEDIA_TYPE = {
@@ -56,9 +54,6 @@ Respond with ONLY JSON in this exact shape:
 
 
 def extract_schematic(image_path: str | Path) -> SchematicExtractionResult:
-    if not settings.anthropic_api_key:
-        return SchematicExtractionResult()
-
     image_path = Path(image_path)
     media_type = _EXTENSION_TO_MEDIA_TYPE.get(image_path.suffix.lower())
     if media_type is None:
@@ -68,10 +63,7 @@ def extract_schematic(image_path: str | Path) -> SchematicExtractionResult:
 
     image_b64 = base64.standard_b64encode(image_path.read_bytes()).decode("utf-8")
 
-    client = Anthropic(api_key=settings.anthropic_api_key)
-    response = client.messages.create(
-        model=settings.anthropic_model,
-        max_tokens=2000,
+    raw = get_llm_provider().complete(
         messages=[
             {
                 "role": "user",
@@ -84,8 +76,10 @@ def extract_schematic(image_path: str | Path) -> SchematicExtractionResult:
                 ],
             }
         ],
+        max_tokens=2000,
     )
-    raw = response.content[0].text.strip()
+    if not raw:
+        return SchematicExtractionResult()
     try:
         return SchematicExtractionResult.model_validate(json.loads(raw))
     except (json.JSONDecodeError, ValueError):

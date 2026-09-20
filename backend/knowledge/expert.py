@@ -23,23 +23,16 @@ from backend.db.models import (
     KnowledgeType,
     KnowledgeVersion,
 )
+from backend.llm import get_llm_provider
 from backend.knowledge.expert_schema import ExtractedKnowledgeItem, KnowledgeExtractionResult
 from backend.knowledge.expert_prompts import EXPERT_EXTRACTION_PROMPT, EXPERT_INTERVIEW_PROMPT
 
 
 def _llm_text(prompt: str, max_tokens: int = 1200) -> str | None:
-    if not settings.anthropic_api_key:
-        return None
-    from anthropic import Anthropic
-    client = Anthropic(api_key=settings.anthropic_api_key)
-    response = client.messages.create(
-        model=settings.anthropic_model,
-        max_tokens=max_tokens,
+    return get_llm_provider().complete(
         messages=[{"role": "user", "content": prompt}],
+        max_tokens=max_tokens,
     )
-    if not response.content:
-        return None
-    return getattr(response.content[0], "text", "").strip() or None
 
 
 def _transcript(db: Session, interview_id: str) -> list[ExpertInterviewTurn]:
