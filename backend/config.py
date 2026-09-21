@@ -7,6 +7,8 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-6"
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
     llm_provider: str = "anthropic"
     llm_model: str = ""
 

@@ -40,6 +40,51 @@ class AnthropicProvider:
         return getattr(response.content[0], "text", "").strip() or None
 
 
+@dataclass
+class GeminiProvider:
+    """Google Gemini adapter kept behind the provider contract."""
+
+    api_key: str
+    model: str
+
+    def complete(self, messages: list[LLMMessage], max_tokens: int) -> str | None:
+        if not self.api_key:
+            return None
+
+        from google import genai
+        from google.genai import types
+
+        contents = [_gemini_content(message) for message in messages]
+        response = genai.Client(api_key=self.api_key).models.generate_content(
+            model=self.model,
+            contents=contents,
+            config=types.GenerateContentConfig(max_output_tokens=max_tokens),
+        )
+        return (response.text or "").strip() or None
+
+
+def _gemini_content(message: LLMMessage) -> dict[str, Any]:
+    """Translate the provider-neutral message shape to Gemini contents."""
+    role = "model" if message.get("role") == "assistant" else "user"
+    content = message.get("content", "")
+    if isinstance(content, str):
+        parts = [{"text": content}]
+    else:
+        parts = []
+        for item in content:
+            if item.get("type") == "text":
+                parts.append({"text": item.get("text", "")})
+            elif item.get("type") == "image":
+                source = item.get("source", {})
+                parts.append({
+                    "inline_data": {
+                        "mime_type": source.get("media_type", "application/octet-stream"),
+                        "data": source.get("data", ""),
+                    }
+                })
+    return {"role": role, "parts": parts}
+
+
 def get_llm_provider() -> LLMProvider:
     """Build the configured provider for the current application settings."""
     provider_name = settings.llm_provider.lower()
@@ -47,5 +92,10 @@ def get_llm_provider() -> LLMProvider:
         return AnthropicProvider(
             api_key=settings.anthropic_api_key,
             model=settings.llm_model or settings.anthropic_model,
+        )
+    if provider_name == "gemini":
+        return GeminiProvider(
+            api_key=settings.gemini_api_key,
+            model=settings.llm_model or settings.gemini_model,
         )
     raise ValueError(f"Unsupported LLM provider: {settings.llm_provider}")
