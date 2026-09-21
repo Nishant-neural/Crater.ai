@@ -16,6 +16,7 @@ dependencies = [
     "rank-bm25>=0.2.2",     # keyword/BM25 retrieval
     "qdrant-client>=1.9",   # vector store
     "anthropic>=0.34",      # Claude for extraction, reranking, agent loop
+    "google-genai>=1.0",     # Gemini provider
     "sentence-transformers>=3.0",  # local embeddings (swap for hosted embedding API if preferred)
     "typer>=0.12",          # CLI
     "python-multipart",     # file uploads in FastAPI
