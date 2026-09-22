@@ -28,7 +28,7 @@ from backend.knowledge.expert_schema import ExtractedKnowledgeItem, KnowledgeExt
 from backend.knowledge.expert_prompts import EXPERT_EXTRACTION_PROMPT, EXPERT_INTERVIEW_PROMPT
 from backend.knowledge.component_extraction import persist_machine_knowledge
 from backend.knowledge.evidence import MachineEvidence
-from backend.knowledge.machine_model import MachineBehavior, MachineEntity, UniversalMachineModel
+from backend.knowledge.machine_model import MachineBehavior, MachineEntity, MachineFailureMode, MachineProcedure, UniversalMachineModel
 
 
 def _llm_text(prompt: str, max_tokens: int = 1200) -> str | None:
@@ -233,16 +233,30 @@ def persist_approved_knowledge(db: Session, version: KnowledgeVersion) -> Univer
             chunk=",".join(item.evidence_turn_ids or []), confidence=item.confidence,
             extraction_method="reviewed_expert_claim",
         )
+        failure_id = f"expert-failure:{item.id}"
         if item.failure_mode:
+            model.failure_modes.append(MachineFailureMode(
+                id=failure_id,
+                name=item.failure_mode,
+                symptom=item.symptom,
+                diagnostic_test=item.condition,
+                expected_observation=item.expected_observation,
+                properties={"safety_notes": item.safety_notes},
+                evidence=[evidence],
+            ))
             model.entities.append(MachineEntity(
-                id=f"expert-failure:{item.id}", name=item.failure_mode,
-                entity_type="failure_mode", properties={"symptom": item.symptom, "safety_notes": item.safety_notes},
+                id=failure_id,
+                name=item.failure_mode,
+                entity_type="failure_mode",
+                properties={"symptom": item.symptom, "safety_notes": item.safety_notes},
                 evidence=[evidence],
             ))
         if item.action or item.condition or item.expected_observation:
             model.behaviors.append(MachineBehavior(
-                id=f"expert-behavior:{item.id}", subject_id=f"expert-failure:{item.id}",
-                subject_name=item.title, description="; ".join(filter(None, [item.condition, item.action, item.expected_observation])),
+                id=f"expert-behavior:{item.id}",
+                subject_id=failure_id if item.failure_mode else "",
+                subject_name=item.title,
+                description="; ".join(filter(None, [item.condition, item.action, item.expected_observation])),
                 evidence=[evidence],
             ))
     if model.entities or model.behaviors:

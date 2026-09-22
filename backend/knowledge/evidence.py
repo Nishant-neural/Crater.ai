@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 
 class MachineEvidence(BaseModel):
-    """A single, reviewable claim tied to source evidence."""
+    """A reviewable claim tied to source evidence and a machine revision."""
 
     fact: str
     source_document: str | None = None
@@ -18,20 +18,17 @@ class MachineEvidence(BaseModel):
     region: str | None = None
     confidence: float = 0.0
     extraction_method: str | None = None
+    revision_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     def as_summary(self) -> str:
         doc = self.source_document or "unknown document"
-        if self.page is not None:
-            return f"{doc} p.{self.page}: {self.fact}"
-        return f"{doc}: {self.fact}"
+        page = f" p.{self.page}" if self.page is not None else ""
+        return f"{doc}{page}: {self.fact}"
 
 
 class EvidenceBundle(BaseModel):
-    """A convenience container for grouping many evidence items."""
-
     items: list[MachineEvidence] = Field(default_factory=list)
 
 
-# Phase 8A compatibility aliases for the canonical universal-model vocabulary.
 Evidence = MachineEvidence

@@ -21,7 +21,7 @@ from backend.knowledge.component_extraction import (
     persist_extraction,
     persist_machine_knowledge,
 )
-from backend.knowledge.validation import validate_machine_model
+from backend.knowledge.validation import validate_facts, validate_machine_model
 from backend.retrieval.vector_store import upsert_chunks
 from backend.schematic.graph import persist_schematic, schematic_to_machine_model
 from backend.knowledge.evidence import MachineEvidence
@@ -101,13 +101,16 @@ def ingest_pdf(
             if result and (result.components or result.relationships or result.procedures):
                 persist_extraction(session, revision_id, chunk.id, result)
 
-            _stamp_provenance(machine_model, document.title, chunk.page_number, chunk.id, chunk.chunk_type.value)
-            if (machine_model.entities or machine_model.relations or machine_model.ports or
-                    machine_model.quantities or machine_model.states or machine_model.events or
-                    machine_model.behaviors or machine_model.constraints):
-                issues = validate_machine_model(machine_model)
-                if not issues:
-                    persist_machine_knowledge(session, revision_id, chunk.id, machine_model)
+            _stamp_provenance(
+                machine_model, document.title, page=chunk.page_number,
+                chunk_id=chunk.id, source_type=chunk.chunk_type.value,
+                revision_id=revision_id,
+            )
+            if _has_machine_knowledge(machine_model):
+                # Validation is fact-level: warnings are retained and only
+                # structurally invalid facts are skipped by persistence.
+                validate_facts(machine_model)
+                persist_machine_knowledge(session, revision_id, chunk.id, machine_model)
 
     # Schematic parsing (plan.md §5), diagram chunks only, run AFTER text
     # knowledge extraction above so component-name matching in
@@ -122,34 +125,68 @@ def ingest_pdf(
                 schematic_model = schematic_to_machine_model(
                     schematic_result, document.title, chunk.page_number, chunk.id
                 )
-                if not validate_machine_model(schematic_model):
-                    persist_machine_knowledge(session, revision_id, chunk.id, schematic_model)
+                persist_machine_knowledge(session, revision_id, chunk.id, schematic_model)
 
     session.commit()
 
     return document
 
 
-def _stamp_provenance(model, source_document: str, page: int | None, chunk_id: str, source_type: str) -> None:
-    """Guarantee source metadata even when a provider omits optional evidence."""
+def _has_machine_knowledge(model) -> bool:
+    return any((
+        model.entities, model.relations, model.ports, model.quantities,
+        model.states, model.events, model.behaviors, model.constraints,
+        model.procedures, model.failure_modes,
+    ))
+
+
+def _stamp_provenance(
+    model,
+    source_document: str,
+    page: int | None,
+    chunk_id: str,
+    source_type: str,
+    revision_id: str | None = None,
+) -> None:
+    """Guarantee source and revision metadata for every extracted claim."""
     def evidence(fact: str) -> MachineEvidence:
         return MachineEvidence(
-            fact=fact, source_document=source_document, page=page, chunk=chunk_id,
-            source_type=source_type, confidence=0.7, extraction_method="llm_extraction",
+            fact=fact,
+            source_document=source_document,
+            page=page,
+            chunk=chunk_id,
+            source_type=source_type,
+            confidence=0.7,
+            extraction_method="llm_extraction",
+            revision_id=revision_id,
         )
 
-    for entity in model.entities:
-        if not entity.evidence:
-            entity.evidence.append(evidence(f"Entity {entity.name}"))
-    for relation in model.relations:
-        if not relation.evidence:
-            relation.evidence.append(evidence(f"{relation.subject_name} {relation.relation_type} {relation.object_name}"))
-    for collection, label in (
-        (model.ports, "Port"), (model.quantities, "Quantity"), (model.states, "State"),
-        (model.events, "Event"), (model.behaviors, "Behavior"), (model.constraints, "Constraint"),
-    ):
+    collections = (
+        (model.entities, lambda item: f"Entity {item.name}"),
+        (model.relations, lambda item: f"{item.subject_name} {item.relation_type} {item.object_name}"),
+        (model.ports, lambda item: f"Port {item.name}"),
+        (model.quantities, lambda item: f"Quantity {item.name}"),
+        (model.states, lambda item: f"State {item.name}"),
+        (model.events, lambda item: f"Event {item.name}"),
+        (model.behaviors, lambda item: f"Behavior {item.subject_name}"),
+        (model.constraints, lambda item: f"Constraint {item.name}"),
+        (model.procedures, lambda item: f"Procedure {item.name}"),
+        (model.failure_modes, lambda item: f"Failure mode {item.name}"),
+    )
+    for collection, labeler in collections:
         for item in collection:
             if not item.evidence:
-                item.evidence.append(evidence(f"{label} {getattr(item, 'name', getattr(item, 'id', 'unknown'))}"))
+                item.evidence.append(evidence(labeler(item)))
+            else:
+                for ev in item.evidence:
+                    ev.revision_id = ev.revision_id or revision_id
+                    ev.source_document = ev.source_document or source_document
+                    ev.page = ev.page if ev.page is not None else page
+                    ev.chunk = ev.chunk or chunk_id
+                    ev.source_type = ev.source_type or source_type
+
     if not model.evidence:
         model.evidence.append(evidence("Universal machine extraction"))
+    else:
+        for ev in model.evidence:
+            ev.revision_id = ev.revision_id or revision_id
