@@ -486,6 +486,70 @@ class FailureMode(Base):
     revision: Mapped["Revision"] = relationship(back_populates="failure_modes")
 
 
+class MachineKnowledgeEntity(Base):
+    """Universal machine model entity persisted in the database."""
+
+    __tablename__ = "machine_knowledge_entities"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    revision_id: Mapped[str | None] = mapped_column(ForeignKey("revisions.id"), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String, index=True)
+    entity_type: Mapped[str] = mapped_column(String, default="component")
+    properties: Mapped[dict | None] = mapped_column(JSON, default=dict)
+    ports: Mapped[list] = mapped_column(JSON, default=list)
+    states: Mapped[list] = mapped_column(JSON, default=list)
+    source_chunk_id: Mapped[str | None] = mapped_column(ForeignKey("chunks.id"), nullable=True)
+
+
+class MachineKnowledgeRelation(Base):
+    """Universal machine model relation persisted in the database."""
+
+    __tablename__ = "machine_knowledge_relations"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    revision_id: Mapped[str | None] = mapped_column(ForeignKey("revisions.id"), nullable=True, index=True)
+    subject_id: Mapped[str] = mapped_column(String, index=True)
+    subject_name: Mapped[str] = mapped_column(String)
+    relation_type: Mapped[str] = mapped_column(String, index=True)
+    object_id: Mapped[str] = mapped_column(String, index=True)
+    object_name: Mapped[str] = mapped_column(String)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_chunk_id: Mapped[str | None] = mapped_column(ForeignKey("chunks.id"), nullable=True)
+
+
+class MachineKnowledgeEvidence(Base):
+    """Traceable evidence attached to any universal-machine fact."""
+
+    __tablename__ = "machine_knowledge_evidence"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    item_type: Mapped[str] = mapped_column(String, index=True)  # entity/relation/behavior/state
+    item_id: Mapped[str] = mapped_column(String, index=True)
+    fact: Mapped[str] = mapped_column(Text)
+    source_document: Mapped[str | None] = mapped_column(String, nullable=True)
+    page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    chunk: Mapped[str | None] = mapped_column(String, nullable=True)
+    source_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    location: Mapped[str | None] = mapped_column(String, nullable=True)
+    region: Mapped[str | None] = mapped_column(String, nullable=True)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    extraction_method: Mapped[str | None] = mapped_column(String, nullable=True)
+    evidence_metadata: Mapped[dict | None] = mapped_column(JSON, default=dict)
+
+
+class MachineKnowledgeBehavior(Base):
+    """Behavior-level knowledge persisted for machine simulations."""
+
+    __tablename__ = "machine_knowledge_behaviors"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    revision_id: Mapped[str | None] = mapped_column(ForeignKey("revisions.id"), nullable=True, index=True)
+    subject_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    subject_name: Mapped[str] = mapped_column(String)
+    description: Mapped[str] = mapped_column(Text)
+    source_chunk_id: Mapped[str | None] = mapped_column(ForeignKey("chunks.id"), nullable=True)
+
+
 # ---------------------------------------------------------------------------
 # Phase 6 — Functional Digital Twin
 # ---------------------------------------------------------------------------

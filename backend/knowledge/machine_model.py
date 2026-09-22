@@ -23,6 +23,17 @@ class MachineEntity(BaseModel):
     evidence: list[MachineEvidence] = Field(default_factory=list)
 
 
+class MachineEntityRelation(BaseModel):
+    id: str | None = None
+    subject_id: str | None = None
+    subject_name: str | None = None
+    relation_type: str | None = None
+    object_id: str | None = None
+    object_name: str | None = None
+    description: str | None = None
+    evidence: list[MachineEvidence] = Field(default_factory=list)
+
+
 class MachineRelation(BaseModel):
     subject_id: str
     subject_name: str

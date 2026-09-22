@@ -19,7 +19,17 @@ import json
 
 from sqlalchemy.orm import Session
 
-from backend.db.models import Component, ComponentRelationship, Procedure, RelationType, ProcedureType
+from backend.db.models import (
+    Component,
+    ComponentRelationship,
+    MachineKnowledgeBehavior,
+    MachineKnowledgeEntity,
+    MachineKnowledgeEvidence,
+    MachineKnowledgeRelation,
+    Procedure,
+    RelationType,
+    ProcedureType,
+)
 from backend.knowledge.evidence import MachineEvidence
 from backend.knowledge.machine_model import (
     MachineBehavior,
@@ -188,16 +198,89 @@ def extract_machine_knowledge_from_chunk(content: str) -> UniversalMachineModel:
 
 
 def persist_machine_knowledge(session: Session, revision_id: str, source_chunk_id: str, model: UniversalMachineModel) -> None:
-    """Persist a universal machine model into the legacy relational tables when needed."""
+    """Persist the universal machine model into project tables for later graph/RAG work."""
     for entity in model.entities:
-        session.add(Component(
+        db_entity = MachineKnowledgeEntity(
             revision_id=revision_id,
             name=entity.name,
-            function=str(entity.properties.get("function")) if entity.properties.get("function") else None,
-            location_description=str(entity.properties.get("location_description")) if entity.properties.get("location_description") else None,
-            part_number=str(entity.properties.get("part_number")) if entity.properties.get("part_number") else None,
+            entity_type=entity.entity_type,
+            properties=entity.properties,
+            ports=entity.ports,
+            states=entity.states,
+            source_chunk_id=source_chunk_id,
+        )
+        session.add(db_entity)
+        session.flush()
+        for ev in entity.evidence:
+            session.add(MachineKnowledgeEvidence(
+                item_type="entity",
+                item_id=db_entity.id,
+                fact=ev.fact,
+                source_document=ev.source_document,
+                page=ev.page,
+                chunk=ev.chunk,
+                source_type=ev.source_type,
+                location=ev.location,
+                region=ev.region,
+                confidence=ev.confidence,
+                extraction_method=ev.extraction_method,
+                evidence_metadata=ev.metadata,
+            ))
+
+    for rel in model.relations:
+        db_rel = MachineKnowledgeRelation(
+            revision_id=revision_id,
+            subject_id=rel.subject_id,
+            subject_name=rel.subject_name,
+            relation_type=rel.relation_type,
+            object_id=rel.object_id,
+            object_name=rel.object_name,
+            description=rel.description,
+            source_chunk_id=source_chunk_id,
+        )
+        session.add(db_rel)
+        session.flush()
+        for ev in rel.evidence:
+            session.add(MachineKnowledgeEvidence(
+                item_type="relation",
+                item_id=db_rel.id,
+                fact=ev.fact,
+                source_document=ev.source_document,
+                page=ev.page,
+                chunk=ev.chunk,
+                source_type=ev.source_type,
+                location=ev.location,
+                region=ev.region,
+                confidence=ev.confidence,
+                extraction_method=ev.extraction_method,
+                evidence_metadata=ev.metadata,
+            ))
+
+    for behavior in model.behaviors:
+        session.add(MachineKnowledgeBehavior(
+            revision_id=revision_id,
+            subject_id=behavior.subject_id,
+            subject_name=behavior.subject_name,
+            description=behavior.description,
             source_chunk_id=source_chunk_id,
         ))
+        session.flush()
+        for ev in behavior.evidence:
+            session.add(MachineKnowledgeEvidence(
+                item_type="behavior",
+                item_id=behavior.id,
+                fact=ev.fact,
+                source_document=ev.source_document,
+                page=ev.page,
+                chunk=ev.chunk,
+                source_type=ev.source_type,
+                location=ev.location,
+                region=ev.region,
+                confidence=ev.confidence,
+                extraction_method=ev.extraction_method,
+                evidence_metadata=ev.metadata,
+            ))
+
     session.flush()
 
 

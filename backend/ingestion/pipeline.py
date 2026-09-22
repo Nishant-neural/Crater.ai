@@ -16,7 +16,13 @@ from backend.schematic.vision_extraction import extract_schematic
 from backend.db.models import Chunk, Document, DocType
 from backend.ingestion.chunking import page_to_chunks
 from backend.ingestion.pdf_loader import load_pdf
-from backend.knowledge.component_extraction import extract_from_chunk_text, persist_extraction
+from backend.knowledge.component_extraction import (
+    extract_from_chunk_text,
+    extract_machine_knowledge_from_chunk,
+    persist_extraction,
+    persist_machine_knowledge,
+)
+from backend.knowledge.validation import validate_machine_model
 from backend.retrieval.vector_store import upsert_chunks
 from backend.schematic.graph import persist_schematic
 
@@ -94,6 +100,12 @@ def ingest_pdf(
             result = extract_from_chunk_text(chunk.content)
             if result.components or result.relationships or result.procedures:
                 persist_extraction(session, revision_id, chunk.id, result)
+
+            machine_model = extract_machine_knowledge_from_chunk(chunk.content)
+            if machine_model.entities or machine_model.relations or machine_model.behaviors:
+                issues = validate_machine_model(machine_model)
+                if not issues:
+                    persist_machine_knowledge(session, revision_id, chunk.id, machine_model)
 
     # Schematic parsing (plan.md §5), diagram chunks only, run AFTER text
     # knowledge extraction above so component-name matching in
