@@ -20,8 +20,15 @@ import json
 from sqlalchemy.orm import Session
 
 from backend.db.models import Component, ComponentRelationship, Procedure, RelationType, ProcedureType
+from backend.knowledge.evidence import MachineEvidence
+from backend.knowledge.machine_model import (
+    MachineBehavior,
+    MachineEntity,
+    MachineRelation,
+    UniversalMachineModel,
+)
+from backend.knowledge.schema import ExtractionResult, MachineKnowledgeExtractionResult
 from backend.llm import get_llm_provider
-from backend.knowledge.schema import ExtractionResult
 
 _EXTRACTION_PROMPT = """You are extracting structured technical knowledge from one page of an \
 industrial equipment manual. Only extract what is explicitly stated — do not infer or \
@@ -121,3 +128,103 @@ def persist_extraction(
     # The pipeline commits the complete extraction in one transaction. This
     # prevents retries from accumulating a partially extracted Product Brain.
     session.flush()
+
+
+def extract_machine_knowledge_from_chunk(content: str) -> UniversalMachineModel:
+    """Build a Phase 8A universal machine model from text evidence.
+
+    This compatibility layer intentionally keeps the legacy extractor intact
+    while exposing the universal representation expected by the Phase 8A docs.
+    """
+    legacy = extract_from_chunk_text(content)
+    model = UniversalMachineModel()
+    for comp in legacy.components:
+        evidence = [MachineEvidence(
+            fact=f"Component {comp.name} extracted from manual text",
+            source_type="text",
+            confidence=0.7,
+            extraction_method="legacy_component_extractor",
+        )]
+        model.entities.append(MachineEntity(
+            id=f"entity:{comp.name.lower().replace(' ', '-')}",
+            name=comp.name,
+            entity_type="component",
+            properties={
+                "function": comp.function,
+                "location_description": comp.location_description,
+                "part_number": comp.part_number,
+            },
+            evidence=evidence,
+        ))
+    for rel in legacy.relationships:
+        model.relations.append(MachineRelation(
+            subject_id=f"entity:{rel.from_component.lower().replace(' ', '-')}",
+            subject_name=rel.from_component,
+            relation_type=rel.relation_type,
+            object_id=f"entity:{rel.to_component.lower().replace(' ', '-')}",
+            object_name=rel.to_component,
+            description=rel.description,
+            evidence=[MachineEvidence(
+                fact=f"{rel.from_component} {rel.relation_type} {rel.to_component}",
+                source_type="text",
+                confidence=0.7,
+                extraction_method="legacy_relationship_extractor",
+            )],
+        ))
+    for proc in legacy.procedures:
+        model.behaviors.append(MachineBehavior(
+            id=f"behavior:{proc.name.lower().replace(' ', '-')}",
+            subject_id="",
+            subject_name=proc.name,
+            description="Procedure: " + "; ".join(proc.steps),
+            evidence=[MachineEvidence(
+                fact=f"Procedure {proc.name} extracted",
+                source_type="text",
+                confidence=0.6,
+                extraction_method="legacy_procedure_extractor",
+            )],
+        ))
+    return model
+
+
+def persist_machine_knowledge(session: Session, revision_id: str, source_chunk_id: str, model: UniversalMachineModel) -> None:
+    """Persist a universal machine model into the legacy relational tables when needed."""
+    for entity in model.entities:
+        session.add(Component(
+            revision_id=revision_id,
+            name=entity.name,
+            function=str(entity.properties.get("function")) if entity.properties.get("function") else None,
+            location_description=str(entity.properties.get("location_description")) if entity.properties.get("location_description") else None,
+            part_number=str(entity.properties.get("part_number")) if entity.properties.get("part_number") else None,
+            source_chunk_id=source_chunk_id,
+        ))
+    session.flush()
+
+
+def extract_machine_knowledge(content: str) -> MachineKnowledgeExtractionResult:
+    """Structured result shape that matches the Phase 8A schema contract."""
+    legacy = extract_from_chunk_text(content)
+    result = MachineKnowledgeExtractionResult()
+    for comp in legacy.components:
+        result.entities.append({
+            "id": f"entity:{comp.name.lower().replace(' ', '-')}",
+            "name": comp.name,
+            "entity_type": "component",
+            "properties": {
+                "function": comp.function,
+                "location_description": comp.location_description,
+                "part_number": comp.part_number,
+            },
+            "ports": [],
+            "states": [],
+        })
+    for rel in legacy.relationships:
+        result.relations.append({
+            "subject_id": f"entity:{rel.from_component.lower().replace(' ', '-')}",
+            "subject_name": rel.from_component,
+            "relation_type": rel.relation_type,
+            "object_id": f"entity:{rel.to_component.lower().replace(' ', '-')}",
+            "object_name": rel.to_component,
+            "description": rel.description,
+        })
+    return result
