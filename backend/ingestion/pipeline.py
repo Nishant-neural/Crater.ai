@@ -17,14 +17,14 @@ from backend.db.models import Chunk, Document, DocType
 from backend.ingestion.chunking import page_to_chunks
 from backend.ingestion.pdf_loader import load_pdf
 from backend.knowledge.component_extraction import (
-    extract_from_chunk_text,
-    extract_machine_knowledge_from_chunk,
+    extract_chunk_knowledge,
     persist_extraction,
     persist_machine_knowledge,
 )
 from backend.knowledge.validation import validate_machine_model
 from backend.retrieval.vector_store import upsert_chunks
-from backend.schematic.graph import persist_schematic
+from backend.schematic.graph import persist_schematic, schematic_to_machine_model
+from backend.knowledge.evidence import MachineEvidence
 
 
 def ingest_pdf(
@@ -95,14 +95,16 @@ def ingest_pdf(
     # component_extraction.py docstring).
     if run_knowledge_extraction:
         for chunk in all_chunks:
-            if chunk.chunk_type.value != "text" or len(chunk.content.strip()) < 100:
+            if not chunk.content.strip():
                 continue
-            result = extract_from_chunk_text(chunk.content)
-            if result.components or result.relationships or result.procedures:
+            result, machine_model = extract_chunk_knowledge(chunk.content)
+            if result and (result.components or result.relationships or result.procedures):
                 persist_extraction(session, revision_id, chunk.id, result)
 
-            machine_model = extract_machine_knowledge_from_chunk(chunk.content)
-            if machine_model.entities or machine_model.relations or machine_model.behaviors:
+            _stamp_provenance(machine_model, document.title, chunk.page_number, chunk.id, chunk.chunk_type.value)
+            if (machine_model.entities or machine_model.relations or machine_model.ports or
+                    machine_model.quantities or machine_model.states or machine_model.events or
+                    machine_model.behaviors or machine_model.constraints):
                 issues = validate_machine_model(machine_model)
                 if not issues:
                     persist_machine_knowledge(session, revision_id, chunk.id, machine_model)
@@ -117,5 +119,37 @@ def ingest_pdf(
             schematic_result = extract_schematic(chunk.extra["image_path"])
             if schematic_result.nodes:
                 persist_schematic(session, document.id, chunk.id, revision_id, schematic_result)
+                schematic_model = schematic_to_machine_model(
+                    schematic_result, document.title, chunk.page_number, chunk.id
+                )
+                if not validate_machine_model(schematic_model):
+                    persist_machine_knowledge(session, revision_id, chunk.id, schematic_model)
+
+    session.commit()
 
     return document
+
+
+def _stamp_provenance(model, source_document: str, page: int | None, chunk_id: str, source_type: str) -> None:
+    """Guarantee source metadata even when a provider omits optional evidence."""
+    def evidence(fact: str) -> MachineEvidence:
+        return MachineEvidence(
+            fact=fact, source_document=source_document, page=page, chunk=chunk_id,
+            source_type=source_type, confidence=0.7, extraction_method="llm_extraction",
+        )
+
+    for entity in model.entities:
+        if not entity.evidence:
+            entity.evidence.append(evidence(f"Entity {entity.name}"))
+    for relation in model.relations:
+        if not relation.evidence:
+            relation.evidence.append(evidence(f"{relation.subject_name} {relation.relation_type} {relation.object_name}"))
+    for collection, label in (
+        (model.ports, "Port"), (model.quantities, "Quantity"), (model.states, "State"),
+        (model.events, "Event"), (model.behaviors, "Behavior"), (model.constraints, "Constraint"),
+    ):
+        for item in collection:
+            if not item.evidence:
+                item.evidence.append(evidence(f"{label} {getattr(item, 'name', getattr(item, 'id', 'unknown'))}"))
+    if not model.evidence:
+        model.evidence.append(evidence("Universal machine extraction"))

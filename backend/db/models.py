@@ -51,6 +51,13 @@ class DocType(str, enum.Enum):
     other = "other"
 
 
+class IngestionStatus(str, enum.Enum):
+    queued = "queued"
+    processing = "processing"
+    completed = "completed"
+    failed = "failed"
+
+
 class ChunkType(str, enum.Enum):
     text = "text"
     table = "table"
@@ -134,6 +141,29 @@ class Document(Base):
 
     revision: Mapped["Revision"] = relationship(back_populates="documents")
     chunks: Mapped[list["Chunk"]] = relationship(back_populates="document", cascade="all, delete-orphan")
+
+
+class IngestionJob(Base):
+    """Durable upload state used by the idempotent ingestion API."""
+
+    __tablename__ = "ingestion_jobs"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    revision_id: Mapped[str] = mapped_column(ForeignKey("revisions.id"), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String)
+    content_sha256: Mapped[str] = mapped_column(String, index=True)
+    doc_type: Mapped[DocType] = mapped_column(Enum(DocType))
+    title: Mapped[str] = mapped_column(String)
+    source_path: Mapped[str] = mapped_column(String)
+    document_id: Mapped[str | None] = mapped_column(ForeignKey("documents.id"), nullable=True)
+    status: Mapped[IngestionStatus] = mapped_column(Enum(IngestionStatus), default=IngestionStatus.queued)
+    stage: Mapped[str] = mapped_column(String, default="queued")
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("revision_id", "idempotency_key", name="uq_ingestion_job_key"),)
 
 
 class Chunk(Base):
@@ -547,6 +577,19 @@ class MachineKnowledgeBehavior(Base):
     subject_id: Mapped[str | None] = mapped_column(String, nullable=True)
     subject_name: Mapped[str] = mapped_column(String)
     description: Mapped[str] = mapped_column(Text)
+    source_chunk_id: Mapped[str | None] = mapped_column(ForeignKey("chunks.id"), nullable=True)
+
+
+class MachineKnowledgeFact(Base):
+    """Persisted universal primitive not requiring a machine-specific table."""
+
+    __tablename__ = "machine_knowledge_facts"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    revision_id: Mapped[str | None] = mapped_column(ForeignKey("revisions.id"), nullable=True, index=True)
+    fact_type: Mapped[str] = mapped_column(String, index=True)
+    fact_key: Mapped[str] = mapped_column(String, index=True)
+    payload: Mapped[dict] = mapped_column(JSON)
     source_chunk_id: Mapped[str | None] = mapped_column(ForeignKey("chunks.id"), nullable=True)
 
 

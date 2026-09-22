@@ -25,6 +25,7 @@ from backend.db.models import (
     MachineKnowledgeBehavior,
     MachineKnowledgeEntity,
     MachineKnowledgeEvidence,
+    MachineKnowledgeFact,
     MachineKnowledgeRelation,
     Procedure,
     RelationType,
@@ -33,8 +34,13 @@ from backend.db.models import (
 from backend.knowledge.evidence import MachineEvidence
 from backend.knowledge.machine_model import (
     MachineBehavior,
+    MachineConstraint,
     MachineEntity,
+    MachineEvent,
     MachineRelation,
+    MachinePort,
+    MachineQuantity,
+    MachineState,
     UniversalMachineModel,
 )
 from backend.knowledge.schema import ExtractionResult, MachineKnowledgeExtractionResult
@@ -53,26 +59,57 @@ Text:
 ---
 
 Respond with ONLY JSON matching this shape (omit fields that don't apply, use empty lists \
-where nothing was found):
+where nothing was found). Every extracted item must include an evidence object with fact, \
+source_type, confidence from 0.0 to 1.0, and extraction_method. Use status KNOWN, UNKNOWN, \
+or UNCERTAIN when a value is not explicit:
 
 {{
-  "components": [{{"name": "", "function": "", "location_description": "", "part_number": ""}}],
-  "relationships": [{{"from_component": "", "to_component": "", "relation_type": "electrical|mechanical|fluid|signal|contains", "description": ""}}],
-  "procedures": [{{"name": "", "procedure_type": "installation|removal|calibration|maintenance|troubleshooting|replacement|verification", "steps": [""]}}]
+    "components": [{{"name": "", "function": "", "location_description": "", "part_number": "", "evidence": {{"fact": "", "source_type": "text", "confidence": 0.0, "extraction_method": "llm"}}}}],
+    "relationships": [{{"from_component": "", "to_component": "", "relation_type": "electrical|mechanical|fluid|signal|contains", "description": "", "evidence": {{"fact": "", "source_type": "text", "confidence": 0.0, "extraction_method": "llm"}}}}],
+    "procedures": [{{"name": "", "procedure_type": "installation|removal|calibration|maintenance|troubleshooting|replacement|verification", "steps": [""]}}],
+    "entities": [{{"id": "entity:p1", "name": "", "entity_type": "", "properties": {{}}, "ports": [], "states": [], "evidence": []}}],
+    "relations": [{{"subject_id": "", "subject_name": "", "relation_type": "", "object_id": "", "object_name": "", "description": "", "evidence": []}}],
+    "ports": [{{"id": "port:p1", "entity_id": "", "name": "", "direction": "", "properties": {{}}, "evidence": []}}],
+    "quantities": [{{"id": "quantity:q1", "entity_id": "", "name": "", "value": "", "unit": "", "properties": {{}}, "evidence": []}}],
+    "states": [{{"entity_id": "", "name": "", "value": "", "properties": {{}}, "evidence": []}}],
+    "events": [{{"id": "event:e1", "entity_id": "", "name": "", "description": "", "evidence": []}}],
+    "behaviors": [{{"id": "behavior:b1", "subject_id": "", "subject_name": "", "description": "", "evidence": []}}],
+    "constraints": [{{"id": "constraint:c1", "entity_id": "", "name": "", "description": "", "evidence": []}}]
 }}"""
 
 
-def extract_from_chunk_text(content: str) -> ExtractionResult:
+def _extract_result(content: str) -> MachineKnowledgeExtractionResult:
     raw = get_llm_provider().complete(
         messages=[{"role": "user", "content": _EXTRACTION_PROMPT.format(content=content)}],
-        max_tokens=2000,
+        max_tokens=4000,
     )
     if not raw:
-        return ExtractionResult()
+        return MachineKnowledgeExtractionResult()
     try:
-        return ExtractionResult.model_validate(json.loads(raw))
+        return MachineKnowledgeExtractionResult.model_validate(json.loads(raw))
     except (json.JSONDecodeError, ValueError):
-        return ExtractionResult()
+        return MachineKnowledgeExtractionResult()
+
+
+def _legacy_result(result: MachineKnowledgeExtractionResult) -> ExtractionResult:
+    return ExtractionResult(
+        components=result.components,
+        relationships=result.relationships,
+        procedures=result.procedures,
+    )
+
+
+def extract_chunk_knowledge(content: str) -> tuple[ExtractionResult, UniversalMachineModel]:
+    """Extract legacy Product Brain rows and universal facts in one provider call."""
+    result = _extract_result(content)
+    legacy = _legacy_result(result)
+    if result.entities or result.relations or result.ports or result.quantities or result.states or result.events or result.behaviors or result.constraints:
+        return legacy, _universal_model_from_result(result)
+    return legacy, _legacy_model(result)
+
+
+def extract_from_chunk_text(content: str) -> ExtractionResult:
+    return extract_chunk_knowledge(content)[0]
 
 
 def persist_extraction(
@@ -146,7 +183,11 @@ def extract_machine_knowledge_from_chunk(content: str) -> UniversalMachineModel:
     This compatibility layer intentionally keeps the legacy extractor intact
     while exposing the universal representation expected by the Phase 8A docs.
     """
-    legacy = extract_from_chunk_text(content)
+    return extract_chunk_knowledge(content)[1]
+
+
+def _legacy_model(result: MachineKnowledgeExtractionResult) -> UniversalMachineModel:
+    legacy = _legacy_result(result)
     model = UniversalMachineModel()
     for comp in legacy.components:
         evidence = [MachineEvidence(
@@ -197,7 +238,30 @@ def extract_machine_knowledge_from_chunk(content: str) -> UniversalMachineModel:
     return model
 
 
-def persist_machine_knowledge(session: Session, revision_id: str, source_chunk_id: str, model: UniversalMachineModel) -> None:
+def _universal_model_from_result(result: MachineKnowledgeExtractionResult) -> UniversalMachineModel:
+    """Convert the provider-neutral extraction contract into typed primitives."""
+    model = UniversalMachineModel()
+    for item in result.entities:
+        model.entities.append(MachineEntity.model_validate(item.model_dump()))
+    for item in result.relations:
+        model.relations.append(MachineRelation.model_validate(item.model_dump()))
+    for item in result.ports:
+        model.ports.append(MachinePort.model_validate(item))
+    for item in result.quantities:
+        model.quantities.append(MachineQuantity.model_validate(item))
+    for item in result.states:
+        model.states.append(MachineState.model_validate(item))
+    for item in result.events:
+        model.events.append(MachineEvent.model_validate(item))
+    for item in result.behaviors:
+        model.behaviors.append(MachineBehavior.model_validate(item))
+    for item in result.constraints:
+        model.constraints.append(MachineConstraint.model_validate(item))
+    model.evidence.extend(result.evidence)
+    return model
+
+
+def persist_machine_knowledge(session: Session, revision_id: str | None, source_chunk_id: str | None, model: UniversalMachineModel) -> None:
     """Persist the universal machine model into project tables for later graph/RAG work."""
     for entity in model.entities:
         db_entity = MachineKnowledgeEntity(
@@ -257,18 +321,19 @@ def persist_machine_knowledge(session: Session, revision_id: str, source_chunk_i
             ))
 
     for behavior in model.behaviors:
-        session.add(MachineKnowledgeBehavior(
+        db_behavior = MachineKnowledgeBehavior(
             revision_id=revision_id,
             subject_id=behavior.subject_id,
             subject_name=behavior.subject_name,
             description=behavior.description,
             source_chunk_id=source_chunk_id,
-        ))
+        )
+        session.add(db_behavior)
         session.flush()
         for ev in behavior.evidence:
             session.add(MachineKnowledgeEvidence(
                 item_type="behavior",
-                item_id=behavior.id,
+                item_id=db_behavior.id,
                 fact=ev.fact,
                 source_document=ev.source_document,
                 page=ev.page,
@@ -280,6 +345,47 @@ def persist_machine_knowledge(session: Session, revision_id: str, source_chunk_i
                 extraction_method=ev.extraction_method,
                 evidence_metadata=ev.metadata,
             ))
+
+    for fact_type, fact_key, payload in model.all_facts():
+        session.add(MachineKnowledgeFact(
+            revision_id=revision_id,
+            fact_type=fact_type,
+            fact_key=fact_key,
+            payload=payload,
+            source_chunk_id=source_chunk_id,
+        ))
+        fact_evidence = payload.get("evidence", [])
+        for ev in fact_evidence:
+            session.add(MachineKnowledgeEvidence(
+                item_type=fact_type,
+                item_id=fact_key,
+                fact=ev.get("fact", f"{fact_type}:{fact_key}"),
+                source_document=ev.get("source_document"),
+                page=ev.get("page"),
+                chunk=ev.get("chunk"),
+                source_type=ev.get("source_type"),
+                location=ev.get("location"),
+                region=ev.get("region"),
+                confidence=ev.get("confidence", 0.0),
+                extraction_method=ev.get("extraction_method"),
+                evidence_metadata=ev.get("metadata", {}),
+            ))
+
+    for ev in model.evidence:
+        session.add(MachineKnowledgeEvidence(
+            item_type="model",
+            item_id=source_chunk_id,
+            fact=ev.fact,
+            source_document=ev.source_document,
+            page=ev.page,
+            chunk=ev.chunk,
+            source_type=ev.source_type,
+            location=ev.location,
+            region=ev.region,
+            confidence=ev.confidence,
+            extraction_method=ev.extraction_method,
+            evidence_metadata=ev.metadata,
+        ))
 
     session.flush()
 

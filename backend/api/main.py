@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from backend.api.routes import diagnostics, digital_twin, expert, ingestion, products, query, schematics, visualization, simulation
+from backend.api.routes import diagnostics, digital_twin, expert, ingestion, machine_knowledge, products, query, schematics, visualization, simulation
 from backend.db.session import init_db
 
 
@@ -28,6 +28,7 @@ app.include_router(visualization.router)
 app.include_router(expert.router)
 app.include_router(digital_twin.router)
 app.include_router(simulation.router)
+app.include_router(machine_knowledge.router)
 
 
 @app.get("/health")
