@@ -108,6 +108,22 @@ class UniversalMachineModel(BaseModel):
     constraints: list[MachineConstraint] = Field(default_factory=list)
     evidence: list[MachineEvidence] = Field(default_factory=list)
 
+    def all_facts(self) -> list[tuple[str, str, Any]]:
+        """Return every typed primitive as a serializable fact tuple."""
+        return [
+            ("port", item.id, item.model_dump(mode="json")) for item in self.ports
+        ] + [
+            ("quantity", item.id, item.model_dump(mode="json")) for item in self.quantities
+        ] + [
+            ("state", f"{item.entity_id}:{item.name}", item.model_dump(mode="json")) for item in self.states
+        ] + [
+            ("event", item.id, item.model_dump(mode="json")) for item in self.events
+        ] + [
+            ("behavior", item.id, item.model_dump(mode="json")) for item in self.behaviors
+        ] + [
+            ("constraint", item.id, item.model_dump(mode="json")) for item in self.constraints
+        ]
+
     def entity_map(self) -> dict[str, MachineEntity]:
         return {entity.id: entity for entity in self.entities}
 

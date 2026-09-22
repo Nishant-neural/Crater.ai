@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from backend.db.models import (
-    MachineKnowledgeEntity, MachineKnowledgeEvidence, MachineKnowledgeFact,
+    MachineKnowledgeBehavior, MachineKnowledgeEntity, MachineKnowledgeEvidence, MachineKnowledgeFact,
     MachineKnowledgeRelation, Revision,
 )
 from backend.db.session import get_session
@@ -31,17 +31,20 @@ def get_machine_knowledge(
     entities = db.query(MachineKnowledgeEntity).filter(MachineKnowledgeEntity.revision_id == revision_id)
     relations = db.query(MachineKnowledgeRelation).filter(MachineKnowledgeRelation.revision_id == revision_id)
     facts = db.query(MachineKnowledgeFact).filter(MachineKnowledgeFact.revision_id == revision_id)
+    behaviors = db.query(MachineKnowledgeBehavior).filter(MachineKnowledgeBehavior.revision_id == revision_id)
     if name:
         entities = entities.filter(MachineKnowledgeEntity.name.ilike(f"%{name}%"))
         relations = relations.filter(
             (MachineKnowledgeRelation.subject_name.ilike(f"%{name}%")) |
             (MachineKnowledgeRelation.object_name.ilike(f"%{name}%"))
         )
+        behaviors = behaviors.filter(MachineKnowledgeBehavior.subject_name.ilike(f"%{name}%"))
     if fact_type:
         facts = facts.filter(MachineKnowledgeFact.fact_type == fact_type)
     entity_rows = entities.all()
     relation_rows = relations.all()
     fact_rows = facts.all()
+    behavior_rows = behaviors.all()
     item_ids = [row.id for row in entity_rows + relation_rows] + [row.fact_key for row in fact_rows]
     evidence = db.query(MachineKnowledgeEvidence).filter(
         MachineKnowledgeEvidence.item_id.in_(item_ids or [""])
@@ -60,6 +63,11 @@ def get_machine_knowledge(
             for row in relation_rows
         ],
         "facts": [{"id": row.id, "fact_type": row.fact_type, "fact_key": row.fact_key, "payload": row.payload} for row in fact_rows],
+        "behaviors": [
+            {"id": row.id, "subject_id": row.subject_id, "subject_name": row.subject_name,
+             "description": row.description}
+            for row in behavior_rows
+        ],
         "evidence": [
             {"id": row.id, "item_type": row.item_type, "item_id": row.item_id,
              "fact": row.fact, "source_document": row.source_document, "page": row.page,

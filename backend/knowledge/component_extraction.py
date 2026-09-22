@@ -103,9 +103,16 @@ def extract_chunk_knowledge(content: str) -> tuple[ExtractionResult, UniversalMa
     """Extract legacy Product Brain rows and universal facts in one provider call."""
     result = _extract_result(content)
     legacy = _legacy_result(result)
-    if result.entities or result.relations or result.ports or result.quantities or result.states or result.events or result.behaviors or result.constraints:
+    if _has_universal_facts(result):
         return legacy, _universal_model_from_result(result)
     return legacy, _legacy_model(result)
+
+
+def _has_universal_facts(result: MachineKnowledgeExtractionResult) -> bool:
+    return any((
+        result.entities, result.relations, result.ports, result.quantities,
+        result.states, result.events, result.behaviors, result.constraints,
+    ))
 
 
 def extract_from_chunk_text(content: str) -> ExtractionResult:
@@ -275,21 +282,7 @@ def persist_machine_knowledge(session: Session, revision_id: str | None, source_
         )
         session.add(db_entity)
         session.flush()
-        for ev in entity.evidence:
-            session.add(MachineKnowledgeEvidence(
-                item_type="entity",
-                item_id=db_entity.id,
-                fact=ev.fact,
-                source_document=ev.source_document,
-                page=ev.page,
-                chunk=ev.chunk,
-                source_type=ev.source_type,
-                location=ev.location,
-                region=ev.region,
-                confidence=ev.confidence,
-                extraction_method=ev.extraction_method,
-                evidence_metadata=ev.metadata,
-            ))
+        _persist_evidence(session, "entity", db_entity.id, entity.evidence)
 
     for rel in model.relations:
         db_rel = MachineKnowledgeRelation(
@@ -304,21 +297,7 @@ def persist_machine_knowledge(session: Session, revision_id: str | None, source_
         )
         session.add(db_rel)
         session.flush()
-        for ev in rel.evidence:
-            session.add(MachineKnowledgeEvidence(
-                item_type="relation",
-                item_id=db_rel.id,
-                fact=ev.fact,
-                source_document=ev.source_document,
-                page=ev.page,
-                chunk=ev.chunk,
-                source_type=ev.source_type,
-                location=ev.location,
-                region=ev.region,
-                confidence=ev.confidence,
-                extraction_method=ev.extraction_method,
-                evidence_metadata=ev.metadata,
-            ))
+        _persist_evidence(session, "relation", db_rel.id, rel.evidence)
 
     for behavior in model.behaviors:
         db_behavior = MachineKnowledgeBehavior(
@@ -330,23 +309,11 @@ def persist_machine_knowledge(session: Session, revision_id: str | None, source_
         )
         session.add(db_behavior)
         session.flush()
-        for ev in behavior.evidence:
-            session.add(MachineKnowledgeEvidence(
-                item_type="behavior",
-                item_id=db_behavior.id,
-                fact=ev.fact,
-                source_document=ev.source_document,
-                page=ev.page,
-                chunk=ev.chunk,
-                source_type=ev.source_type,
-                location=ev.location,
-                region=ev.region,
-                confidence=ev.confidence,
-                extraction_method=ev.extraction_method,
-                evidence_metadata=ev.metadata,
-            ))
+        _persist_evidence(session, "behavior", db_behavior.id, behavior.evidence)
 
     for fact_type, fact_key, payload in model.all_facts():
+        if fact_type == "behavior":
+            continue  # Behaviors already have the dedicated legacy table above.
         session.add(MachineKnowledgeFact(
             revision_id=revision_id,
             fact_type=fact_type,
@@ -354,27 +321,18 @@ def persist_machine_knowledge(session: Session, revision_id: str | None, source_
             payload=payload,
             source_chunk_id=source_chunk_id,
         ))
-        fact_evidence = payload.get("evidence", [])
-        for ev in fact_evidence:
-            session.add(MachineKnowledgeEvidence(
-                item_type=fact_type,
-                item_id=fact_key,
-                fact=ev.get("fact", f"{fact_type}:{fact_key}"),
-                source_document=ev.get("source_document"),
-                page=ev.get("page"),
-                chunk=ev.get("chunk"),
-                source_type=ev.get("source_type"),
-                location=ev.get("location"),
-                region=ev.get("region"),
-                confidence=ev.get("confidence", 0.0),
-                extraction_method=ev.get("extraction_method"),
-                evidence_metadata=ev.get("metadata", {}),
-            ))
+        _persist_evidence_dicts(session, fact_type, fact_key, payload.get("evidence", []))
 
-    for ev in model.evidence:
+    _persist_evidence(session, "model", source_chunk_id, model.evidence)
+
+    session.flush()
+
+
+def _persist_evidence(session: Session, item_type: str, item_id: str | None, evidence: list[MachineEvidence]) -> None:
+    for ev in evidence:
         session.add(MachineKnowledgeEvidence(
-            item_type="model",
-            item_id=source_chunk_id,
+            item_type=item_type,
+            item_id=item_id,
             fact=ev.fact,
             source_document=ev.source_document,
             page=ev.page,
@@ -387,33 +345,52 @@ def persist_machine_knowledge(session: Session, revision_id: str | None, source_
             evidence_metadata=ev.metadata,
         ))
 
-    session.flush()
+
+def _persist_evidence_dicts(session: Session, item_type: str, item_id: str, evidence: list[dict]) -> None:
+    for item in evidence:
+        session.add(MachineKnowledgeEvidence(
+            item_type=item_type,
+            item_id=item_id,
+            fact=item.get("fact", f"{item_type}:{item_id}"),
+            source_document=item.get("source_document"),
+            page=item.get("page"),
+            chunk=item.get("chunk"),
+            source_type=item.get("source_type"),
+            location=item.get("location"),
+            region=item.get("region"),
+            confidence=item.get("confidence", 0.0),
+            extraction_method=item.get("extraction_method"),
+            evidence_metadata=item.get("metadata", {}),
+        ))
 
 
 def extract_machine_knowledge(content: str) -> MachineKnowledgeExtractionResult:
     """Structured result shape that matches the Phase 8A schema contract."""
-    legacy = extract_from_chunk_text(content)
-    result = MachineKnowledgeExtractionResult()
+    result = _extract_result(content)
+    if _has_universal_facts(result):
+        return result
+
+    legacy = _legacy_result(result)
     for comp in legacy.components:
-        result.entities.append({
-            "id": f"entity:{comp.name.lower().replace(' ', '-')}",
-            "name": comp.name,
-            "entity_type": "component",
-            "properties": {
+        result.entities.append(UniversalEntity(
+            id=f"entity:{comp.name.lower().replace(' ', '-')}",
+            name=comp.name,
+            entity_type="component",
+            properties={
                 "function": comp.function,
                 "location_description": comp.location_description,
                 "part_number": comp.part_number,
             },
-            "ports": [],
-            "states": [],
-        })
+            ports=[],
+            states=[],
+        ))
     for rel in legacy.relationships:
-        result.relations.append({
-            "subject_id": f"entity:{rel.from_component.lower().replace(' ', '-')}",
-            "subject_name": rel.from_component,
-            "relation_type": rel.relation_type,
-            "object_id": f"entity:{rel.to_component.lower().replace(' ', '-')}",
-            "object_name": rel.to_component,
-            "description": rel.description,
-        })
+        result.relations.append(UniversalRelation(
+            subject_id=f"entity:{rel.from_component.lower().replace(' ', '-')}",
+            subject_name=rel.from_component,
+            relation_type=rel.relation_type,
+            object_id=f"entity:{rel.to_component.lower().replace(' ', '-')}",
+            object_name=rel.to_component,
+            description=rel.description,
+        ))
     return result

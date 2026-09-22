@@ -26,6 +26,9 @@ from backend.db.models import (
 from backend.llm import get_llm_provider
 from backend.knowledge.expert_schema import ExtractedKnowledgeItem, KnowledgeExtractionResult
 from backend.knowledge.expert_prompts import EXPERT_EXTRACTION_PROMPT, EXPERT_INTERVIEW_PROMPT
+from backend.knowledge.component_extraction import persist_machine_knowledge
+from backend.knowledge.evidence import MachineEvidence
+from backend.knowledge.machine_model import MachineBehavior, MachineEntity, UniversalMachineModel
 
 
 def _llm_text(prompt: str, max_tokens: int = 1200) -> str | None:
@@ -212,11 +215,39 @@ def review_version(db: Session, version: KnowledgeVersion, decision: str, review
         )
         for old in previous:
             old.status = KnowledgeStatus.superseded
+        persist_approved_knowledge(db, version)
 
     db.add(version)
     db.commit()
     db.refresh(version)
     return version
+
+
+def persist_approved_knowledge(db: Session, version: KnowledgeVersion) -> UniversalMachineModel:
+    """Project reviewed expert claims into the same universal model as manuals."""
+    model = UniversalMachineModel()
+    items = db.query(ExpertKnowledge).filter(ExpertKnowledge.knowledge_version_id == version.id).all()
+    for item in items:
+        evidence = MachineEvidence(
+            fact=item.source_quote or item.title, source_type="expert",
+            chunk=",".join(item.evidence_turn_ids or []), confidence=item.confidence,
+            extraction_method="reviewed_expert_claim",
+        )
+        if item.failure_mode:
+            model.entities.append(MachineEntity(
+                id=f"expert-failure:{item.id}", name=item.failure_mode,
+                entity_type="failure_mode", properties={"symptom": item.symptom, "safety_notes": item.safety_notes},
+                evidence=[evidence],
+            ))
+        if item.action or item.condition or item.expected_observation:
+            model.behaviors.append(MachineBehavior(
+                id=f"expert-behavior:{item.id}", subject_id=f"expert-failure:{item.id}",
+                subject_name=item.title, description="; ".join(filter(None, [item.condition, item.action, item.expected_observation])),
+                evidence=[evidence],
+            ))
+    if model.entities or model.behaviors:
+        persist_machine_knowledge(db, version.revision_id, None, model)
+    return model
 
 
 def _add_node(db: Session, graph_id: str, node_type: GraphNodeType, label: str, content: str | None, knowledge_id: str | None):
