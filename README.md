@@ -1,8 +1,10 @@
-# Crater.ai — Phases 1, 2, 3 & 4
+# Crater.ai — Phases 1–8A: Machine Knowledge System
 
-This is the scaffold for **Phase 1 (Product Knowledge)**, **Phase 2
-(Diagnostic Agent)**, **Phase 3 (Schematic Intelligence)**, and **Phase 4
-(Technical Visualization)** of the Crater.ai roadmap (`PLAN.md` §33): turning
+This repository implements **Phases 1–8A** of the Crater.ai roadmap: a
+revision-aware Product Brain, diagnostic agent, schematic intelligence,
+technical visualization, expert knowledge capture, deterministic digital
+twin/simulation, simulation-agent verification, and the Phase 8A Universal
+Machine Knowledge foundation of the Crater.ai roadmap (`PLAN.md` §33): turning
 raw manuals/schematics into a queryable, revision-aware **Product Brain**,
 with hybrid retrieval, a structured troubleshooting loop, a real
 component/connection graph extracted from diagram images, and an interactive
@@ -11,9 +13,9 @@ deliberately generic — no single product family is hardcoded — so the same
 pipeline can onboard multiple manufacturers/products later just by creating
 new `Product`/`Revision` rows and ingesting their docs.
 
-Not in scope yet (later phases): expert interviews (Phase 5), digital twin /
-simulation (Phase 6-7), camera/voice (Phase 9). See `docs/Phase4.md` for
-Phase 4's own honest limits (repair "animation" is a played-back image
+Later work includes Phase 8B+ knowledge-graph/compiler capabilities and
+Phase 9 camera/voice. See the phase documents for the detailed boundaries and
+honest limits of each subsystem. See `docs/Phase4.md` for Phase 4's own honest limits (repair "animation" is a played-back image
 sequence, not video/3D).
 
 ## What's implemented
@@ -94,6 +96,79 @@ of Phase 1's Component/ComponentRelationship data and Phase 3's schematic
 graph into shapes a frontend renders directly. Full details, including the
 deliberate "repair animation is a slideshow, not video" scoping, are in
 `docs/Phase4.md`.
+
+### Phase 5 — Expert Knowledge Capture
+
+| requirement | Where |
+|---|---|
+| Expert/interview lifecycle | `knowledge/expert.py`, `api/routes/expert.py` |
+| Versioned extracted claims | `db/models.py::KnowledgeVersion`, `ExpertKnowledge` |
+| Human review gate | `knowledge/expert.py::review_version` |
+| Diagnostic graph generation | `knowledge/expert.py::generate_diagnostic_graph` |
+
+Approved expert claims are projected into the same canonical machine model as
+document-derived knowledge; rejected/draft claims are not treated as approved
+diagnostic knowledge.
+
+### Phase 6 — Deterministic Digital Twin
+
+| requirement | Where |
+|---|---|
+| Revision-scoped twin definition/state | `simulation/schema.py`, `simulation/service.py` |
+| Deterministic state transitions | `simulation/engine.py` |
+| Persistent event/audit trail | `db/twin_models.py` |
+| API/frontend | `api/routes/digital_twin.py`, `frontend/src/components/DigitalTwin.jsx` |
+
+### Phase 7 — Simulation Agent
+
+| requirement | Where |
+|---|---|
+| Baseline/fault/intervention experiments | `simulation/experiment.py` |
+| Assertions and verdicts | `simulation/experiment.py` |
+| Competing hypotheses | `simulation/agent.py` |
+| API | `api/routes/simulation.py` |
+
+### Phase 8A — Universal Machine Knowledge
+
+Phase 8A makes `backend/knowledge/machine_model.py::UniversalMachineModel`
+the canonical domain representation. It is deliberately machine-agnostic and
+contains:
+
+```text
+Entities
+Relations
+Ports
+Quantities
+States
+Events
+Behaviors
+Constraints
+Procedures
+Failure Modes
+Evidence
+```
+
+Provider JSON in `knowledge/schema.py` is only an adapter. Legacy Product Brain
+rows are isolated in `knowledge/legacy_projection.py`; they are no longer a
+second canonical representation.
+
+Key guarantees:
+
+- Every evidence item can carry `revision_id`, source document/page/chunk,
+  source type, extraction method and confidence.
+- Ports and states are persisted as typed facts rather than duplicated inside
+  entity JSON.
+- Validation is fact-level: structural errors skip only the affected fact;
+  warnings such as low confidence or uncertainty are retained.
+- Schematic and expert knowledge can project into the same universal model.
+- Canonical entity IDs are preserved separately from database row IDs.
+- Machine-knowledge persistence and API access are revision-scoped.
+- `db/models.py` re-exports phase-specific model modules for compatibility,
+  while machine-knowledge, schematic, and digital-twin tables live in focused
+  modules.
+
+Phase 8B+ can therefore build graph retrieval, evidence packs and machine
+compilation on top of one canonical model instead of adding another schema.
 
 ## Architecture
 

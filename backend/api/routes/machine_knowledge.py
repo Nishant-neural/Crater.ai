@@ -52,8 +52,8 @@ def get_machine_knowledge(
     return {
         "revision_id": revision_id,
         "entities": [
-            {"id": row.id, "name": row.name, "entity_type": row.entity_type,
-             "properties": row.properties or {}, "ports": row.ports or [], "states": row.states or []}
+            {"id": row.id, "canonical_id": row.canonical_id, "name": row.name,
+             "entity_type": row.entity_type, "properties": row.properties or {}}
             for row in entity_rows
         ],
         "relations": [
@@ -85,7 +85,11 @@ def list_machine_entities(revision_id: str, name: str | None = None, db: Session
     query = db.query(MachineKnowledgeEntity).filter(MachineKnowledgeEntity.revision_id == revision_id)
     if name:
         query = query.filter(MachineKnowledgeEntity.name.ilike(f"%{name}%"))
-    return [{"id": row.id, "name": row.name, "entity_type": row.entity_type, "properties": row.properties or {}} for row in query.all()]
+    return [
+        {"id": row.id, "canonical_id": row.canonical_id, "name": row.name,
+         "entity_type": row.entity_type, "properties": row.properties or {}}
+        for row in query.all()
+    ]
 
 
 @router.get("/revisions/{revision_id}/facts")

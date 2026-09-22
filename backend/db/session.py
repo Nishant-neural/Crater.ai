@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from backend.config import settings
 from backend.db.models import Base
+from backend.db.migrations import ensure_phase8a_columns
 
 engine = create_engine(
     settings.database_url,
@@ -16,6 +17,7 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 def init_db() -> None:
     """Create all tables. Fine for MVP; use Alembic migrations once schema stabilizes."""
+    ensure_phase8a_columns(engine)
     Base.metadata.create_all(bind=engine)
 
 

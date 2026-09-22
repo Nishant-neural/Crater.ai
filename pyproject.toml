@@ -1,7 +1,7 @@
 [project]
 name = "crater-ai"
 version = "0.1.0"
-description = "Crater.ai — AI Technical Intelligence for Complex Physical Products (Phase 1: Product Knowledge)"
+description = "Crater.ai — AI Technical Intelligence for Complex Physical Products (Phases 1–8A: Universal Machine Knowledge)"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
