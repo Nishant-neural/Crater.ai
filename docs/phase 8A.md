@@ -454,20 +454,28 @@ After Phase 8A, the system should look like:
 backend/knowledge/schema.py
 backend/knowledge/component_extraction.py
 backend/knowledge/expert.py
+backend/knowledge/machine_model.py
+backend/knowledge/evidence.py
+backend/knowledge/validation.py
 
 backend/ingestion/pipeline.py
+backend/ingestion/chunking.py
+backend/ingestion/ocr.py
 
 backend/schematic/graph.py
+backend/schematic/schema.py
+backend/schematic/vision_extraction.py
 
 backend/db/models.py
+backend/api/main.py
 ```
 
 ### New files
 
 ```text
-backend/knowledge/machine_model.py
-backend/knowledge/evidence.py
-backend/knowledge/validation.py
+backend/api/routes/machine_knowledge.py
+tests/test_phase8a.py
+tests/test_phase8a_integration.py
 ```
 
 ---

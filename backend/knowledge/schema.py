@@ -43,6 +43,7 @@ class UniversalEntity(BaseModel):
     properties: dict[str, Any] = Field(default_factory=dict)
     ports: list[str] = Field(default_factory=list)
     states: list[str] = Field(default_factory=list)
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class UniversalRelation(BaseModel):
@@ -52,6 +53,7 @@ class UniversalRelation(BaseModel):
     object_id: str | None = None
     object_name: str
     description: str | None = None
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class UniversalEvidence(BaseModel):
@@ -68,10 +70,16 @@ class UniversalEvidence(BaseModel):
 
 
 class MachineKnowledgeExtractionResult(BaseModel):
+    # Legacy fields remain in the same provider response during migration.
+    components: list[ExtractedComponent] = Field(default_factory=list)
+    relationships: list[ExtractedRelationship] = Field(default_factory=list)
+    procedures: list[ExtractedProcedure] = Field(default_factory=list)
     entities: list[UniversalEntity] = Field(default_factory=list)
     relations: list[UniversalRelation] = Field(default_factory=list)
     evidence: list[UniversalEvidence] = Field(default_factory=list)
+    ports: list[dict[str, Any]] = Field(default_factory=list)
     states: list[dict[str, Any]] = Field(default_factory=list)
     quantities: list[dict[str, Any]] = Field(default_factory=list)
+    events: list[dict[str, Any]] = Field(default_factory=list)
     behaviors: list[dict[str, Any]] = Field(default_factory=list)
     constraints: list[dict[str, Any]] = Field(default_factory=list)

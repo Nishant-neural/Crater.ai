@@ -13,6 +13,8 @@ from collections import deque
 from sqlalchemy.orm import Session
 
 from backend.db.models import Component, SchematicEdge, SchematicNode, SymbolType, WireType
+from backend.knowledge.evidence import MachineEvidence
+from backend.knowledge.machine_model import MachineEntity, MachineRelation, MachinePort, UniversalMachineModel
 from backend.schematic.schema import SchematicExtractionResult
 
 
@@ -82,6 +84,46 @@ def persist_schematic(
 
     db.commit()
     return nodes
+
+
+def schematic_to_machine_model(result: SchematicExtractionResult, source_document: str | None = None, page: int | None = None, chunk_id: str | None = None) -> UniversalMachineModel:
+    """Project visual schematic nodes and wires into universal machine facts."""
+    model = UniversalMachineModel()
+    id_by_label: dict[str, str] = {}
+    for node in result.nodes:
+        entity_id = f"schematic:{node.label.strip().lower()}"
+        id_by_label[node.label] = entity_id
+        evidence = MachineEvidence(
+            fact=f"Schematic node {node.label}", source_document=source_document,
+            page=page, chunk=chunk_id, source_type="schematic",
+            region=str(node.bbox) if node.bbox else None,
+            confidence=0.8, extraction_method="vision_llm",
+        )
+        model.entities.append(MachineEntity(
+            id=entity_id, name=node.label, entity_type=node.symbol_type,
+            properties={"description": node.description, "bbox": node.bbox}, evidence=[evidence],
+        ))
+        model.ports.append(MachinePort(
+            id=f"{entity_id}:terminal", entity_id=entity_id, name="terminal",
+            evidence=[evidence],
+        ))
+    for edge in result.edges:
+        subject_id = id_by_label.get(edge.from_label)
+        object_id = id_by_label.get(edge.to_label)
+        if not subject_id or not object_id:
+            continue
+        evidence = MachineEvidence(
+            fact=f"{edge.from_label} {edge.wire_type} {edge.to_label}", source_document=source_document,
+            page=page, chunk=chunk_id, source_type="schematic", confidence=0.8,
+            extraction_method="vision_llm",
+        )
+        model.relations.append(MachineRelation(
+            subject_id=subject_id, subject_name=edge.from_label,
+            relation_type="connected_to", object_id=object_id, object_name=edge.to_label,
+            description=f"{edge.wire_type} connection" + (f" ({edge.label})" if edge.label else ""),
+            evidence=[evidence],
+        ))
+    return model
 
 
 def trace_path(edges: list[tuple[str, str]], start: str, end: str) -> list[str] | None:
