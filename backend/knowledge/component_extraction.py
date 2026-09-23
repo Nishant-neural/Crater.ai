@@ -44,7 +44,7 @@ from backend.knowledge.machine_model import (
     UniversalMachineModel,
 )
 from backend.knowledge.schema import ExtractionResult, MachineKnowledgeExtractionResult
-from backend.llm import get_llm_provider
+from backend.llm import gateway
 
 _EXTRACTION_PROMPT = """You are extracting structured technical knowledge from one page of an \
 industrial equipment manual. Only extract what is explicitly stated — do not infer or \
@@ -79,7 +79,7 @@ or UNCERTAIN when a value is not explicit:
 
 
 def _extract_result(content: str) -> MachineKnowledgeExtractionResult:
-    raw = get_llm_provider().complete(
+    raw = gateway.complete("extraction",
         messages=[{"role": "user", "content": _EXTRACTION_PROMPT.format(content=content)}],
         max_tokens=4000,
     )

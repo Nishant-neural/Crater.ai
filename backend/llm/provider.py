@@ -85,17 +85,18 @@ def _gemini_content(message: LLMMessage) -> dict[str, Any]:
     return {"role": role, "parts": parts}
 
 
-def get_llm_provider() -> LLMProvider:
-    """Build the configured provider for the current application settings."""
-    provider_name = settings.llm_provider.lower()
+def get_provider_for_model(provider_name: str, model: str) -> LLMProvider:
+    provider_name = provider_name.lower()
     if provider_name == "anthropic":
-        return AnthropicProvider(
-            api_key=settings.anthropic_api_key,
-            model=settings.llm_model or settings.anthropic_model,
-        )
+        return AnthropicProvider(api_key=settings.anthropic_api_key, model=model)
     if provider_name == "gemini":
-        return GeminiProvider(
-            api_key=settings.gemini_api_key,
-            model=settings.llm_model or settings.gemini_model,
-        )
-    raise ValueError(f"Unsupported LLM provider: {settings.llm_provider}")
+        return GeminiProvider(api_key=settings.gemini_api_key, model=model)
+    raise ValueError(f"Unsupported LLM provider: {provider_name}")
+
+
+def get_llm_provider() -> LLMProvider:
+    """Backward-compatible default provider."""
+    return get_provider_for_model(
+        settings.llm_provider,
+        settings.llm_model or (settings.gemini_model if settings.llm_provider.lower() == "gemini" else settings.anthropic_model),
+    )

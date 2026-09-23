@@ -23,7 +23,7 @@ from backend.db.models import (
     KnowledgeType,
     KnowledgeVersion,
 )
-from backend.llm import get_llm_provider
+from backend.llm import gateway
 from backend.knowledge.expert_schema import ExtractedKnowledgeItem, KnowledgeExtractionResult
 from backend.knowledge.expert_prompts import EXPERT_EXTRACTION_PROMPT, EXPERT_INTERVIEW_PROMPT
 from backend.knowledge.component_extraction import persist_machine_knowledge
@@ -32,7 +32,7 @@ from backend.knowledge.machine_model import MachineBehavior, MachineEntity, Univ
 
 
 def _llm_text(prompt: str, max_tokens: int = 1200) -> str | None:
-    return get_llm_provider().complete(
+    return gateway.complete("expert",
         messages=[{"role": "user", "content": prompt}],
         max_tokens=max_tokens,
     )
