@@ -141,3 +141,15 @@ def get_canonical_machine_model(revision_id: str, db: Session = Depends(get_sess
     if not row:
         raise HTTPException(404, "No global machine model has been integrated for this revision")
     return {"revision_id": revision_id, "version": row.version, "model": row.model, "source_counts": row.source_counts}
+
+@router.get("/revisions/{revision_id}/verify")
+def verify_machine_knowledge(revision_id: str, db: Session = Depends(get_session)):
+    from backend.db.models import MachineKnowledgeModelSnapshot
+    from backend.knowledge.verification import verify_machine_model
+    from backend.knowledge.global_integration import _model_from_payload
+    _revision_or_404(db, revision_id)
+    row = db.query(MachineKnowledgeModelSnapshot).filter_by(revision_id=revision_id).order_by(MachineKnowledgeModelSnapshot.version.desc()).first()
+    if not row:
+        raise HTTPException(404, "No global machine model has been integrated for this revision")
+    issues = verify_machine_model(_model_from_payload(row.model))
+    return {"revision_id": revision_id, "version": row.version, "valid": not any(i.severity == "error" for i in issues), "issues": [i.__dict__ for i in issues]}
