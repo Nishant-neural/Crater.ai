@@ -1,8 +1,8 @@
-"""Canonical universal machine knowledge model for Phase 8A.
+"""Universal machine knowledge model for Phase 8A.
 
-The classes in this module are the domain model used by extraction, validation,
-persistence, retrieval and future graph compilation. Provider schemas and SQL
-rows are adapters around this model; they are not competing representations.
+This is intentionally small and extensible: it captures a machine using a
+shared set of primitives rather than a product-specific schema. Domain details
+are carried as extra properties on the entities and as supplemental metadata.
 """
 from __future__ import annotations
 
@@ -18,6 +18,19 @@ class MachineEntity(BaseModel):
     name: str
     entity_type: str
     properties: dict[str, Any] = Field(default_factory=dict)
+    ports: list[str] = Field(default_factory=list)
+    states: list[str] = Field(default_factory=list)
+    evidence: list[MachineEvidence] = Field(default_factory=list)
+
+
+class MachineEntityRelation(BaseModel):
+    id: str | None = None
+    subject_id: str | None = None
+    subject_name: str | None = None
+    relation_type: str | None = None
+    object_id: str | None = None
+    object_name: str | None = None
+    description: str | None = None
     evidence: list[MachineEvidence] = Field(default_factory=list)
 
 
@@ -87,23 +100,24 @@ class MachineProcedure(BaseModel):
     name: str
     procedure_type: str
     steps: list[str] = Field(default_factory=list)
+    entity_ids: list[str] = Field(default_factory=list)
     evidence: list[MachineEvidence] = Field(default_factory=list)
 
 
 class MachineFailureMode(BaseModel):
     id: str
     name: str
-    symptom: str | None = None
+    symptoms: list[str] = Field(default_factory=list)
     possible_causes: list[str] = Field(default_factory=list)
     diagnostic_test: str | None = None
     expected_observation: str | None = None
     repair_procedure_id: str | None = None
-    properties: dict[str, Any] = Field(default_factory=dict)
+    entity_ids: list[str] = Field(default_factory=list)
     evidence: list[MachineEvidence] = Field(default_factory=list)
 
 
 class UniversalMachineModel(BaseModel):
-    """Single canonical representation of machine knowledge."""
+    """A compact, extensible representation for machine knowledge."""
 
     entities: list[MachineEntity] = Field(default_factory=list)
     relations: list[MachineRelation] = Field(default_factory=list)
@@ -118,37 +132,33 @@ class UniversalMachineModel(BaseModel):
     evidence: list[MachineEvidence] = Field(default_factory=list)
 
     def all_facts(self) -> list[tuple[str, str, Any]]:
-        """Return non-entity primitives as persistence-ready fact tuples."""
-        collections = (
-            ("port", self.ports),
-            ("quantity", self.quantities),
-            ("state", self.states),
-            ("event", self.events),
-            ("constraint", self.constraints),
-            ("procedure", self.procedures),
-            ("failure_mode", self.failure_modes),
-        )
-        facts: list[tuple[str, str, Any]] = []
-        for fact_type, items in collections:
-            for item in items:
-                if isinstance(item, MachineState):
-                    key = f"{item.entity_id}:{item.name}"
-                else:
-                    key = item.id
-                facts.append((fact_type, key, item.model_dump(mode="json")))
-        return facts
+        """Return every typed primitive as a serializable fact tuple."""
+        return [
+            ("port", item.id, item.model_dump(mode="json")) for item in self.ports
+        ] + [
+            ("quantity", item.id, item.model_dump(mode="json")) for item in self.quantities
+        ] + [
+            ("state", f"{item.entity_id}:{item.name}", item.model_dump(mode="json")) for item in self.states
+        ] + [
+            ("event", item.id, item.model_dump(mode="json")) for item in self.events
+        ] + [
+            ("behavior", item.id, item.model_dump(mode="json")) for item in self.behaviors
+        ] + [
+            ("constraint", item.id, item.model_dump(mode="json")) for item in self.constraints
+        ] + [
+            ("procedure", item.id, item.model_dump(mode="json")) for item in self.procedures
+        ] + [
+            ("failure_mode", item.id, item.model_dump(mode="json")) for item in self.failure_modes
+        ]
 
     def entity_map(self) -> dict[str, MachineEntity]:
         return {entity.id: entity for entity in self.entities}
 
     def relation_map(self) -> dict[str, MachineRelation]:
-        return {
-            f"{r.subject_id}->{r.object_id}:{r.relation_type}": r
-            for r in self.relations
-        }
+        return {f"{r.subject_id}->{r.object_id}:{r.relation_type}": r for r in self.relations}
 
     def add_entity(self, entity: MachineEntity) -> None:
-        if entity.id not in self.entity_map():
+        if entity not in self.entities:
             self.entities.append(entity)
 
     def add_relation(self, relation: MachineRelation) -> None:
@@ -156,7 +166,7 @@ class UniversalMachineModel(BaseModel):
             self.relations.append(relation)
 
 
-# Stable short aliases for callers that prefer the universal vocabulary.
+# Canonical universal-machine vocabulary expected by the Phase 8A design.
 Entity = MachineEntity
 Relation = MachineRelation
 Port = MachinePort
@@ -165,7 +175,4 @@ State = MachineState
 Event = MachineEvent
 Behavior = MachineBehavior
 Constraint = MachineConstraint
-Procedure = MachineProcedure
-FailureMode = MachineFailureMode
 MachineModel = UniversalMachineModel
-MachineEntityRelation = MachineRelation  # compatibility alias from the pre-canonical model
