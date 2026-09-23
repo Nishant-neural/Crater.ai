@@ -1,0 +1,31 @@
+# Phase 8B — Global Machine Knowledge Integration
+
+Phase 8A extracts machine facts one chunk at a time. Phase 8B adds the missing
+revision-wide integration stage.
+
+```text
+Chunks / schematics / procedures / expert knowledge
+                    ↓
+          persisted extracted facts
+                    ↓
+       Global Integration LLM pass
+                    ↓
+       entity resolution + relation
+       integration + conflict preservation
+                    ↓
+        canonical UniversalMachineModel
+                    ↓
+       revision-scoped model snapshot
+```
+
+The global LLM receives all persisted machine-knowledge records for one
+revision, not the original document chunks. Each canonical object carries
+`source_ids` during integration so the source records remain traceable.
+
+API:
+- `POST /knowledge/revisions/{revision_id}/integrate`
+- `GET /knowledge/revisions/{revision_id}/model`
+
+The integration is explicit because it is an LLM operation over the complete
+revision knowledge set and may be expensive. Source extraction remains
+chunk-local and idempotent.

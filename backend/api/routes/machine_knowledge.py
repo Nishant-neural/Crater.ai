@@ -52,8 +52,8 @@ def get_machine_knowledge(
     return {
         "revision_id": revision_id,
         "entities": [
-            {"id": row.id, "canonical_id": row.canonical_id, "name": row.name,
-             "entity_type": row.entity_type, "properties": row.properties or {}}
+            {"id": row.id, "name": row.name, "entity_type": row.entity_type,
+             "properties": row.properties or {}, "ports": row.ports or [], "states": row.states or []}
             for row in entity_rows
         ],
         "relations": [
@@ -85,11 +85,7 @@ def list_machine_entities(revision_id: str, name: str | None = None, db: Session
     query = db.query(MachineKnowledgeEntity).filter(MachineKnowledgeEntity.revision_id == revision_id)
     if name:
         query = query.filter(MachineKnowledgeEntity.name.ilike(f"%{name}%"))
-    return [
-        {"id": row.id, "canonical_id": row.canonical_id, "name": row.name,
-         "entity_type": row.entity_type, "properties": row.properties or {}}
-        for row in query.all()
-    ]
+    return [{"id": row.id, "name": row.name, "entity_type": row.entity_type, "properties": row.properties or {}} for row in query.all()]
 
 
 @router.get("/revisions/{revision_id}/facts")
@@ -99,3 +95,49 @@ def list_machine_facts(revision_id: str, fact_type: str | None = None, db: Sessi
     if fact_type:
         query = query.filter(MachineKnowledgeFact.fact_type == fact_type)
     return [{"id": row.id, "fact_type": row.fact_type, "fact_key": row.fact_key, "payload": row.payload} for row in query.all()]
+@router.post("/revisions/{revision_id}/integrate")
+def integrate_machine_knowledge(revision_id: str, db: Session = Depends(get_session)):
+    """Run the revision-wide LLM integration over all persisted extracted knowledge."""
+    from backend.db.models import MachineKnowledgeModelSnapshot
+    from backend.knowledge.global_integration import integrate_revision_knowledge
+
+    _revision_or_404(db, revision_id)
+    result = integrate_revision_knowledge(db, revision_id)
+
+    # Map source rows to the canonical IDs selected by the integration model.
+    import json
+    from backend.db.models import MachineKnowledgeEntity, MachineKnowledgeRelation, MachineKnowledgeBehavior, MachineKnowledgeFact
+    raw = result.payload
+    source_maps = {
+        "entities": {sid: item["id"] for item in raw.get("entities", []) for sid in item.get("source_ids", [])},
+        "relations": {sid: item["id"] for item in raw.get("relations", []) for sid in item.get("source_ids", [])},
+        "behaviors": {sid: item["id"] for item in raw.get("behaviors", []) for sid in item.get("source_ids", [])},
+        "facts": {sid: item["id"] for item in raw.get("ports", []) + raw.get("quantities", []) + raw.get("events", []) + raw.get("constraints", []) for sid in item.get("source_ids", [])},
+    }
+    for row in db.query(MachineKnowledgeEntity).filter_by(revision_id=revision_id).all():
+        if row.id in source_maps["entities"]: row.canonical_id = source_maps["entities"][row.id]
+    for row in db.query(MachineKnowledgeRelation).filter_by(revision_id=revision_id).all():
+        if row.id in source_maps["relations"]: row.canonical_id = source_maps["relations"][row.id]
+    for row in db.query(MachineKnowledgeBehavior).filter_by(revision_id=revision_id).all():
+        if row.id in source_maps["behaviors"]: row.canonical_id = source_maps["behaviors"][row.id]
+
+    latest = db.query(MachineKnowledgeModelSnapshot).filter_by(revision_id=revision_id).order_by(MachineKnowledgeModelSnapshot.version.desc()).first()
+    snapshot = MachineKnowledgeModelSnapshot(
+        revision_id=revision_id,
+        version=(latest.version + 1 if latest else 1),
+        model=raw,
+        source_counts=result.source_counts,
+    )
+    db.add(snapshot)
+    db.commit()
+    return {"revision_id": revision_id, "version": snapshot.version, "source_counts": result.source_counts, "model": raw}
+
+
+@router.get("/revisions/{revision_id}/model")
+def get_canonical_machine_model(revision_id: str, db: Session = Depends(get_session)):
+    from backend.db.models import MachineKnowledgeModelSnapshot
+    _revision_or_404(db, revision_id)
+    row = db.query(MachineKnowledgeModelSnapshot).filter_by(revision_id=revision_id).order_by(MachineKnowledgeModelSnapshot.version.desc()).first()
+    if not row:
+        raise HTTPException(404, "No global machine model has been integrated for this revision")
+    return {"revision_id": revision_id, "version": row.version, "model": row.model, "source_counts": row.source_counts}

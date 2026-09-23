@@ -428,6 +428,71 @@ class DiagnosticGraphEdge(Base):
     knowledge_id: Mapped[str | None] = mapped_column(ForeignKey("expert_knowledge.id"), nullable=True)
 
 
+class SymbolType(str, enum.Enum):
+    """Recognized schematic symbol categories (plan.md §5)."""
+
+    relay = "relay"
+    contactor = "contactor"
+    motor = "motor"
+    sensor = "sensor"
+    switch = "switch"
+    fuse = "fuse"
+    terminal = "terminal"
+    connector = "connector"
+    plc = "plc"
+    transformer = "transformer"
+    power_source = "power_source"
+    ground = "ground"
+    other = "other"
+
+
+class WireType(str, enum.Enum):
+    power = "power"
+    control = "control"
+    signal = "signal"
+    ground = "ground"
+    unknown = "unknown"
+
+
+class SchematicNode(Base):
+    """
+    One symbol/component identified inside a schematic image (plan.md §5:
+    "Extract: Components and symbols, Labels, Terminals ...").
+
+    Scoped to the diagram Chunk it was extracted from (not directly to
+    Revision) because a node's bbox is only meaningful against that one
+    image; `component_id` is the optional link back to the Phase 1
+    text-extracted Component with the same name, resolved by exact label
+    match at persistence time (see schematic/graph.py) — a fuzzier
+    match is a reasonable upgrade once real manuals show how often
+    labels disagree slightly (e.g. "K17" vs "Relay K17").
+    """
+
+    __tablename__ = "schematic_nodes"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    document_id: Mapped[str] = mapped_column(ForeignKey("documents.id"), index=True)
+    chunk_id: Mapped[str] = mapped_column(ForeignKey("chunks.id"), index=True)
+    component_id: Mapped[str | None] = mapped_column(ForeignKey("components.id"), nullable=True)
+    label: Mapped[str] = mapped_column(String, index=True)          # e.g. "K17", "X12", "M1"
+    symbol_type: Mapped[SymbolType] = mapped_column(Enum(SymbolType))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    bbox: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # {"x":0-1,"y":0-1,"w":0-1,"h":0-1} normalized
+
+
+class SchematicEdge(Base):
+    """A wire/connection between two schematic nodes within the same diagram."""
+
+    __tablename__ = "schematic_edges"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    document_id: Mapped[str] = mapped_column(ForeignKey("documents.id"), index=True)
+    from_node_id: Mapped[str] = mapped_column(ForeignKey("schematic_nodes.id"), index=True)
+    to_node_id: Mapped[str] = mapped_column(ForeignKey("schematic_nodes.id"), index=True)
+    wire_type: Mapped[WireType] = mapped_column(Enum(WireType), default=WireType.unknown)
+    label: Mapped[str | None] = mapped_column(String, nullable=True)  # wire number/label if visible
+
+
 class FailureMode(Base):
     """
     Symptom -> possible causes -> diagnostic test -> expected observation
@@ -451,15 +516,139 @@ class FailureMode(Base):
     revision: Mapped["Revision"] = relationship(back_populates="failure_modes")
 
 
+class MachineKnowledgeEntity(Base):
+    """Universal machine model entity persisted in the database."""
 
-# Phase-specific model modules are re-exported here to keep existing imports stable.
-from backend.db.schematic_models import SchematicEdge, SchematicNode, SymbolType, WireType
-from backend.db.machine_knowledge_models import (
-    MachineKnowledgeBehavior,
-    MachineKnowledgeEntity,
-    MachineKnowledgeEvidence,
-    MachineKnowledgeFact,
-    MachineKnowledgeRelation,
-)
-from backend.db.twin_models import DigitalTwin, DigitalTwinEvent, TwinEventType, TwinStatus
+    __tablename__ = "machine_knowledge_entities"
 
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    revision_id: Mapped[str | None] = mapped_column(ForeignKey("revisions.id"), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String, index=True)
+    entity_type: Mapped[str] = mapped_column(String, default="component")
+    properties: Mapped[dict | None] = mapped_column(JSON, default=dict)
+    ports: Mapped[list] = mapped_column(JSON, default=list)
+    states: Mapped[list] = mapped_column(JSON, default=list)
+    source_chunk_id: Mapped[str | None] = mapped_column(ForeignKey("chunks.id"), nullable=True)
+    canonical_id: Mapped[str | None] = mapped_column(String, index=True, nullable=True)
+
+
+class MachineKnowledgeRelation(Base):
+    """Universal machine model relation persisted in the database."""
+
+    __tablename__ = "machine_knowledge_relations"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    revision_id: Mapped[str | None] = mapped_column(ForeignKey("revisions.id"), nullable=True, index=True)
+    subject_id: Mapped[str] = mapped_column(String, index=True)
+    subject_name: Mapped[str] = mapped_column(String)
+    relation_type: Mapped[str] = mapped_column(String, index=True)
+    object_id: Mapped[str] = mapped_column(String, index=True)
+    object_name: Mapped[str] = mapped_column(String)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_chunk_id: Mapped[str | None] = mapped_column(ForeignKey("chunks.id"), nullable=True)
+    canonical_id: Mapped[str | None] = mapped_column(String, index=True, nullable=True)
+
+
+class MachineKnowledgeEvidence(Base):
+    """Traceable evidence attached to any universal-machine fact."""
+
+    __tablename__ = "machine_knowledge_evidence"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    item_type: Mapped[str] = mapped_column(String, index=True)  # entity/relation/behavior/state
+    item_id: Mapped[str] = mapped_column(String, index=True)
+    fact: Mapped[str] = mapped_column(Text)
+    source_document: Mapped[str | None] = mapped_column(String, nullable=True)
+    page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    chunk: Mapped[str | None] = mapped_column(String, nullable=True)
+    source_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    location: Mapped[str | None] = mapped_column(String, nullable=True)
+    region: Mapped[str | None] = mapped_column(String, nullable=True)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    extraction_method: Mapped[str | None] = mapped_column(String, nullable=True)
+    evidence_metadata: Mapped[dict | None] = mapped_column(JSON, default=dict)
+
+
+class MachineKnowledgeBehavior(Base):
+    """Behavior-level knowledge persisted for machine simulations."""
+
+    __tablename__ = "machine_knowledge_behaviors"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    revision_id: Mapped[str | None] = mapped_column(ForeignKey("revisions.id"), nullable=True, index=True)
+    subject_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    subject_name: Mapped[str] = mapped_column(String)
+    description: Mapped[str] = mapped_column(Text)
+    source_chunk_id: Mapped[str | None] = mapped_column(ForeignKey("chunks.id"), nullable=True)
+
+
+class MachineKnowledgeFact(Base):
+    """Persisted universal primitive not requiring a machine-specific table."""
+
+    __tablename__ = "machine_knowledge_facts"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    revision_id: Mapped[str | None] = mapped_column(ForeignKey("revisions.id"), nullable=True, index=True)
+    fact_type: Mapped[str] = mapped_column(String, index=True)
+    fact_key: Mapped[str] = mapped_column(String, index=True)
+    payload: Mapped[dict] = mapped_column(JSON)
+    source_chunk_id: Mapped[str | None] = mapped_column(ForeignKey("chunks.id"), nullable=True)
+    canonical_id: Mapped[str | None] = mapped_column(String, index=True, nullable=True)
+
+
+class MachineKnowledgeModelSnapshot(Base):
+    """Revision-wide canonical UniversalMachineModel produced by global integration."""
+    __tablename__ = "machine_knowledge_model_snapshots"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    revision_id: Mapped[str] = mapped_column(ForeignKey("revisions.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    model: Mapped[dict] = mapped_column(JSON)
+    source_counts: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 — Functional Digital Twin
+# ---------------------------------------------------------------------------
+
+class TwinStatus(str, enum.Enum):
+    active = "active"
+    archived = "archived"
+
+
+class TwinEventType(str, enum.Enum):
+    command = "command"
+    transition = "transition"
+    reset = "reset"
+
+
+class DigitalTwin(Base):
+    """A revision-scoped deterministic functional model of a physical machine."""
+    __tablename__ = "digital_twins"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    product_id: Mapped[str] = mapped_column(ForeignKey("products.id"), index=True)
+    revision_id: Mapped[str] = mapped_column(ForeignKey("revisions.id"), index=True)
+    name: Mapped[str] = mapped_column(String)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    definition: Mapped[dict] = mapped_column(JSON)
+    state: Mapped[dict] = mapped_column(JSON)
+    model_version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[TwinStatus] = mapped_column(Enum(TwinStatus), default=TwinStatus.active)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class DigitalTwinEvent(Base):
+    """Append-only simulation audit trail: command, before/after state and trace."""
+    __tablename__ = "digital_twin_events"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    twin_id: Mapped[str] = mapped_column(ForeignKey("digital_twins.id"), index=True)
+    event_type: Mapped[TwinEventType] = mapped_column(Enum(TwinEventType))
+    command: Mapped[dict] = mapped_column(JSON)
+    state_before: Mapped[dict] = mapped_column(JSON)
+    state_after: Mapped[dict] = mapped_column(JSON)
+    trace: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
