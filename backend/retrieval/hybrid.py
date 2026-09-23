@@ -5,11 +5,9 @@ Fusion, then reranked. This is the plan.md §7 stack:
     Semantic Search + BM25 + Metadata Filters + Revision Filters
     + Component Filters + (Knowledge Graph Traversal — deferred) + Reranking
 
-Component-filter and graph-traversal retrieval aren't implemented yet —
-they depend on Component/ComponentRelationship rows existing, which is
-the knowledge/ extraction step. Wire them in as additional candidate
-sources once that's populated; RRF fusion below already accepts an
-arbitrary number of ranked lists.
+Knowledge-model retrieval is now revision-scoped and graph-aware. Canonical
+entity/relation/state/failure/procedure knowledge is retrieved alongside
+source chunks, with graph expansion from matched entities.
 """
 from __future__ import annotations
 
@@ -23,6 +21,7 @@ from backend.db.models import Chunk
 from backend.retrieval.bm25 import bm25_search
 from backend.retrieval.reranker import rerank
 from backend.retrieval.vector_store import semantic_search
+from backend.retrieval.knowledge import retrieve_machine_knowledge, RetrievedKnowledge
 
 logger = logging.getLogger(__name__)
 
@@ -88,3 +87,10 @@ def hybrid_retrieve(
         )
         for cid in reranked_ids
     ]
+
+
+def retrieve_revision_context(session: Session, query: str, product_id: str, revision_id: str, doc_type: str | None = None, top_k: int | None = None) -> tuple[list[RetrievedChunk], list[RetrievedKnowledge]]:
+    """Return both source evidence and canonical machine knowledge for one exact revision."""
+    chunks = hybrid_retrieve(session, query, product_id=product_id, revision_id=revision_id, doc_type=doc_type)
+    knowledge = retrieve_machine_knowledge(session, query, product_id=product_id, revision_id=revision_id, top_k=top_k or settings.final_top_k)
+    return chunks, knowledge
