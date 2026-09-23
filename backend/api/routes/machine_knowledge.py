@@ -130,7 +130,7 @@ def integrate_machine_knowledge(revision_id: str, db: Session = Depends(get_sess
     )
     db.add(snapshot)
     db.commit()
-    return {"revision_id": revision_id, "version": snapshot.version, "source_counts": result.source_counts, "model": raw}
+    return {"revision_id": revision_id, "version": snapshot.version, "source_counts": result.source_counts, "completeness": raw.get("completeness", {}), "revision_lineage": raw.get("revision_lineage", [revision_id]), "model": raw}
 
 
 @router.get("/revisions/{revision_id}/model")

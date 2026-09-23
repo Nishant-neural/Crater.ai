@@ -259,3 +259,8 @@ modes, schematic evidence and expert knowledge), asks the LLM to resolve aliases
 cross-chunk relations, and persists a canonical `UniversalMachineModel` snapshot.
 
 Use `GET /knowledge/revisions/{revision_id}/model` to retrieve the latest integrated model.
+
+
+## Phase 8D
+
+Phase 8D adds knowledge-integrity accounting, graph-expanded canonical retrieval, and revision inheritance. See `docs/Phase8D.md`.

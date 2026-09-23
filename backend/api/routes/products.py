@@ -21,6 +21,7 @@ class ProductCreate(BaseModel):
 class RevisionCreate(BaseModel):
     label: str
     notes: str | None = None
+    parent_revision_id: str | None = None
 
 
 @router.post("")
@@ -45,16 +46,22 @@ def create_revision(product_id: str, payload: RevisionCreate, session: Session =
     product = session.get(Product, product_id)
     if not product:
         raise HTTPException(404, "Product not found")
-    revision = Revision(product_id=product_id, **payload.model_dump())
+    data = payload.model_dump()
+    parent_id = data.get("parent_revision_id")
+    if parent_id:
+        parent = session.get(Revision, parent_id)
+        if not parent or parent.product_id != product_id:
+            raise HTTPException(400, "parent_revision_id must reference a revision of the same product")
+    revision = Revision(product_id=product_id, **data)
     session.add(revision)
     session.commit()
     session.refresh(revision)
-    return {"id": revision.id, "product_id": product_id, "label": revision.label}
+    return {"id": revision.id, "product_id": product_id, "label": revision.label, "parent_revision_id": revision.parent_revision_id}
 
 
 @router.get("/{product_id}/revisions")
 def list_revisions(product_id: str, session: Session = Depends(get_session)):
     return [
-        {"id": r.id, "label": r.label}
+        {"id": r.id, "label": r.label, "parent_revision_id": r.parent_revision_id}
         for r in session.query(Revision).filter(Revision.product_id == product_id).all()
     ]

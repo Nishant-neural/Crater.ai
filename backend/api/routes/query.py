@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from backend.db.models import Document, DocType, Revision
 from backend.db.session import get_session
-from backend.retrieval.hybrid import hybrid_retrieve
+from backend.retrieval.hybrid import retrieve_revision_context
 
 router = APIRouter(prefix="/query", tags=["query"])
 
@@ -32,12 +32,9 @@ def query(payload: QueryRequest, session: Session = Depends(get_session)):
     if not revision:
         raise HTTPException(404, "Revision not found")
 
-    results = hybrid_retrieve(
-        session=session,
-        query=payload.question,
-        product_id=revision.product_id,
-        revision_id=payload.revision_id,
-        doc_type=payload.doc_type.value if payload.doc_type else None,
+    results, knowledge = retrieve_revision_context(
+        session=session, query=payload.question, product_id=revision.product_id,
+        revision_id=payload.revision_id, doc_type=payload.doc_type.value if payload.doc_type else None,
     )
 
     evidence = []
@@ -62,4 +59,9 @@ def query(payload: QueryRequest, session: Session = Depends(get_session)):
         "revision_id": revision.id,
         "revision_label": revision.label,
         "evidence": evidence,
+        "machine_knowledge": [
+            {"kind": k.kind, "item_id": k.item_id, "score": k.score, "payload": k.payload,
+             "product_id": k.product_id, "revision_id": k.revision_id, "revision_label": k.revision_label, "retrieval_path": k.retrieval_path}
+            for k in knowledge
+        ],
     }
