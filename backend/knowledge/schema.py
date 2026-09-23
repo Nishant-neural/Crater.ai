@@ -1,7 +1,9 @@
-"""Pydantic shapes for LLM-structured extraction output (knowledge/component_extraction.py).
+"""Provider-facing extraction contracts.
 
-This module now supports both the legacy Phase 1 extraction format and the
-Phase 8A universal machine model vocabulary described in docs/phase 8A.md.
+The provider contract may retain legacy component/procedure fields for backward
+compatibility, but universal entities and relations are the canonical domain
+types from ``machine_model``. No second UniversalEntity/UniversalRelation
+schema is maintained here.
 """
 from __future__ import annotations
 
@@ -9,77 +11,75 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from backend.knowledge.machine_model import (
+    MachineBehavior,
+    MachineConstraint,
+    MachineEntity,
+    MachineEvent,
+    MachineFailureMode,
+    MachinePort,
+    MachineProcedure,
+    MachineQuantity,
+    MachineRelation,
+    MachineState,
+)
+
 
 class ExtractedComponent(BaseModel):
     name: str
     function: str | None = None
     location_description: str | None = None
     part_number: str | None = None
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ExtractedRelationship(BaseModel):
     from_component: str
     to_component: str
-    relation_type: str  # electrical | mechanical | fluid | signal | contains
+    relation_type: str
     description: str | None = None
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ExtractedProcedure(BaseModel):
     name: str
-    procedure_type: str  # installation | removal | calibration | maintenance | troubleshooting | replacement | verification
-    steps: list[str]
+    procedure_type: str
+    steps: list[str] = Field(default_factory=list)
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ExtractionResult(BaseModel):
-    components: list[ExtractedComponent] = []
-    relationships: list[ExtractedRelationship] = []
-    procedures: list[ExtractedProcedure] = []
+    """Legacy Product Brain projection used during the migration period."""
 
-
-class UniversalEntity(BaseModel):
-    id: str | None = None
-    name: str
-    entity_type: str | None = None
-    properties: dict[str, Any] = Field(default_factory=dict)
-    ports: list[str] = Field(default_factory=list)
-    states: list[str] = Field(default_factory=list)
-    evidence: list[dict[str, Any]] = Field(default_factory=list)
-
-
-class UniversalRelation(BaseModel):
-    subject_id: str | None = None
-    subject_name: str
-    relation_type: str
-    object_id: str | None = None
-    object_name: str
-    description: str | None = None
-    evidence: list[dict[str, Any]] = Field(default_factory=list)
-
-
-class UniversalEvidence(BaseModel):
-    fact: str
-    source_document: str | None = None
-    page: int | None = None
-    chunk: str | None = None
-    source_type: str | None = None
-    location: str | None = None
-    region: str | None = None
-    confidence: float = 0.0
-    extraction_method: str | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class MachineKnowledgeExtractionResult(BaseModel):
-    # Legacy fields remain in the same provider response during migration.
     components: list[ExtractedComponent] = Field(default_factory=list)
     relationships: list[ExtractedRelationship] = Field(default_factory=list)
     procedures: list[ExtractedProcedure] = Field(default_factory=list)
-    entities: list[UniversalEntity] = Field(default_factory=list)
-    relations: list[UniversalRelation] = Field(default_factory=list)
-    evidence: list[UniversalEvidence] = Field(default_factory=list)
-    ports: list[dict[str, Any]] = Field(default_factory=list)
-    states: list[dict[str, Any]] = Field(default_factory=list)
-    quantities: list[dict[str, Any]] = Field(default_factory=list)
-    events: list[dict[str, Any]] = Field(default_factory=list)
-    behaviors: list[dict[str, Any]] = Field(default_factory=list)
-    constraints: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class MachineKnowledgeExtractionResult(BaseModel):
+    """Raw provider result before conversion to the canonical machine model."""
+
+    # Legacy fields remain only as an adapter for existing Product Brain tables.
+    components: list[ExtractedComponent] = Field(default_factory=list)
+    relationships: list[ExtractedRelationship] = Field(default_factory=list)
+    procedures: list[ExtractedProcedure] = Field(default_factory=list)
+
+    # Canonical universal primitives.
+    entities: list[MachineEntity] = Field(default_factory=list)
+    relations: list[MachineRelation] = Field(default_factory=list)
+    ports: list[MachinePort] = Field(default_factory=list)
+    quantities: list[MachineQuantity] = Field(default_factory=list)
+    states: list[MachineState] = Field(default_factory=list)
+    events: list[MachineEvent] = Field(default_factory=list)
+    behaviors: list[MachineBehavior] = Field(default_factory=list)
+    constraints: list[MachineConstraint] = Field(default_factory=list)
+    universal_procedures: list[MachineProcedure] = Field(default_factory=list)
+    failure_modes: list[MachineFailureMode] = Field(default_factory=list)
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+
+    def has_universal_facts(self) -> bool:
+        return any((
+            self.entities, self.relations, self.ports, self.quantities,
+            self.states, self.events, self.behaviors, self.constraints,
+            self.universal_procedures, self.failure_modes, self.evidence,
+        ))

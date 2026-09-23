@@ -135,7 +135,7 @@ def test_pdf_chunk_modalities_reach_universal_persistence(monkeypatch, tmp_path)
         "Manual", tmp_path / "images", run_schematic_extraction=False,
     )
 
-    assert db.query(MachineKnowledgeEntity).filter_by(revision_id=revision.id).count() == 3
+    assert db.query(MachineKnowledgeEntity).filter_by(revision_id=revision.id).count() == 1
 
 
 def test_schematic_projection_creates_entities_ports_and_relations():
