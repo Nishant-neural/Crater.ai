@@ -20,6 +20,7 @@ class MachineEntity(BaseModel):
     properties: dict[str, Any] = Field(default_factory=dict)
     ports: list[str] = Field(default_factory=list)
     states: list[str] = Field(default_factory=list)
+    source_ids: list[str] = Field(default_factory=list)
     evidence: list[MachineEvidence] = Field(default_factory=list)
 
 
@@ -35,6 +36,7 @@ class MachineEntityRelation(BaseModel):
 
 
 class MachineRelation(BaseModel):
+    source_ids: list[str] = Field(default_factory=list)
     subject_id: str
     subject_name: str
     relation_type: str
@@ -46,6 +48,7 @@ class MachineRelation(BaseModel):
 
 class MachinePort(BaseModel):
     id: str
+    source_ids: list[str] = Field(default_factory=list)
     entity_id: str
     name: str
     direction: str | None = None
@@ -55,6 +58,7 @@ class MachinePort(BaseModel):
 
 class MachineQuantity(BaseModel):
     id: str
+    source_ids: list[str] = Field(default_factory=list)
     entity_id: str
     name: str
     value: str | None = None
@@ -64,6 +68,7 @@ class MachineQuantity(BaseModel):
 
 
 class MachineState(BaseModel):
+    source_ids: list[str] = Field(default_factory=list)
     entity_id: str
     name: str
     value: str | None = None
@@ -73,6 +78,7 @@ class MachineState(BaseModel):
 
 class MachineEvent(BaseModel):
     id: str
+    source_ids: list[str] = Field(default_factory=list)
     entity_id: str
     name: str
     description: str | None = None
@@ -81,6 +87,7 @@ class MachineEvent(BaseModel):
 
 class MachineBehavior(BaseModel):
     id: str
+    source_ids: list[str] = Field(default_factory=list)
     subject_id: str
     subject_name: str
     description: str
@@ -89,6 +96,7 @@ class MachineBehavior(BaseModel):
 
 class MachineConstraint(BaseModel):
     id: str
+    source_ids: list[str] = Field(default_factory=list)
     entity_id: str | None = None
     name: str
     description: str
@@ -97,6 +105,7 @@ class MachineConstraint(BaseModel):
 
 class MachineProcedure(BaseModel):
     id: str
+    source_ids: list[str] = Field(default_factory=list)
     name: str
     procedure_type: str
     steps: list[str] = Field(default_factory=list)
@@ -106,6 +115,7 @@ class MachineProcedure(BaseModel):
 
 class MachineFailureMode(BaseModel):
     id: str
+    source_ids: list[str] = Field(default_factory=list)
     name: str
     symptoms: list[str] = Field(default_factory=list)
     possible_causes: list[str] = Field(default_factory=list)
@@ -114,6 +124,24 @@ class MachineFailureMode(BaseModel):
     repair_procedure_id: str | None = None
     entity_ids: list[str] = Field(default_factory=list)
     evidence: list[MachineEvidence] = Field(default_factory=list)
+
+
+class MachineConflict(BaseModel):
+    id: str
+    source_ids: list[str] = Field(default_factory=list)
+    subject: str
+    property: str
+    values: list[Any] = Field(default_factory=list)
+    evidence: list[MachineEvidence] = Field(default_factory=list)
+    resolution: str | None = None
+    status: str = "unresolved"
+
+
+class MachineUnresolvedFact(BaseModel):
+    source_id: str
+    fact_type: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    reason: str = "not_accounted_for_by_global_integration"
 
 
 class UniversalMachineModel(BaseModel):
@@ -129,6 +157,8 @@ class UniversalMachineModel(BaseModel):
     constraints: list[MachineConstraint] = Field(default_factory=list)
     procedures: list[MachineProcedure] = Field(default_factory=list)
     failure_modes: list[MachineFailureMode] = Field(default_factory=list)
+    conflicts: list[MachineConflict] = Field(default_factory=list)
+    unresolved_facts: list[MachineUnresolvedFact] = Field(default_factory=list)
     evidence: list[MachineEvidence] = Field(default_factory=list)
 
     def all_facts(self) -> list[tuple[str, str, Any]]:

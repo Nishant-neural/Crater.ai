@@ -116,8 +116,10 @@ class Revision(Base):
     label: Mapped[str] = mapped_column(String)          # e.g. "2023", "Rev C", "fw 4.2"
     effective_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parent_revision_id: Mapped[str | None] = mapped_column(ForeignKey("revisions.id"), nullable=True, index=True)
 
     product: Mapped["Product"] = relationship(back_populates="revisions")
+    parent_revision: Mapped["Revision | None"] = relationship(remote_side=[id], backref="child_revisions", foreign_keys=[parent_revision_id])
     documents: Mapped[list["Document"]] = relationship(back_populates="revision", cascade="all, delete-orphan")
     components: Mapped[list["Component"]] = relationship(back_populates="revision", cascade="all, delete-orphan")
     procedures: Mapped[list["Procedure"]] = relationship(back_populates="revision", cascade="all, delete-orphan")
