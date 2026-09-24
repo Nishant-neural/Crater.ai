@@ -19,7 +19,7 @@ import base64
 import json
 from pathlib import Path
 
-from backend.llm import get_llm_provider
+from backend.llm import gateway
 from backend.schematic.schema import SchematicExtractionResult
 
 _EXTENSION_TO_MEDIA_TYPE = {
@@ -63,7 +63,7 @@ def extract_schematic(image_path: str | Path) -> SchematicExtractionResult:
 
     image_b64 = base64.standard_b64encode(image_path.read_bytes()).decode("utf-8")
 
-    raw = get_llm_provider().complete(
+    raw = gateway.complete("vision",
         messages=[
             {
                 "role": "user",

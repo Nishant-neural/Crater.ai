@@ -21,8 +21,8 @@ from sqlalchemy.orm import Session as DBSession
 from backend.db.models import Component, DiagnosticSession, DiagnosticStatus, FailureMode
 from backend.diagnostics.prompts import DIAGNOSTIC_SYSTEM_PROMPT
 from backend.diagnostics.schema import DiagnosticState, EvidenceRef, Hypothesis, NextStep, NextStepType
-from backend.llm import get_llm_provider
-from backend.retrieval.hybrid import hybrid_retrieve
+from backend.llm import gateway
+from backend.retrieval.hybrid import retrieve_revision_context
 
 _MAX_TURNS_BEFORE_FORCED_ESCALATION = 8
 _LOW_CONFIDENCE_ESCALATION_THRESHOLD = 0.35
@@ -79,8 +79,16 @@ def _build_query(state: DiagnosticState, latest_input: str) -> str:
     return " ".join(p for p in parts if p)
 
 
+def _knowledge_context(knowledge) -> str:
+    if not knowledge:
+        return "(no canonical machine knowledge retrieved)"
+    lines=[]
+    for item in knowledge:
+        payload=item.payload
+        lines.append(f"[{item.kind}:{item.item_id}; path={item.retrieval_path}; score={item.score:.2f}] {json.dumps(payload, ensure_ascii=False)}")
+    return "\n".join(lines)
+
 def _run_llm_turn(state: DiagnosticState, evidence: list[EvidenceRef], knowledge_block: str) -> dict:
-    provider = get_llm_provider()
     evidence_block = "\n".join(
         f"[{e.chunk_id}] (p.{e.page_number}, {e.source_document}): {e.content[:800]}" for e in evidence
     ) or "(no relevant evidence retrieved)"
@@ -90,7 +98,7 @@ def _run_llm_turn(state: DiagnosticState, evidence: list[EvidenceRef], knowledge
         evidence_block=evidence_block,
         knowledge_block=knowledge_block,
     )
-    raw = provider.complete(
+    raw = gateway.complete("diagnosis",
         messages=[{"role": "user", "content": prompt}],
         max_tokens=2000,
     )
@@ -180,7 +188,9 @@ def run_turn(
     ]
     state.evidence = evidence  # replace with this turn's evidence; history stays in symptoms/observations
 
-    knowledge_block = _load_product_knowledge(db, session.revision_id)
+    _, knowledge = retrieve_revision_context(db, query, product_id=session.product_id, revision_id=session.revision_id) if session.revision_id else ([], [])
+    legacy_block = _load_product_knowledge(db, session.revision_id)
+    knowledge_block = legacy_block + "\n\nCanonical knowledge + graph retrieval:\n" + _knowledge_context(knowledge)
     result = _run_llm_turn(state, evidence, knowledge_block)
     result = _apply_forced_safeguards(state, result)
 

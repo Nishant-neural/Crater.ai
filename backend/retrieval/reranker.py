@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 
-from backend.llm import get_llm_provider
+from backend.llm import gateway
 
 _RERANK_PROMPT = """You are scoring how relevant each passage is to a technician's question \
 about a specific piece of industrial equipment. Score each passage 0-100 \
@@ -35,10 +35,9 @@ def rerank(query: str, candidates: list[tuple[str, str]], top_k: int) -> list[st
     """
     if not candidates:
         return []
-    provider = get_llm_provider()
     passages_block = "\n".join(f"[{i}] {text[:1000]}" for i, (_, text) in enumerate(candidates))
 
-    raw = provider.complete(
+    raw = gateway.complete("rerank",
         messages=[{"role": "user", "content": _RERANK_PROMPT.format(query=query, passages=passages_block)}],
         max_tokens=500,
     )
