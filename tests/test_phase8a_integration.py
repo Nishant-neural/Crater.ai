@@ -81,7 +81,7 @@ def test_provider_extracts_all_universal_primitives(monkeypatch):
         def complete(self, **_kwargs):
             return json.dumps(payload)
 
-    monkeypatch.setattr("backend.knowledge.component_extraction.get_llm_provider", lambda: Provider())
+    monkeypatch.setattr("backend.knowledge.component_extraction.gateway.complete", lambda *args, **kwargs: Provider().complete())
     model = extract_machine_knowledge_from_chunk("Pump P1 requires power and has an inlet.")
 
     assert len(model.entities) == 1

@@ -41,7 +41,7 @@ def test_global_integration_resolves_duplicate_entities(monkeypatch):
     payload = {"entities": [{"id": "entity:p1", "name": "Pump P1", "entity_type": "pump", "source_ids": [a.id, b.id], "evidence": []}], "relations": [], "ports": [], "quantities": [], "states": [], "events": [], "behaviors": [], "constraints": [], "procedures": [], "failure_modes": []}
     class Provider:
         def complete(self, **_kwargs): return json.dumps(payload)
-    monkeypatch.setattr("backend.knowledge.global_integration.get_llm_provider", lambda: Provider())
+    monkeypatch.setattr("backend.knowledge.global_integration.gateway.complete", lambda *args, **kwargs: Provider().complete())
     result = integrate_revision_knowledge(db, revision.id)
     assert result.model.entities[0].id == "entity:p1"
     assert result.model.entities[0].name == "Pump P1"

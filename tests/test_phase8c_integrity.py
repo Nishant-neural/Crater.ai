@@ -16,7 +16,7 @@ def test_completeness_retains_unaccounted_fact(monkeypatch):
     payload={"entities":[],"relations":[],"ports":[],"quantities":[],"states":[],"events":[],"behaviors":[],"constraints":[],"procedures":[],"failure_modes":[],"conflicts":[],"unresolved_facts":[]}
     class P:
         def complete(self, **kwargs): return json.dumps(payload)
-    monkeypatch.setattr("backend.knowledge.global_integration.get_llm_provider",lambda:P())
+    monkeypatch.setattr("backend.knowledge.global_integration.gateway.complete",lambda *args, **kwargs:P().complete())
     result=integrate_revision_knowledge(s,r.id)
     assert result.payload["completeness"]["complete"] is False
     assert result.payload["completeness"]["missing_count"] == 1
@@ -28,7 +28,7 @@ def test_revision_inheritance_is_effective(monkeypatch):
     payload={"entities":[{"id":"entity:p1","name":"Pump P1","entity_type":"pump","source_ids":[e.id],"evidence":[]}],"relations":[],"ports":[],"quantities":[],"states":[],"events":[],"behaviors":[],"constraints":[],"procedures":[],"failure_modes":[],"conflicts":[],"unresolved_facts":[]}
     class P:
         def complete(self, **kwargs): return json.dumps(payload)
-    monkeypatch.setattr("backend.knowledge.global_integration.get_llm_provider",lambda:P())
+    monkeypatch.setattr("backend.knowledge.global_integration.gateway.complete",lambda *args, **kwargs:P().complete())
     result=integrate_revision_knowledge(s,child.id)
     assert result.payload["revision_lineage"] == [parent.id, child.id]
     assert result.model.entities[0].source_ids == [e.id]
