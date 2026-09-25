@@ -2,7 +2,7 @@
 // Base URL points at the FastAPI app (see backend README "Running").
 export const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 
-async function getJson(path) {
+export async function getJson(path) {
   const res = await fetch(`${API_BASE}${path}`);
   if (!res.ok) {
     if (res.status === 404) return null;
@@ -137,4 +137,30 @@ export async function runSimulationHypotheses(twinId, payload) {
   });
   if (!res.ok) throw new Error(`simulation hypotheses -> ${res.status}`);
   return res.json();
+}
+
+
+export async function startDiagnostic(payload) {
+  const res = await fetch(`${API_BASE}/diagnose/start`, {
+    method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await errorText(res, "start diagnostic"));
+  return res.json();
+}
+export async function getDiagnostic(sessionId) {
+  return getJson(`/diagnose/${sessionId}`);
+}
+export async function getDiagnosticContext(sessionId) {
+  return getJson(`/diagnose/${sessionId}/context`);
+}
+export async function respondDiagnostic(sessionId, payload) {
+  const res = await fetch(`${API_BASE}/diagnose/${sessionId}/respond`, {
+    method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await errorText(res, "diagnostic response"));
+  return res.json();
+}
+async function errorText(res, fallback) {
+  try { const body = await res.json(); return `${fallback}: ${body.detail || res.status}`; }
+  catch { return `${fallback}: ${res.status}`; }
 }

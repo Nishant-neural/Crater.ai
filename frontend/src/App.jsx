@@ -5,9 +5,10 @@ import DiagramViewer from "./technical-viewer/DiagramViewer";
 import ExpertKnowledge from "./components/ExpertKnowledge";
 import DigitalTwin from "./components/DigitalTwin";
 import SimulationAgent from "./components/SimulationAgent";
+import DiagnosticWorkspace from "./components/DiagnosticWorkspace";
 import "./App.css";
 
-const TABS = { EXPLORER: "explorer", PROCEDURE: "procedure", EXPERT: "expert", TWIN: "twin", SIMULATION: "simulation" };
+const TABS = { DIAGNOSTIC: "diagnostic", EXPLORER: "explorer", PROCEDURE: "procedure", EXPERT: "expert", TWIN: "twin", SIMULATION: "simulation" };
 
 /**
  * Phases 4-5 — Technical Visualization + expert knowledge capture shell.
@@ -19,7 +20,7 @@ const TABS = { EXPLORER: "explorer", PROCEDURE: "procedure", EXPERT: "expert", T
  * the technical viewer itself never fetches anything unprompted.
  */
 export default function App() {
-  const [tab, setTab] = useState(TABS.EXPLORER);
+  const [tab, setTab] = useState(TABS.DIAGNOSTIC);
   const [revisionId, setRevisionId] = useState("");
   const [procedureId, setProcedureId] = useState("");
   const [activeChunkId, setActiveChunkId] = useState("");
@@ -44,6 +45,9 @@ export default function App() {
       <header className="app__header">
         <h1>Crater.ai — Technical Intelligence</h1>
         <nav className="app__tabs">
+          <button className={tab === TABS.DIAGNOSTIC ? "active" : ""} onClick={() => setTab(TABS.DIAGNOSTIC)}>
+            Diagnose
+          </button>
           <button className={tab === TABS.EXPLORER ? "active" : ""} onClick={() => setTab(TABS.EXPLORER)}>
             Component Explorer
           </button>
@@ -86,7 +90,7 @@ export default function App() {
         </aside>
 
         <main className="app__main">
-          {tab === TABS.EXPERT ? <ExpertKnowledge /> : tab === TABS.TWIN ? <DigitalTwin /> : tab === TABS.SIMULATION ? <SimulationAgent /> : <DiagramViewer chunkId={activeChunkId} highlightLabels={highlightLabels} />}
+          {tab === TABS.DIAGNOSTIC ? <DiagnosticWorkspace /> : tab === TABS.EXPERT ? <ExpertKnowledge /> : tab === TABS.TWIN ? <DigitalTwin /> : tab === TABS.SIMULATION ? <SimulationAgent /> : <DiagramViewer chunkId={activeChunkId} highlightLabels={highlightLabels} />}
         </main>
       </div>
     </div>
