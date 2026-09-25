@@ -51,7 +51,9 @@ Update the diagnostic state and decide the next step. Respond with ONLY JSON in 
     "type": "question|action|conclusion|escalate",
     "content": "the actual question to ask, action to request, recommendation, or escalation message",
     "rationale": "why this step, in one sentence",
-    "safety_notes": [""]
+    "safety_notes": [""],
+    "evidence_chunk_ids": [""],
+    "procedure_steps": [""]
   }}
 }}
 

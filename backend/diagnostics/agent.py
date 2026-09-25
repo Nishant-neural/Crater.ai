@@ -182,10 +182,18 @@ def run_turn(
 
     query = _build_query(state, latest_input)
     retrieved = hybrid_retrieve(db, query, product_id=session.product_id, revision_id=session.revision_id)
-    evidence = [
-        EvidenceRef(chunk_id=r.chunk_id, content=r.content, page_number=r.page_number)
-        for r in retrieved
-    ]
+    # Preserve provenance at the boundary so the UI can trace every claim
+    # back to the source document/page without inventing citations.
+    from backend.db.models import Document
+    evidence = []
+    for r in retrieved:
+        doc = db.get(Document, r.document_id)
+        evidence.append(EvidenceRef(
+            chunk_id=r.chunk_id,
+            content=r.content,
+            source_document=doc.title if doc else r.document_id,
+            page_number=r.page_number,
+        ))
     state.evidence = evidence  # replace with this turn's evidence; history stays in symptoms/observations
 
     _, knowledge = retrieve_revision_context(db, query, product_id=session.product_id, revision_id=session.revision_id) if session.revision_id else ([], [])
@@ -199,6 +207,20 @@ def run_turn(
     state.confidence = float(result.get("overall_confidence", 0.0))
     state.current_step = NextStep.model_validate(result["next_step"])
     state.turns_taken += 1
+
+    # A compact audit trail for the technician-facing timeline. This is
+    # deliberately event-level, not chain-of-thought.
+    state.timeline.append({
+        "turn": state.turns_taken,
+        "kind": input_kind,
+        "input": latest_input,
+        "hypotheses": [
+            {"cause": h.cause, "confidence": h.confidence, "status": "active"}
+            for h in state.hypotheses
+        ],
+        "step_type": state.current_step.type.value,
+        "step": state.current_step.content,
+    })
 
     session.state = state.model_dump(mode="json")
     if state.current_step.type == NextStepType.conclusion:

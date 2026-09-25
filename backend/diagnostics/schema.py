@@ -53,6 +53,8 @@ class NextStep(BaseModel):
     content: str                                  # the question / action / recommendation / escalation message
     rationale: str | None = None                   # why this is the most informative next step
     safety_notes: list[str] = Field(default_factory=list)
+    evidence_chunk_ids: list[str] = Field(default_factory=list)
+    procedure_steps: list[str] = Field(default_factory=list)
 
 
 class DiagnosticState(BaseModel):
@@ -66,6 +68,7 @@ class DiagnosticState(BaseModel):
     safety_constraints: list[str] = Field(default_factory=list)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)   # overall confidence in the leading hypothesis
     turns_taken: int = 0
+    timeline: list[dict] = Field(default_factory=list)
 
 
 class DiagnosticSessionView(BaseModel):
