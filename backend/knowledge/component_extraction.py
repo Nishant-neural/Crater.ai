@@ -363,3 +363,34 @@ def _persist_evidence_dicts(session: Session, item_type: str, item_id: str, evid
             evidence_metadata=item.get("metadata", {}),
         ))
 
+
+def extract_machine_knowledge(content: str) -> MachineKnowledgeExtractionResult:
+    """Structured result shape that matches the Phase 8A schema contract."""
+    result = _extract_result(content)
+    if _has_universal_facts(result):
+        return result
+
+    legacy = _legacy_result(result)
+    for comp in legacy.components:
+        result.entities.append(UniversalEntity(
+            id=f"entity:{comp.name.lower().replace(' ', '-')}",
+            name=comp.name,
+            entity_type="component",
+            properties={
+                "function": comp.function,
+                "location_description": comp.location_description,
+                "part_number": comp.part_number,
+            },
+            ports=[],
+            states=[],
+        ))
+    for rel in legacy.relationships:
+        result.relations.append(UniversalRelation(
+            subject_id=f"entity:{rel.from_component.lower().replace(' ', '-')}",
+            subject_name=rel.from_component,
+            relation_type=rel.relation_type,
+            object_id=f"entity:{rel.to_component.lower().replace(' ', '-')}",
+            object_name=rel.to_component,
+            description=rel.description,
+        ))
+    return result
