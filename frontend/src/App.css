@@ -239,3 +239,24 @@ button { font: inherit; }
 .empty-state { color:var(--muted); font-size:11px; padding:12px 0; line-height:1.5; }
 @media(max-width:1100px){.diagnostic-grid{grid-template-columns:1fr 1fr}.diagnostic-right{grid-column:1/-1}.setup-grid{grid-template-columns:1fr}.hero-flow{display:none}}
 @media(max-width:750px){.diagnostic{padding:12px}.diagnostic-grid{grid-template-columns:1fr}.diagnostic-left,.diagnostic-center,.diagnostic-right{grid-column:auto}.diag-hero h2{font-size:23px}}
+
+.secondary-button { background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:9px 12px; cursor:pointer; }
+.full-width { width:100%; margin-top:10px; }
+.onboarding-empty { border:1px dashed var(--border); border-radius:10px; padding:20px; text-align:center; background:#111319; }
+.onboarding-empty .empty-icon { width:36px; height:36px; line-height:34px; margin:0 auto 10px; border:1px solid var(--border); border-radius:10px; color:var(--accent); font-size:22px; }
+.onboarding-empty h3 { margin:0 0 7px; font-size:14px; }
+.onboarding-empty p { margin:0 auto 14px; color:var(--muted); font-size:11px; line-height:1.5; max-width:330px; }
+.onboarding-overlay { position:fixed; inset:0; z-index:100; display:grid; place-items:center; padding:20px; background:rgba(5,7,10,.78); backdrop-filter:blur(8px); }
+.onboarding-card { width:min(720px,100%); background:#15181e; border:1px solid var(--border); border-radius:14px; padding:24px; box-shadow:0 24px 80px rgba(0,0,0,.4); }
+.onboarding-card h2 { margin:4px 0 7px; font-size:24px; }
+.onboarding-card .muted { margin:0 0 20px; line-height:1.5; }
+.onboarding-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.onboarding-grid label, .onboarding-card > label { display:flex; flex-direction:column; gap:7px; color:var(--muted); font-size:11px; }
+.onboarding-card input { width:100%; box-sizing:border-box; }
+.file-drop { margin-top:12px; padding:16px; border:1px dashed #414754; border-radius:10px; background:#101217; cursor:pointer; }
+.file-drop input { display:none; }
+.file-drop span { color:var(--text); font-size:12px; }
+.ingestion-progress { margin-top:14px; display:flex; gap:10px; align-items:center; padding:10px; background:#101217; border-radius:8px; color:#b9bec8; font-size:11px; }
+.onboarding-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:18px; }
+.onboarding-actions > button:first-child { background:transparent; color:var(--muted); border:1px solid var(--border); border-radius:8px; padding:9px 13px; }
+@media (max-width:720px) { .onboarding-grid { grid-template-columns:1fr; } .onboarding-card { padding:18px; } }

@@ -11,13 +11,9 @@ import "./App.css";
 const TABS = { DIAGNOSTIC: "diagnostic", EXPLORER: "explorer", PROCEDURE: "procedure", EXPERT: "expert", TWIN: "twin", SIMULATION: "simulation" };
 
 /**
- * Phases 4-5 — Technical Visualization + expert knowledge capture shell.
- *
- * There's no product/revision picker UI wired up yet (Phases 1-3 don't
- * expose a "browse everything I've ingested" endpoint) — a technician or
- * developer pastes in the revision/procedure id they're working with.
- * The left panel drives which diagram chunk the technical viewer shows;
- * the technical viewer itself never fetches anything unprompted.
+ * Crater.ai technician workstation. Phase 9 adds the end-to-end machine
+ * onboarding and diagnostic flow; the legacy visualization/expert/simulation
+ * surfaces remain available as secondary workspaces.
  */
 export default function App() {
   const [tab, setTab] = useState(TABS.DIAGNOSTIC);
