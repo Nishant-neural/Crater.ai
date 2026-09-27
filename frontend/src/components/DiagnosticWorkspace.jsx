@@ -44,13 +44,42 @@ export default function DiagnosticWorkspace() {
   const [selectedEvidence,setSelectedEvidence]=useState(null);
   const [showOnboarding,setShowOnboarding]=useState(false);
 
-  async function loadMachines() {
-    try { setMachines((await listMachines()) || []); } catch(e) { setError(e.message); }
+  async function loadMachines(selectProductId = null, selectRevisionId = null) {
+    try {
+      const rows = (await listMachines()) || [];
+      setMachines(rows);
+
+      if (selectProductId) {
+        setProductId(selectProductId);
+      } else if (!productId && rows.length) {
+        setProductId(rows[0].id);
+      }
+
+      if (selectRevisionId) {
+        setRevisionId(selectRevisionId);
+      }
+    } catch (e) {
+      setError(e.message || "Unable to load machines.");
+    }
   }
   useEffect(()=>{ loadMachines(); },[]);
   useEffect(()=>{
-    if(!productId){setRevisions([]);setRevisionId("");return;}
-    listRevisions(productId).then(rows=>{setRevisions(rows||[]);setRevisionId(rows?.[0]?.id||"");}).catch(e=>setError(e.message));
+    if(!productId){
+      setRevisions([]);
+      setRevisionId("");
+      return;
+    }
+    listRevisions(productId)
+      .then(rows=>{
+        const next = rows || [];
+        setRevisions(next);
+        setRevisionId(current =>
+          current && next.some(row => row.id === current)
+            ? current
+            : (next[0]?.id || "")
+        );
+      })
+      .catch(e=>setError(e.message || "Unable to load revisions."));
   },[productId]);
 
   async function begin(){
@@ -88,12 +117,14 @@ export default function DiagnosticWorkspace() {
   const evidence=state?.evidence||[];
 
   if(!session) return <div className="diagnostic">
-    {showOnboarding && <MachineOnboarding onCancel={()=>setShowOnboarding(false)} onReady={async ({productId: readyProductId, revisionId: readyRevisionId})=>{
-      setShowOnboarding(false);
-      await loadMachines();
-      setProductId(readyProductId);
-      setRevisionId(readyRevisionId);
-    }} />}
+    {showOnboarding && <MachineOnboarding
+      onCancel={()=>setShowOnboarding(false)}
+      onReady={async ({productId: readyProductId, revisionId: readyRevisionId, knowledgeWarning})=>{
+        setShowOnboarding(false);
+        setError(knowledgeWarning || "");
+        await loadMachines(readyProductId, readyRevisionId);
+      }}
+    />}
     <div className="diag-hero">
       <div>
         <div className="eyebrow">PHASE 9 · DIAGNOSTIC WORKSTATION</div>
