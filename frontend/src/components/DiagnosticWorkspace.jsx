@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { listMachines } from "../api/machines";
 import { listRevisions } from "../api/revisions";
 import { startDiagnostic, getDiagnostic, getDiagnosticContext, respondDiagnostic } from "../api/diagnostics";
+import MachineOnboarding from "./MachineOnboarding";
 
 function Card({title, children, className=""}) {
   return <section className={`diag-card ${className}`}><div className="diag-card__title">{title}</div>{children}</section>;
@@ -41,8 +42,12 @@ export default function DiagnosticWorkspace() {
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState("");
   const [selectedEvidence,setSelectedEvidence]=useState(null);
+  const [showOnboarding,setShowOnboarding]=useState(false);
 
-  useEffect(()=>{ listMachines().then(setMachines).catch(e=>setError(e.message)); },[]);
+  async function loadMachines() {
+    try { setMachines((await listMachines()) || []); } catch(e) { setError(e.message); }
+  }
+  useEffect(()=>{ loadMachines(); },[]);
   useEffect(()=>{
     if(!productId){setRevisions([]);setRevisionId("");return;}
     listRevisions(productId).then(rows=>{setRevisions(rows||[]);setRevisionId(rows?.[0]?.id||"");}).catch(e=>setError(e.message));
@@ -83,6 +88,12 @@ export default function DiagnosticWorkspace() {
   const evidence=state?.evidence||[];
 
   if(!session) return <div className="diagnostic">
+    {showOnboarding && <MachineOnboarding onCancel={()=>setShowOnboarding(false)} onReady={async ({productId: readyProductId, revisionId: readyRevisionId})=>{
+      setShowOnboarding(false);
+      await loadMachines();
+      setProductId(readyProductId);
+      setRevisionId(readyRevisionId);
+    }} />}
     <div className="diag-hero">
       <div>
         <div className="eyebrow">PHASE 9 · DIAGNOSTIC WORKSTATION</div>
@@ -93,19 +104,27 @@ export default function DiagnosticWorkspace() {
     </div>
     <div className="setup-grid">
       <Card title="1 · Machine">
-        <label>Product
-          <select value={productId} onChange={e=>setProductId(e.target.value)}>
-            <option value="">Select machine</option>
-            {machines.map(m=><option key={m.id} value={m.id}>{m.manufacturer} · {m.family} · {m.model}</option>)}
-          </select>
-        </label>
-        <label>Revision
-          <select value={revisionId} onChange={e=>setRevisionId(e.target.value)} disabled={!productId}>
-            <option value="">Select revision</option>
-            {revisions.map(r=><option key={r.id} value={r.id}>{r.label}</option>)}
-          </select>
-        </label>
-        {revisionId && <div className="ready-check"><StatusPill tone="ok">READY</StatusPill> Revision selected</div>}
+        {machines.length > 0 ? <>
+          <label>Product
+            <select value={productId} onChange={e=>setProductId(e.target.value)}>
+              <option value="">Select machine</option>
+              {machines.map(m=><option key={m.id} value={m.id}>{m.manufacturer} · {m.family} · {m.model}</option>)}
+            </select>
+          </label>
+          <label>Revision
+            <select value={revisionId} onChange={e=>setRevisionId(e.target.value)} disabled={!productId}>
+              <option value="">Select revision</option>
+              {revisions.map(r=><option key={r.id} value={r.id}>{r.label}</option>)}
+            </select>
+          </label>
+          {revisionId && <div className="ready-check"><StatusPill tone="ok">READY</StatusPill> Revision selected</div>}
+          <button className="secondary-button full-width" onClick={()=>setShowOnboarding(true)}>+ Ingest another machine manual</button>
+        </> : <div className="onboarding-empty">
+          <div className="empty-icon">＋</div>
+          <h3>No machines onboarded</h3>
+          <p>Start by uploading a machine manual. Crater will create the machine, revision, extract knowledge, and make it available here.</p>
+          <button className="primary-button" onClick={()=>setShowOnboarding(true)}>Upload manual & onboard machine</button>
+        </div>}
       </Card>
       <Card title="2 · Symptom">
         <label>What is happening with the machine?
