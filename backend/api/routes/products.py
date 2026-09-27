@@ -26,11 +26,20 @@ class RevisionCreate(BaseModel):
 
 @router.post("")
 def create_product(payload: ProductCreate, session: Session = Depends(get_session)):
+    existing = (
+        session.query(Product)
+        .filter(Product.manufacturer == payload.manufacturer)
+        .filter(Product.family == payload.family)
+        .filter(Product.model == payload.model)
+        .first()
+    )
+    if existing:
+        return {"id": existing.id, "manufacturer": existing.manufacturer, "family": existing.family, "model": existing.model, "existing": True}
     product = Product(**payload.model_dump())
     session.add(product)
     session.commit()
     session.refresh(product)
-    return {"id": product.id, "manufacturer": product.manufacturer, "family": product.family, "model": product.model}
+    return {"id": product.id, "manufacturer": product.manufacturer, "family": product.family, "model": product.model, "existing": False}
 
 
 @router.get("")
@@ -52,11 +61,19 @@ def create_revision(product_id: str, payload: RevisionCreate, session: Session =
         parent = session.get(Revision, parent_id)
         if not parent or parent.product_id != product_id:
             raise HTTPException(400, "parent_revision_id must reference a revision of the same product")
+    existing = (
+        session.query(Revision)
+        .filter(Revision.product_id == product_id)
+        .filter(Revision.label == data["label"])
+        .first()
+    )
+    if existing:
+        return {"id": existing.id, "product_id": product_id, "label": existing.label, "parent_revision_id": existing.parent_revision_id, "existing": True}
     revision = Revision(product_id=product_id, **data)
     session.add(revision)
     session.commit()
     session.refresh(revision)
-    return {"id": revision.id, "product_id": product_id, "label": revision.label, "parent_revision_id": revision.parent_revision_id}
+    return {"id": revision.id, "product_id": product_id, "label": revision.label, "parent_revision_id": revision.parent_revision_id, "existing": False}
 
 
 @router.get("/{product_id}/revisions")

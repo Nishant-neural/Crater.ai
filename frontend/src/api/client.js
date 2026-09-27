@@ -160,6 +160,38 @@ export async function respondDiagnostic(sessionId, payload) {
   if (!res.ok) throw new Error(await errorText(res, "diagnostic response"));
   return res.json();
 }
+export async function postJson(path, payload) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await errorText(res, path));
+  return res.json();
+}
+
+export async function uploadManual({ revisionId, file, title, idempotencyKey }) {
+  const form = new FormData();
+  form.append("revision_id", revisionId);
+  form.append("doc_type", "manual");
+  form.append("title", title || file.name);
+  form.append("idempotency_key", idempotencyKey);
+  form.append("file", file);
+  const res = await fetch(`${API_BASE}/ingest`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await errorText(res, "manual ingestion"));
+  return res.json();
+}
+
+export async function integrateKnowledge(revisionId) {
+  const res = await fetch(`${API_BASE}/knowledge/revisions/${revisionId}/integrate`, { method: "POST" });
+  if (!res.ok) throw new Error(await errorText(res, "knowledge integration"));
+  return res.json();
+}
+
+export async function getKnowledgeModel(revisionId) {
+  return getJson(`/knowledge/revisions/${revisionId}/model`);
+}
+
 async function errorText(res, fallback) {
   try { const body = await res.json(); return `${fallback}: ${body.detail || res.status}`; }
   catch { return `${fallback}: ${res.status}`; }
