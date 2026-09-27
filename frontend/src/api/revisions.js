@@ -1,2 +1,3 @@
-import { getJson } from "./client";
-export const listRevisions = (productId) => getJson(`/products/${productId}/revisions`);
+import { listRevisions as listProductRevisions } from "./machines";
+
+export const listRevisions = (productId) => listProductRevisions(productId);
