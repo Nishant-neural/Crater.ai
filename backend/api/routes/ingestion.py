@@ -1,15 +1,15 @@
-"""Durable, idempotent document ingestion endpoints for the Phase 1 MVP."""
+"""Durable, idempotent document ingestion endpoints with observable progress."""
 from __future__ import annotations
 
 import hashlib
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from backend.db.models import Document, DocType, IngestionJob, IngestionStatus, Revision
-from backend.db.session import get_session
+from backend.db.session import SessionLocal, get_session
 from backend.ingestion.pipeline import ingest_pdf
 
 router = APIRouter(prefix="/ingest", tags=["ingestion"])
@@ -52,11 +52,20 @@ def _store_upload(file: UploadFile) -> tuple[Path, str]:
 
 
 def _run_job(session: Session, job: IngestionJob, revision: Revision) -> IngestionJob:
+    """Run one job in a dedicated DB session and publish progress after each phase."""
     try:
-        job.stage = "ingesting"
+        job.stage = "processing|1|Starting ingestion"
         job.status = IngestionStatus.processing
         job.error_message = None
         session.commit()
+
+        def progress(percent: int, label: str) -> None:
+            current = session.get(IngestionJob, job.id)
+            if current is None:
+                return
+            current.stage = f"processing|{max(0, min(100, int(percent)))}|{label}"
+            current.status = IngestionStatus.processing
+            session.commit()
 
         document = ingest_pdf(
             session=session,
@@ -67,10 +76,11 @@ def _run_job(session: Session, job: IngestionJob, revision: Revision) -> Ingesti
             title=job.title,
             image_out_dir=_IMAGE_DIR / revision.id,
             existing_document_id=job.document_id,
+            progress_callback=progress,
         )
         job.document_id = document.id
         job.status = IngestionStatus.completed
-        job.stage = "completed"
+        job.stage = "completed|100|Ingestion complete"
         session.commit()
     except Exception as exc:
         session.rollback()
@@ -78,8 +88,6 @@ def _run_job(session: Session, job: IngestionJob, revision: Revision) -> Ingesti
         if not job:
             raise
         if not job.document_id:
-            # Chunks are committed before external indexing. Remember that
-            # partial document so a retry resumes it instead of duplicating it.
             partial_document = (
                 session.query(Document)
                 .filter(Document.revision_id == revision.id)
@@ -90,14 +98,39 @@ def _run_job(session: Session, job: IngestionJob, revision: Revision) -> Ingesti
             if partial_document:
                 job.document_id = partial_document.id
         job.status = IngestionStatus.failed
-        job.stage = "failed"
+        job.stage = "failed|0|Ingestion failed"
         job.error_message = str(exc)[:2000]
         session.commit()
     return job
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+def _run_job_background(job_id: str) -> None:
+    """BackgroundTasks entrypoint; never reuses the request-scoped SQLAlchemy session."""
+    session = SessionLocal()
+    try:
+        job = session.get(IngestionJob, job_id)
+        if not job:
+            return
+        revision = session.get(Revision, job.revision_id)
+        if not revision:
+            job.status = IngestionStatus.failed
+            job.stage = "failed|0|Revision not found"
+            job.error_message = "Revision not found"
+            session.commit()
+            return
+        _run_job(session, job, revision)
+    finally:
+        session.close()
+
+
+def _queue_job(job: IngestionJob, background_tasks: BackgroundTasks) -> dict:
+    background_tasks.add_task(_run_job_background, job.id)
+    return _job_response(job)
+
+
+@router.post("", status_code=status.HTTP_202_ACCEPTED)
 async def ingest_document(
+    background_tasks: BackgroundTasks,
     revision_id: str = Form(...),
     doc_type: DocType = Form(...),
     title: str = Form(...),
@@ -119,6 +152,8 @@ async def ingest_document(
     if existing:
         if existing.content_sha256 != content_sha256:
             raise HTTPException(409, "Idempotency key was already used for different content")
+        if existing.status in (IngestionStatus.queued, IngestionStatus.processing):
+            return _job_response(existing, reused=True)
         return _job_response(existing, reused=True)
 
     duplicate_content = (
@@ -137,12 +172,12 @@ async def ingest_document(
         doc_type=doc_type,
         title=title,
         source_path=str(source_path),
-        stage="queued",
+        stage="queued|0|Upload complete; queued for processing",
     )
     session.add(job)
     session.commit()
     session.refresh(job)
-    return _job_response(_run_job(session, job, revision))
+    return _queue_job(job, background_tasks)
 
 
 @router.get("/jobs/{job_id}")
@@ -153,8 +188,8 @@ def get_ingestion_job(job_id: str, session: Session = Depends(get_session)):
     return _job_response(job)
 
 
-@router.post("/jobs/{job_id}/retry")
-def retry_ingestion_job(job_id: str, session: Session = Depends(get_session)):
+@router.post("/jobs/{job_id}/retry", status_code=status.HTTP_202_ACCEPTED)
+def retry_ingestion_job(job_id: str, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
     job = session.get(IngestionJob, job_id)
     if not job:
         raise HTTPException(404, "Ingestion job not found")
@@ -170,5 +205,9 @@ def retry_ingestion_job(job_id: str, session: Session = Depends(get_session)):
         raise HTTPException(404, "Revision not found")
 
     job.attempt_count += 1
+    job.status = IngestionStatus.queued
+    job.stage = "queued|0|Retry queued"
+    job.error_message = None
     session.commit()
-    return _job_response(_run_job(session, job, revision))
+    session.refresh(job)
+    return _queue_job(job, background_tasks)

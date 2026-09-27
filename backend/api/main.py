@@ -1,21 +1,10 @@
-"""FastAPI app entrypoint for Crater.ai."""
+"""FastAPI app entrypoint. Run with: uvicorn crater.api.main:app --reload"""
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.api.routes import (
-    diagnostics,
-    digital_twin,
-    expert,
-    ingestion,
-    machine_knowledge,
-    products,
-    query,
-    schematics,
-    visualization,
-    simulation,
-)
+from backend.api.routes import diagnostics, digital_twin, expert, ingestion, machine_knowledge, products, query, schematics, visualization, simulation
 from backend.db.session import init_db
 
 
@@ -26,14 +15,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Crater.ai — Technical Intelligence",
+    title="Crater.ai — Phases 1-7: Product Knowledge, Diagnostic Agent, Schematic Intelligence, Technical Visualization, Expert Knowledge, Functional Digital Twin",
     version="0.1.0",
     lifespan=lifespan,
 )
 
-# The React/Vite development server is a different origin from FastAPI.
-# Browsers therefore send an OPTIONS preflight before POST/JSON and
-# multipart requests. Without this middleware those requests return 405.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[

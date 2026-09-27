@@ -1,14 +1,14 @@
 """
 Top-level ingestion pipeline: PDF -> pages -> chunks -> (SQL + Qdrant) ->
-optional knowledge extraction.
+optional knowledge extraction and schematic extraction.
 
-This is the single entry point both the CLI (scripts/ingest_docs.py) and
-the API (/ingest route) call, so there's exactly one place that defines
-"what ingesting a document means."
+The progress callback is intentionally lightweight: the API owns persistence
+of job state while this module reports meaningful pipeline milestones.
 """
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 from sqlalchemy.orm import Session
 
@@ -26,6 +26,8 @@ from backend.retrieval.vector_store import upsert_chunks
 from backend.schematic.graph import persist_schematic, schematic_to_machine_model
 from backend.knowledge.evidence import MachineEvidence
 
+ProgressCallback = Callable[[int, str], None]
+
 
 def ingest_pdf(
     session: Session,
@@ -38,13 +40,22 @@ def ingest_pdf(
     run_knowledge_extraction: bool = True,
     run_schematic_extraction: bool = True,
     existing_document_id: str | None = None,
+    progress_callback: ProgressCallback | None = None,
 ) -> Document:
     pdf_path = Path(pdf_path)
+
+    def progress(percent: int, label: str) -> None:
+        if progress_callback:
+            progress_callback(percent, label)
+
+    progress(5, "Extracting PDF text, tables and images")
     pages = load_pdf(pdf_path, image_out_dir)
+    progress(18, f"PDF extracted — {len(pages)} pages")
 
     if existing_document_id:
         document = session.get(Document, existing_document_id)
         if document is not None:
+            progress(100, "Existing document already ingested")
             return document
 
     document = Document(
@@ -55,10 +66,11 @@ def ingest_pdf(
         page_count=len(pages),
     )
     session.add(document)
-    session.flush()  # get document.id
+    session.flush()
 
     all_chunks: list[Chunk] = []
-    for page in pages:
+    total_pages = max(1, len(pages))
+    for page_index, page in enumerate(pages, start=1):
         for pending in page_to_chunks(str(pdf_path), page):
             row = Chunk(
                 document_id=document.id,
@@ -69,12 +81,15 @@ def ingest_pdf(
             )
             session.add(row)
             all_chunks.append(row)
+        page_percent = 18 + int((page_index / total_pages) * 12)
+        progress(page_percent, f"Creating chunks — page {page_index}/{len(pages)}")
 
-    session.flush()  # get chunk ids
+    session.flush()
     session.commit()
+    progress(32, f"Created {len(all_chunks)} chunks")
 
-    # Index into the vector store (BM25 reads straight from SQL, no separate step needed).
     if all_chunks:
+        progress(34, f"Indexing {len(all_chunks)} chunks in vector search")
         upsert_chunks(
             chunk_ids=[c.id for c in all_chunks],
             texts=[c.content for c in all_chunks],
@@ -89,14 +104,13 @@ def ingest_pdf(
                 for c in all_chunks
             ],
         )
+    progress(40, "Vector index ready")
 
-    # Knowledge extraction (components/relationships/procedures), text chunks only —
-    # tables/diagrams are noisier extraction targets and are deferred (see
-    # component_extraction.py docstring).
     if run_knowledge_extraction:
-        for chunk in all_chunks:
-            if not chunk.content.strip():
-                continue
+        text_chunks = [c for c in all_chunks if c.content.strip()]
+        total = len(text_chunks)
+        progress(42, f"Extracting machine knowledge — 0/{total} chunks")
+        for index, chunk in enumerate(text_chunks, start=1):
             result, machine_model = extract_chunk_knowledge(chunk.content)
             if result and (result.components or result.relationships or result.procedures):
                 persist_extraction(session, revision_id, chunk.id, result)
@@ -109,13 +123,21 @@ def ingest_pdf(
                 if not issues:
                     persist_machine_knowledge(session, revision_id, chunk.id, machine_model)
 
-    # Schematic parsing (plan.md §5), diagram chunks only, run AFTER text
-    # knowledge extraction above so component-name matching in
-    # persist_schematic has something to match against.
-    if run_schematic_extraction:
-        for chunk in all_chunks:
-            if chunk.chunk_type.value != "diagram" or not chunk.extra or not chunk.extra.get("image_path"):
-                continue
+            percent = 42 + int((index / max(1, total)) * 33)
+            progress(percent, f"Extracting machine knowledge — {index}/{total} chunks")
+    else:
+        progress(75, "Machine knowledge extraction skipped")
+
+    progress(76, "Machine knowledge extraction complete")
+
+    diagram_chunks = [
+        c for c in all_chunks
+        if c.chunk_type.value == "diagram" and c.extra and c.extra.get("image_path")
+    ]
+    if run_schematic_extraction and diagram_chunks:
+        total = len(diagram_chunks)
+        progress(78, f"Analyzing schematics — 0/{total} diagrams")
+        for index, chunk in enumerate(diagram_chunks, start=1):
             schematic_result = extract_schematic(chunk.extra["image_path"])
             if schematic_result.nodes:
                 persist_schematic(session, document.id, chunk.id, revision_id, schematic_result)
@@ -124,9 +146,14 @@ def ingest_pdf(
                 )
                 if not validate_machine_model(schematic_model):
                     persist_machine_knowledge(session, revision_id, chunk.id, schematic_model)
+            percent = 78 + int((index / max(1, total)) * 12)
+            progress(percent, f"Analyzing schematics — {index}/{total} diagrams")
+    else:
+        progress(90, "No schematic extraction required")
 
+    progress(92, "Saving machine knowledge")
     session.commit()
-
+    progress(96, "Finalizing ingestion")
     return document
 
 
