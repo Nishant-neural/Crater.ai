@@ -275,3 +275,5 @@ button { font: inherit; }
 .step.done { color:#7dd3a8; }
 .progress-subtext { margin-top:9px; color:#8e95a2; font-size:10px; }
 @media(max-width:720px){.progress-details{grid-template-columns:1fr;}}
+
+.ingestion-progress-panel.status-failed{border-color:#8f3f3f}.ingestion-progress-panel.status-failed .progress-fill{background:#d66}.ingestion-progress-panel.status-ready{border-color:#357a58}.ingestion-progress-panel.status-ready .progress-fill{background:#67c58f}.status-failed .progress-heading{color:#ff9b9b}.status-ready .progress-heading{color:#9de0b9}
