@@ -260,3 +260,18 @@ button { font: inherit; }
 .onboarding-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:18px; }
 .onboarding-actions > button:first-child { background:transparent; color:var(--muted); border:1px solid var(--border); border-radius:8px; padding:9px 13px; }
 @media (max-width:720px) { .onboarding-grid { grid-template-columns:1fr; } .onboarding-card { padding:18px; } }
+
+/* Phase 9 — observable manual upload + ingestion progress */
+.ingestion-progress-panel { margin-top:14px; padding:13px; background:#101217; border:1px solid var(--border); border-radius:10px; }
+.progress-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; color:var(--text); font-size:11px; margin-bottom:9px; }
+.progress-heading strong { font-size:12px; }
+.progress-track { height:7px; overflow:hidden; background:#272c35; border-radius:999px; }
+.progress-fill { height:100%; border-radius:999px; background:var(--accent); transition:width .25s ease; }
+.progress-details { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:11px; }
+.progress-details > div { display:grid; grid-template-columns:auto 1fr auto; gap:7px; align-items:center; padding:8px; background:#15181e; border-radius:7px; color:var(--muted); font-size:10px; }
+.progress-details strong { color:var(--text); font-size:10px; }
+.step { color:#4b515c; font-size:9px; }
+.step.live { color:var(--accent); }
+.step.done { color:#7dd3a8; }
+.progress-subtext { margin-top:9px; color:#8e95a2; font-size:10px; }
+@media(max-width:720px){.progress-details{grid-template-columns:1fr;}}
