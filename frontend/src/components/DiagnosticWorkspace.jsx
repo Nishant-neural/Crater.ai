@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { listMachines } from "../api/machines";
 import { listRevisions } from "../api/revisions";
+import { getRevisionIngestionStatus } from "../api/client";
 import { startDiagnostic, getDiagnostic, getDiagnosticContext, respondDiagnostic } from "../api/diagnostics";
 import MachineOnboarding from "./MachineOnboarding";
 
@@ -43,6 +44,7 @@ export default function DiagnosticWorkspace() {
   const [error,setError]=useState("");
   const [selectedEvidence,setSelectedEvidence]=useState(null);
   const [showOnboarding,setShowOnboarding]=useState(false);
+  const [revisionIngestion,setRevisionIngestion]=useState(null);
 
   async function loadMachines(selectProductId = null, selectRevisionId = null) {
     try {
@@ -82,6 +84,13 @@ export default function DiagnosticWorkspace() {
       .catch(e=>setError(e.message || "Unable to load revisions."));
   },[productId]);
 
+  useEffect(()=>{
+    if(!revisionId){ setRevisionIngestion(null); return; }
+    getRevisionIngestionStatus(revisionId)
+      .then(setRevisionIngestion)
+      .catch(e=>setRevisionIngestion({status:"unknown",error:e.message}));
+  },[revisionId]);
+
   async function begin(){
     if(!productId||!revisionId||!symptom.trim()) return;
     setBusy(true);setError("");
@@ -118,6 +127,8 @@ export default function DiagnosticWorkspace() {
 
   if(!session) return <div className="diagnostic">
     {showOnboarding && <MachineOnboarding
+      initialProductId={productId}
+      initialRevisionId={revisionId}
       onCancel={()=>setShowOnboarding(false)}
       onReady={async ({productId: readyProductId, revisionId: readyRevisionId, knowledgeWarning})=>{
         setShowOnboarding(false);
@@ -148,8 +159,10 @@ export default function DiagnosticWorkspace() {
               {revisions.map(r=><option key={r.id} value={r.id}>{r.label}</option>)}
             </select>
           </label>
-          {revisionId && <div className="ready-check"><StatusPill tone="ok">READY</StatusPill> Revision selected</div>}
-          <button className="secondary-button full-width" onClick={()=>setShowOnboarding(true)}>+ Ingest another machine manual</button>
+          {revisionId && revisionIngestion?.status === "ready" && <div className="ready-check"><StatusPill tone="ok">READY</StatusPill> {revisionIngestion.document_count} manual(s) ingested{revisionIngestion.active_count ? " · another manual is processing" : ""}</div>}
+          {revisionId && revisionIngestion?.status === "processing" && <div className="ready-check"><StatusPill tone="live">INGESTING</StatusPill> {revisionIngestion.completed_count} completed manual(s) · {revisionIngestion.active_count} still processing</div>}
+          {revisionId && revisionIngestion?.status === "failed" && <div className="ready-check"><StatusPill tone="warn">INGESTION FAILED</StatusPill> No completed manual is available yet. Open onboarding to retry from the checkpoint.</div>}
+          <button className="secondary-button full-width" onClick={()=>setShowOnboarding(true)}>+ Add manual to this revision</button>
         </> : <div className="onboarding-empty">
           <div className="empty-icon">＋</div>
           <h3>No machines onboarded</h3>

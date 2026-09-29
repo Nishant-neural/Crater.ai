@@ -80,30 +80,34 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
     text_chunks=[c for c in all_chunks if c.content.strip()]
     total=len(text_chunks)
     if run_knowledge_extraction:
-        for index,chunk in enumerate(text_chunks,start=1):
+        processed_knowledge = len(knowledge_done)
+        for chunk in text_chunks:
             if chunk.id in knowledge_done: continue
             result,machine_model=extract_chunk_knowledge(chunk.content)
             if result and (result.components or result.relationships or result.procedures): persist_extraction(session,revision_id,chunk.id,result)
             _stamp_provenance(machine_model,document.title,chunk.page_number,chunk.id,chunk.chunk_type.value)
             if (machine_model.entities or machine_model.relations or machine_model.ports or machine_model.quantities or machine_model.states or machine_model.events or machine_model.behaviors or machine_model.constraints):
                 if not validate_machine_model(machine_model): persist_machine_knowledge(session,revision_id,chunk.id,machine_model)
-            session.commit(); knowledge_done.add(chunk.id)
-            if job_id: save_checkpoint(job_id,stage="knowledge",knowledge_done=sorted(knowledge_done))
-            progress(42+int(index/max(1,total)*33),f"Extracting machine knowledge — {index}/{total} chunks")
+            session.commit(); knowledge_done.add(chunk.id); processed_knowledge += 1
+            percent = 42 + int(processed_knowledge/max(1,total)*33)
+            if job_id: save_checkpoint(job_id,stage="knowledge",knowledge_done=sorted(knowledge_done),percent=percent)
+            progress(percent,f"Extracting machine knowledge — {processed_knowledge}/{total} chunks")
     else: progress(75,"Machine knowledge extraction skipped")
     progress(76,"Machine knowledge extraction complete")
     diagrams=[c for c in all_chunks if c.chunk_type.value=="diagram" and c.extra and c.extra.get("image_path")]
     if run_schematic_extraction and diagrams:
         total_d=len(diagrams)
-        for index,chunk in enumerate(diagrams,start=1):
+        processed_schematics = len(schematics_done)
+        for chunk in diagrams:
             if chunk.id in schematics_done: continue
             result=extract_schematic(chunk.extra["image_path"])
             if result.nodes:
                 persist_schematic(session,document.id,chunk.id,revision_id,result); model=schematic_to_machine_model(result,document.title,chunk.page_number,chunk.id)
                 if not validate_machine_model(model): persist_machine_knowledge(session,revision_id,chunk.id,model)
-            session.commit(); schematics_done.add(chunk.id)
-            if job_id: save_checkpoint(job_id,stage="schematics",schematics_done=sorted(schematics_done))
-            progress(78+int(index/max(1,total_d)*12),f"Analyzing schematics — {index}/{total_d} diagrams")
+            session.commit(); schematics_done.add(chunk.id); processed_schematics += 1
+            percent = 78 + int(processed_schematics/max(1,total_d)*12)
+            if job_id: save_checkpoint(job_id,stage="schematics",schematics_done=sorted(schematics_done),percent=percent)
+            progress(percent,f"Analyzing schematics — {processed_schematics}/{total_d} diagrams")
     else: progress(90,"No schematic extraction required")
     progress(96,"Finalizing ingestion")
     if job_id: save_checkpoint(job_id,stage="completed",percent=100)

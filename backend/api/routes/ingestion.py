@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 from uuid import uuid4
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
@@ -23,8 +24,8 @@ def _job_response(job: IngestionJob, reused: bool = False) -> dict:
     try: percent = int(parts[1]) if len(parts) > 1 else 0
     except ValueError: percent = 0
     label = parts[2] if len(parts) > 2 else (parts[0] if parts else "Queued")
-    return {"job_id": job.id, "document_id": job.document_id, "status": job.status.value,
-            "stage": job.stage, "percent": percent, "stage_label": label,
+    return {"job_id": job.id, "document_id": job.document_id, "revision_id": job.revision_id,
+            "status": job.status.value, "stage": job.stage, "percent": percent, "stage_label": label,
             "attempt_count": job.attempt_count, "error_message": job.error_message,
             "ocr_available": ocr_warning is None, "ocr_warning": ocr_warning, "reused": reused}
 
@@ -92,6 +93,51 @@ async def ingest_document(background_tasks: BackgroundTasks, revision_id: str = 
     job = IngestionJob(revision_id=revision_id, idempotency_key=idempotency_key, content_sha256=sha, doc_type=doc_type, title=title, source_path=str(source_path), stage="queued|0|Upload complete; queued for processing")
     session.add(job); session.commit(); session.refresh(job); return _queue(job, background_tasks)
 
+
+@router.get("/revisions/{revision_id}/status")
+def get_revision_ingestion_status(revision_id: str, session: Session = Depends(get_session)):
+    """Return durable ingestion state for a revision so the UI can recover after reload."""
+    revision = session.get(Revision, revision_id)
+    if not revision:
+        raise HTTPException(404, "Revision not found")
+
+    jobs = (
+        session.query(IngestionJob)
+        .filter(IngestionJob.revision_id == revision_id)
+        .order_by(IngestionJob.created_at.desc())
+        .all()
+    )
+    documents = (
+        session.query(Document)
+        .filter(Document.revision_id == revision_id)
+        .order_by(Document.ingested_at.desc())
+        .all()
+    )
+    # A browser reload is harmless, but a backend restart can leave a job marked
+    # processing forever. Treat sufficiently stale jobs as failed/retryable; the
+    # filesystem checkpoint still contains the exact completed chunk IDs.
+    stale_cutoff = datetime.utcnow() - timedelta(minutes=5)
+    for j in jobs:
+        if j.status == IngestionStatus.processing and j.updated_at and j.updated_at < stale_cutoff:
+            j.status = IngestionStatus.failed
+            j.error_message = "Ingestion worker stopped; saved checkpoint is available for retry."
+            session.commit()
+
+    completed = [j for j in jobs if j.status == IngestionStatus.completed]
+    active = [j for j in jobs if j.status in (IngestionStatus.queued, IngestionStatus.processing)]
+    failed = [j for j in jobs if j.status == IngestionStatus.failed]
+    return {
+        "revision_id": revision_id,
+        "ready": bool(completed),
+        "status": "processing" if active else ("ready" if completed else ("failed" if failed else "empty")),
+        "document_count": len(documents),
+        "completed_count": len(completed),
+        "active_count": len(active),
+        "failed_count": len(failed),
+        "documents": [{"id": d.id, "title": d.title, "doc_type": d.doc_type.value, "page_count": d.page_count, "ingested_at": d.ingested_at.isoformat()} for d in documents],
+        "jobs": [_job_response(j) for j in jobs],
+    }
+
 @router.get("/jobs/{job_id}")
 def get_ingestion_job(job_id: str, session: Session = Depends(get_session)):
     job = session.get(IngestionJob, job_id)
@@ -103,7 +149,11 @@ def retry_ingestion_job(job_id: str, background_tasks: BackgroundTasks, session:
     job = session.get(IngestionJob, job_id)
     if not job: raise HTTPException(404, "Ingestion job not found")
     if job.status == IngestionStatus.completed: return _job_response(job, reused=True)
-    if job.status == IngestionStatus.processing: raise HTTPException(409, "Ingestion job is already running")
+    if job.status == IngestionStatus.processing:
+        if not job.updated_at or job.updated_at >= datetime.utcnow() - timedelta(minutes=5):
+            raise HTTPException(409, "Ingestion job is already running")
+        job.status = IngestionStatus.failed
+        job.error_message = "Ingestion worker stopped; retrying from the saved checkpoint."
     if not Path(job.source_path).is_file(): raise HTTPException(409, "Original upload is unavailable; upload the document again")
     job.attempt_count += 1; job.status = IngestionStatus.queued; job.error_message = None; session.commit(); session.refresh(job)
     return _queue(job, background_tasks)

@@ -103,6 +103,10 @@ export async function getIngestionJob(jobId) {
   return getJson(`/ingest/jobs/${jobId}`);
 }
 
+export async function getRevisionIngestionStatus(revisionId) {
+  return getJson(`/ingest/revisions/${encodeURIComponent(revisionId)}/status`);
+}
+
 export async function retryIngestionJob(jobId) {
   const res = await fetch(`${API_BASE}/ingest/jobs/${jobId}/retry`, { method: "POST" });
   if (!res.ok) throw new Error(await errorText(res, "retry ingestion"));
