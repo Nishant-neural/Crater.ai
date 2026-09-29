@@ -55,11 +55,12 @@ class GeminiProvider:
         from google.genai import types
 
         contents = [_gemini_content(message) for message in messages]
-        response = genai.Client(api_key=self.api_key).models.generate_content(
-            model=self.model,
-            contents=contents,
-            config=types.GenerateContentConfig(max_output_tokens=max_tokens),
-        )
+        with genai.Client(api_key=self.api_key) as client:
+            response = client.models.generate_content(
+                model=self.model,
+                contents=contents,
+                config=types.GenerateContentConfig(max_output_tokens=max_tokens),
+            )
         return (response.text or "").strip() or None
 
 

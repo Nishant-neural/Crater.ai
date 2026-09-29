@@ -85,6 +85,40 @@ def test_gemini_provider_without_credentials_does_not_import_or_call_sdk():
     assert GeminiProvider("", "test-model").complete([], 10) is None
 
 
+def test_gemini_provider_keeps_client_open_during_generation_and_closes_it(monkeypatch):
+    captured = {}
+
+    class FakeModels:
+        def generate_content(self, **kwargs):
+            assert not captured["closed"]
+            captured.update(kwargs)
+            return SimpleNamespace(text=" model answer ")
+
+    class FakeClient:
+        def __init__(self, api_key):
+            captured["api_key"] = api_key
+            captured["closed"] = False
+            self.models = FakeModels()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            captured["closed"] = True
+
+    monkeypatch.setattr("google.genai.Client", FakeClient)
+
+    result = GeminiProvider("test-key", "test-model").complete(
+        [{"role": "user", "content": "hello"}], max_tokens=42
+    )
+
+    assert result == "model answer"
+    assert captured["api_key"] == "test-key"
+    assert captured["model"] == "test-model"
+    assert captured["contents"] == [{"role": "user", "parts": [{"text": "hello"}]}]
+    assert captured["closed"]
+
+
 def test_provider_factory_selects_gemini(monkeypatch):
     monkeypatch.setattr(settings, "llm_provider", "gemini")
     monkeypatch.setattr(settings, "gemini_api_key", "gemini-key")
