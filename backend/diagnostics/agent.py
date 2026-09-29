@@ -22,7 +22,7 @@ from backend.db.models import Component, DiagnosticSession, DiagnosticStatus, Fa
 from backend.diagnostics.prompts import DIAGNOSTIC_SYSTEM_PROMPT
 from backend.diagnostics.schema import DiagnosticState, EvidenceRef, Hypothesis, NextStep, NextStepType
 from backend.llm import gateway
-from backend.retrieval.hybrid import retrieve_revision_context
+from backend.retrieval.hybrid import hybrid_retrieve, retrieve_revision_context
 
 _MAX_TURNS_BEFORE_FORCED_ESCALATION = 8
 _LOW_CONFIDENCE_ESCALATION_THRESHOLD = 0.35

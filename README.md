@@ -673,7 +673,7 @@ ANTHROPIC_MODEL=claude-sonnet-4-6
 ```env
 LLM_PROVIDER=gemini
 GEMINI_API_KEY=your_api_key
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3.8-flash
 ```
 
 Do not commit `.env` or API keys to GitHub.
