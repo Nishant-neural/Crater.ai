@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import re
 from backend.config import settings
 from backend.db.models import ChunkType
-from backend.ingestion.ocr import caption_image, ocr_page_if_needed
+from backend.ingestion.ocr import ocr_page_if_needed
 from backend.ingestion.pdf_loader import RawPage
 
 @dataclass
@@ -80,8 +80,7 @@ def page_to_chunks(pdf_path: str, page: RawPage) -> list[PendingChunk]:
         md=_table_to_markdown(table)
         if md: chunks.append(PendingChunk(ChunkType.table,page.page_number,md,{"rows":len(table),"cols":len(table[0]) if table else 0,"table_index":i,"chunking":"atomic"}))
     for i,image_path in enumerate(page.image_paths):
-        caption=caption_image(image_path)
-        content=caption or f"[Diagram on page {page.page_number}, no OCR text detected]"
+        content=f"[Diagram on page {page.page_number}]"
         chunks.append(PendingChunk(ChunkType.diagram,page.page_number,content,{"image_path":image_path,"image_index":i,"chunking":"atomic"}))
     return chunks
 

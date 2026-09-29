@@ -18,6 +18,7 @@ _UPLOAD_DIR = Path("data") / "uploads"
 _IMAGE_DIR = Path("data") / "images"
 
 def _job_response(job: IngestionJob, reused: bool = False) -> dict:
+    ocr_warning = optional_ocr_warning()
     parts = (job.stage or "queued|0|Queued").split("|", 2)
     try: percent = int(parts[1]) if len(parts) > 1 else 0
     except ValueError: percent = 0
@@ -25,7 +26,7 @@ def _job_response(job: IngestionJob, reused: bool = False) -> dict:
     return {"job_id": job.id, "document_id": job.document_id, "status": job.status.value,
             "stage": job.stage, "percent": percent, "stage_label": label,
             "attempt_count": job.attempt_count, "error_message": job.error_message,
-            "ocr_available": optional_ocr_warning() is None, "ocr_warning": optional_ocr_warning(), "reused": reused}
+            "ocr_available": ocr_warning is None, "ocr_warning": ocr_warning, "reused": reused}
 
 def _store_upload(file: UploadFile) -> tuple[Path, str]:
     if not file.filename or Path(file.filename).suffix.lower() != ".pdf":
