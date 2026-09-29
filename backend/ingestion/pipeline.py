@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Callable
 from sqlalchemy.orm import Session
 from backend.schematic.vision_extraction import extract_schematic
-from backend.db.models import Chunk, Document, DocType
+from backend.db.models import Chunk, Document, DocType, IngestionJob
 from backend.ingestion.chunking import page_to_chunks
 from backend.ingestion.pdf_loader import load_pdf
 from backend.knowledge.component_extraction import extract_chunk_knowledge, persist_extraction, persist_machine_knowledge
@@ -47,7 +47,16 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
     else: progress(10,f"PDF extracted — {len(pages)} pages")
     document = session.get(Document, existing_document_id) if existing_document_id else None
     if document is None:
-        document=Document(revision_id=revision_id,doc_type=doc_type,title=title,source_path=str(pdf_path),page_count=len(pages)); session.add(document); session.flush(); session.commit()
+        document=Document(revision_id=revision_id,doc_type=doc_type,title=title,source_path=str(pdf_path),page_count=len(pages))
+        session.add(document)
+        session.flush()
+        session.commit()
+        # Persist the document link before expensive resumable work starts.
+        if job_id:
+            job = session.get(IngestionJob, job_id)
+            if job:
+                job.document_id = document.id
+                session.commit()
     else:
         document.page_count=len(pages); session.commit()
     progress(15,f"Document ready — {len(pages)} pages")
