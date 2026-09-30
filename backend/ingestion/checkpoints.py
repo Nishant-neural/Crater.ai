@@ -17,17 +17,20 @@ def _path(job_id: str) -> Path:
 def load_checkpoint(job_id: str) -> dict[str, Any]:
     path = _path(job_id)
     if not path.exists():
-        return {"stage": "start", "completed_pages": [], "vectors_done": False, "knowledge_done": [], "schematics_done": []}
+        return {"stage": "start", "completed_pages": [], "vectors_done": False, "knowledge_done": [], "knowledge_failures": {}, "schematics_done": [], "integration_done": False, "verification_warnings": []}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         data.setdefault("stage", "start")
         data.setdefault("completed_pages", [])
         data.setdefault("vectors_done", False)
         data.setdefault("knowledge_done", [])
+        data.setdefault("knowledge_failures", {})
         data.setdefault("schematics_done", [])
+        data.setdefault("integration_done", False)
+        data.setdefault("verification_warnings", [])
         return data
     except Exception:
-        return {"stage": "start", "completed_pages": [], "vectors_done": False, "knowledge_done": [], "schematics_done": []}
+        return {"stage": "start", "completed_pages": [], "vectors_done": False, "knowledge_done": [], "knowledge_failures": {}, "schematics_done": [], "integration_done": False, "verification_warnings": []}
 
 
 def save_checkpoint(job_id: str, **updates: Any) -> dict[str, Any]:

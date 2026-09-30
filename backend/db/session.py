@@ -19,9 +19,9 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     inspector = inspect(engine)
     with engine.begin() as conn:
-        for table, column in (("machine_knowledge_entities", "canonical_id"), ("machine_knowledge_relations", "canonical_id"), ("machine_knowledge_behaviors", "canonical_id")):
+        for table, column in (("machine_knowledge_entities", "canonical_id"), ("machine_knowledge_relations", "canonical_id"), ("machine_knowledge_behaviors", "canonical_id"), ("machine_knowledge_evidence", "claim_status")):
             if table in inspector.get_table_names() and column not in {c["name"] for c in inspector.get_columns(table)}:
-                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} VARCHAR"))
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} VARCHAR DEFAULT 'observed'"))
 
 
 def get_session() -> Generator[Session, None, None]:

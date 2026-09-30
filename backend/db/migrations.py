@@ -17,6 +17,7 @@ _REQUIRED_COLUMNS = {
     },
     "machine_knowledge_evidence": {
         "revision_id": "VARCHAR",
+        "claim_status": "VARCHAR DEFAULT 'observed'",
     },
 }
 
