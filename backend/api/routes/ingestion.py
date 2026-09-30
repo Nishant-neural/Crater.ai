@@ -63,7 +63,7 @@ def _run_job_background(job_id: str) -> None:
                 doc_type=job.doc_type, title=job.title, image_out_dir=_IMAGE_DIR / revision.id,
                 existing_document_id=job.document_id, progress_callback=progress, job_id=job.id)
             job = session.get(IngestionJob, job_id); job.document_id = document.id
-            job.status = IngestionStatus.completed; job.stage = "completed|100|Ingestion complete"; job.error_message = None; session.commit()
+            job.status = IngestionStatus.completed; job.stage = "completed|100|Ingestion and machine-knowledge verification complete"; job.error_message = None; session.commit()
         except Exception as exc:
             session.rollback(); job = session.get(IngestionJob, job_id)
             if job:

@@ -30,11 +30,38 @@ def _bbox(value: Any) -> tuple[float, float, float, float] | None:
     return x, y, w, h
 
 
+
+# Deliberately broad vocabulary: the universal model remains extensible, but
+# unfamiliar types/relations should be visible during review instead of being
+# silently accepted as if they were established ontology terms.
+KNOWN_ENTITY_TYPES = {
+    "component", "machine", "assembly", "subsystem", "module", "pump", "motor",
+    "valve", "sensor", "controller", "plc", "hmi", "actuator", "cylinder",
+    "relay", "switch", "transformer", "inverter", "drive", "power_supply",
+    "terminal", "connector", "cable", "wire", "fuse", "breaker", "bearing",
+    "shaft", "gearbox", "fan", "filter", "tank", "reservoir", "pipe", "hose",
+    "fitting", "failure_mode", "procedure", "instrument", "network", "port",
+}
+KNOWN_RELATION_TYPES = {
+    "connected_to", "adjacent_to", "contains", "part_of", "electrical",
+    "mechanical", "fluid", "signal", "drives", "driven_by", "controls",
+    "controlled_by", "powers", "powered_by", "measures", "measured_by",
+    "feeds", "fed_by", "supplied_by", "mounted_on", "has_port", "monitors",
+    "actuates", "switches", "grounded_to", "communicates_with", "routes_to",
+}
+
 def verify_machine_model(model: UniversalMachineModel) -> list[VerificationIssue]:
     issues: list[VerificationIssue] = []
     entities = model.entity_map()
     names: dict[str, str] = {}
     for e in model.entities:
+        entity_type = e.entity_type.strip().lower()
+        if entity_type and entity_type not in KNOWN_ENTITY_TYPES:
+            issues.append(VerificationIssue(
+                "ontology", "warning",
+                f"unknown entity type '{e.entity_type}' for {e.name}; accepted as extensible vocabulary",
+                [e.id],
+            ))
         key = e.name.strip().lower()
         if key in names and names[key] != e.id:
             issues.append(VerificationIssue("topology", "error", f"duplicate entity identity: {e.name}", [names[key], e.id]))
@@ -48,6 +75,13 @@ def verify_machine_model(model: UniversalMachineModel) -> list[VerificationIssue
 
     adjacency: dict[str, set[str]] = {e.id: set() for e in model.entities}
     for r in model.relations:
+        relation_type = r.relation_type.strip().lower()
+        if relation_type and relation_type not in KNOWN_RELATION_TYPES:
+            issues.append(VerificationIssue(
+                "ontology", "warning",
+                f"unknown relation type '{r.relation_type}' between {r.subject_name} and {r.object_name}; accepted as extensible vocabulary",
+                [x for x in (r.subject_id, r.object_id) if x],
+            ))
         if r.subject_id not in entities or r.object_id not in entities:
             missing = [x for x in (r.subject_id, r.object_id) if x not in entities]
             issues.append(VerificationIssue("topology", "error", f"relation references missing entity: {missing}", missing))
