@@ -48,6 +48,7 @@ class MachineKnowledgeEvidence(Base):
     location: Mapped[str | None] = mapped_column(String, nullable=True)
     region: Mapped[str | None] = mapped_column(String, nullable=True)
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    claim_status: Mapped[str] = mapped_column(String, default="observed")
     extraction_method: Mapped[str | None] = mapped_column(String, nullable=True)
     evidence_metadata: Mapped[dict | None] = mapped_column(JSON, default=dict)
 
