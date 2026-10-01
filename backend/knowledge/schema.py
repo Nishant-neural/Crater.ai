@@ -5,7 +5,7 @@ Phase 8A universal machine model vocabulary described in docs/phase 8A.md.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -65,6 +65,7 @@ class UniversalEvidence(BaseModel):
     location: str | None = None
     region: str | None = None
     confidence: float = 0.0
+    claim_status: Literal["observed", "inferred", "uncertain"] = "observed"
     extraction_method: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 

@@ -59,7 +59,7 @@ Rules:
 6. Canonical IDs must be stable, readable IDs such as `entity:p-101`, `entity:pressure-sensor-ps1`.
 7. Ports/states/quantities/events/behaviors/constraints/procedures/failure modes must reference the
    canonical entity ids where applicable.
-8. Preserve evidence by copying source evidence references into the canonical objects.
+8. Preserve evidence by copying source evidence references into the canonical objects. Keep each evidence claim_status (observed|inferred|uncertain); do not upgrade inferred or uncertain claims to observed.
 9. Every persisted source record must be referenced by source_ids on at least one canonical item. Never silently drop a source record.
 10. If a source record cannot be canonically integrated, put it in unresolved_facts with its source_id, fact_type and original payload.
 11. The output must contain only the requested JSON.
@@ -110,6 +110,7 @@ def _evidence_for(session: Session, item_type: str, item_id: str) -> list[dict[s
         "fact": r.fact, "source_document": r.source_document, "page": r.page,
         "chunk": r.chunk, "source_type": r.source_type, "location": r.location,
         "region": r.region, "confidence": r.confidence,
+        "claim_status": r.claim_status or "observed",
         "extraction_method": r.extraction_method, "metadata": r.evidence_metadata or {},
     } for r in rows]
 
@@ -378,6 +379,37 @@ def build_effective_revision_knowledge_context(session: Session, revision_id: st
     merged = _merge_contexts(contexts)
     counts = {k: len(v) for k, v in merged.items()}
     return merged, counts, [r.id for r in lineage]
+
+
+def persist_integration_result(session: Session, revision_id: str, result: IntegrationResult) -> dict[str, Any]:
+    """Persist a canonical integration result and map source rows to canonical ids."""
+    from backend.db.models import MachineKnowledgeModelSnapshot
+    raw = result.payload
+    source_maps = {
+        "entities": {sid: item["id"] for item in raw.get("entities", []) for sid in item.get("source_ids", [])},
+        "relations": {sid: item["id"] for item in raw.get("relations", []) for sid in item.get("source_ids", [])},
+        "behaviors": {sid: item["id"] for item in raw.get("behaviors", []) for sid in item.get("source_ids", [])},
+        "facts": {sid: item["id"] for item in raw.get("ports", []) + raw.get("quantities", []) + raw.get("events", []) + raw.get("constraints", []) for sid in item.get("source_ids", [])},
+    }
+    for row in session.query(MachineKnowledgeEntity).filter_by(revision_id=revision_id).all():
+        if row.id in source_maps["entities"]: row.canonical_id = source_maps["entities"][row.id]
+    for row in session.query(MachineKnowledgeRelation).filter_by(revision_id=revision_id).all():
+        if row.id in source_maps["relations"]: row.canonical_id = source_maps["relations"][row.id]
+    for row in session.query(MachineKnowledgeBehavior).filter_by(revision_id=revision_id).all():
+        if row.id in source_maps["behaviors"]: row.canonical_id = source_maps["behaviors"][row.id]
+    for row in session.query(MachineKnowledgeFact).filter_by(revision_id=revision_id).all():
+        if row.id in source_maps["facts"]: row.canonical_id = source_maps["facts"][row.id]
+
+    latest = session.query(MachineKnowledgeModelSnapshot).filter_by(revision_id=revision_id).order_by(MachineKnowledgeModelSnapshot.version.desc()).first()
+    snapshot = MachineKnowledgeModelSnapshot(
+        revision_id=revision_id,
+        version=(latest.version + 1 if latest else 1),
+        model=raw,
+        source_counts=result.source_counts,
+    )
+    session.add(snapshot)
+    session.flush()
+    return {"revision_id": revision_id, "version": snapshot.version, "source_counts": result.source_counts, "completeness": raw.get("completeness", {}), "revision_lineage": raw.get("revision_lineage", [revision_id]), "model": raw}
 
 
 def integrate_revision_knowledge(session: Session, revision_id: str) -> IntegrationResult:
