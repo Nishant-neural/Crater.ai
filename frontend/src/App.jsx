@@ -5,10 +5,11 @@ import DiagramViewer from "./technical-viewer/DiagramViewer";
 import ExpertKnowledge from "./components/ExpertKnowledge";
 import DigitalTwin from "./components/DigitalTwin";
 import SimulationAgent from "./components/SimulationAgent";
+import MachineModelViewer from "./components/MachineModelViewer";
 import DiagnosticWorkspace from "./components/DiagnosticWorkspace";
 import "./App.css";
 
-const TABS = { DIAGNOSTIC: "diagnostic", EXPLORER: "explorer", PROCEDURE: "procedure", EXPERT: "expert", TWIN: "twin", SIMULATION: "simulation" };
+const TABS = { DIAGNOSTIC: "diagnostic", MODEL: "model", EXPLORER: "explorer", PROCEDURE: "procedure", EXPERT: "expert", TWIN: "twin", SIMULATION: "simulation" };
 
 /**
  * Crater.ai technician workstation. Phase 9 adds the end-to-end machine
@@ -44,6 +45,9 @@ export default function App() {
           <button className={tab === TABS.DIAGNOSTIC ? "active" : ""} onClick={() => setTab(TABS.DIAGNOSTIC)}>
             Diagnose
           </button>
+          <button className={tab === TABS.MODEL ? "active" : ""} onClick={() => setTab(TABS.MODEL)}>
+            Machine Model
+          </button>
           <button className={tab === TABS.EXPLORER ? "active" : ""} onClick={() => setTab(TABS.EXPLORER)}>
             Component Explorer
           </button>
@@ -64,6 +68,9 @@ export default function App() {
 
       <div className="app__body">
         <aside className="app__sidebar">
+          {tab === TABS.MODEL && (
+            <div className="model-sidebar-note">Canonical model: entities, topology, facts, procedures, failure modes, conflicts and source evidence.</div>
+          )}
           {tab === TABS.EXPLORER && (
             <>
               <label>
@@ -86,7 +93,7 @@ export default function App() {
         </aside>
 
         <main className="app__main">
-          {tab === TABS.DIAGNOSTIC ? <DiagnosticWorkspace /> : tab === TABS.EXPERT ? <ExpertKnowledge /> : tab === TABS.TWIN ? <DigitalTwin /> : tab === TABS.SIMULATION ? <SimulationAgent /> : <DiagramViewer chunkId={activeChunkId} highlightLabels={highlightLabels} />}
+          {tab === TABS.DIAGNOSTIC ? <DiagnosticWorkspace onMachineReady={({revisionId}) => { setRevisionId(revisionId); setTab(TABS.MODEL); }} /> : tab === TABS.MODEL ? <MachineModelViewer initialRevisionId={revisionId} /> : tab === TABS.EXPERT ? <ExpertKnowledge /> : tab === TABS.TWIN ? <DigitalTwin /> : tab === TABS.SIMULATION ? <SimulationAgent /> : <DiagramViewer chunkId={activeChunkId} highlightLabels={highlightLabels} />}
         </main>
       </div>
     </div>
