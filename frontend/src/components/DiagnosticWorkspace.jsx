@@ -31,7 +31,7 @@ function MachineGraph({components, relationships, focus}) {
   </div>;
 }
 
-export default function DiagnosticWorkspace() {
+export default function DiagnosticWorkspace({ onMachineReady }) {
   const [machines,setMachines]=useState([]);
   const [revisions,setRevisions]=useState([]);
   const [productId,setProductId]=useState("");
@@ -134,6 +134,7 @@ export default function DiagnosticWorkspace() {
         setShowOnboarding(false);
         setError(knowledgeWarning || "");
         await loadMachines(readyProductId, readyRevisionId);
+        onMachineReady?.({ productId: readyProductId, revisionId: readyRevisionId });
       }}
     />}
     <div className="diag-hero">
