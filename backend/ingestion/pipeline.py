@@ -7,8 +7,10 @@ from backend.schematic.vision_extraction import extract_schematic
 from backend.db.models import Chunk, Document, DocType, IngestionJob
 from backend.ingestion.chunking import page_to_chunks
 from backend.ingestion.pdf_loader import load_pdf
-from backend.knowledge.component_extraction import extract_chunk_knowledge, persist_extraction, persist_machine_knowledge
+from backend.knowledge.component_extraction import ExtractionError, extract_chunk_knowledge, persist_extraction, persist_machine_knowledge
 from backend.knowledge.validation import validate_machine_model
+from backend.knowledge.global_integration import build_effective_revision_knowledge_context, integrate_revision_knowledge, persist_integration_result
+from backend.knowledge.verification import verify_machine_model
 from backend.retrieval.vector_store import upsert_chunks
 from backend.schematic.graph import persist_schematic, schematic_to_machine_model
 from backend.knowledge.evidence import MachineEvidence
@@ -37,7 +39,7 @@ def _load_pages_optional_ocr(pdf_path: Path, image_out_dir: Path):
             else: os.environ["CRATER_DISABLE_OCR"] = old
 
 def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product_id: str, doc_type: DocType, title: str, image_out_dir: str | Path, run_knowledge_extraction: bool=True, run_schematic_extraction: bool=True, existing_document_id: str|None=None, progress_callback: ProgressCallback|None=None, job_id: str|None=None) -> Document:
-    pdf_path=Path(pdf_path); image_out_dir=Path(image_out_dir); cp=load_checkpoint(job_id) if job_id else {"stage":"start","completed_pages":[],"vectors_done":False,"knowledge_done":[],"schematics_done":[]}; completed_pages=set(cp.get("completed_pages",[])); knowledge_done=set(cp.get("knowledge_done",[])); schematics_done=set(cp.get("schematics_done",[]))
+    pdf_path=Path(pdf_path); image_out_dir=Path(image_out_dir); cp=load_checkpoint(job_id) if job_id else {"stage":"start","completed_pages":[],"vectors_done":False,"knowledge_done":[],"knowledge_failures":{},"schematics_done":[],"integration_done":False,"verification_warnings":[]}; completed_pages=set(cp.get("completed_pages",[])); knowledge_done=set(cp.get("knowledge_done",[])); schematics_done=set(cp.get("schematics_done",[])); knowledge_failures=dict(cp.get("knowledge_failures",{}))
     def progress(p:int,label:str):
         if job_id: save_checkpoint(job_id, stage=label, percent=p)
         if progress_callback: progress_callback(p,label)
@@ -83,14 +85,30 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
         processed_knowledge = len(knowledge_done)
         for chunk in text_chunks:
             if chunk.id in knowledge_done: continue
-            result,machine_model=extract_chunk_knowledge(chunk.content)
+            last_error: Exception | None = None
+            result = None
+            machine_model = None
+            for attempt in range(1, 4):
+                try:
+                    result, machine_model = extract_chunk_knowledge(chunk.content)
+                    last_error = None
+                    break
+                except ExtractionError as exc:
+                    last_error = exc
+                    knowledge_failures[chunk.id] = {"attempts": attempt, "error": str(exc)[:1000]}
+                    if job_id:
+                        save_checkpoint(job_id, stage="knowledge_retry", knowledge_done=sorted(knowledge_done), knowledge_failures=knowledge_failures, percent=42 + int(processed_knowledge/max(1,total)*33))
+            if last_error is not None or machine_model is None:
+                if job_id:
+                    save_checkpoint(job_id, stage="knowledge_failed", knowledge_done=sorted(knowledge_done), knowledge_failures=knowledge_failures, percent=42 + int(processed_knowledge/max(1,total)*33))
+                raise ExtractionError(f"Chunk {chunk.id} extraction failed after 3 attempts: {last_error}")
             if result and (result.components or result.relationships or result.procedures): persist_extraction(session,revision_id,chunk.id,result)
             _stamp_provenance(machine_model,document.title,chunk.page_number,chunk.id,chunk.chunk_type.value)
             if (machine_model.entities or machine_model.relations or machine_model.ports or machine_model.quantities or machine_model.states or machine_model.events or machine_model.behaviors or machine_model.constraints):
                 if not validate_machine_model(machine_model): persist_machine_knowledge(session,revision_id,chunk.id,machine_model)
-            session.commit(); knowledge_done.add(chunk.id); processed_knowledge += 1
+            session.commit(); knowledge_done.add(chunk.id); knowledge_failures.pop(chunk.id, None); processed_knowledge += 1
             percent = 42 + int(processed_knowledge/max(1,total)*33)
-            if job_id: save_checkpoint(job_id,stage="knowledge",knowledge_done=sorted(knowledge_done),percent=percent)
+            if job_id: save_checkpoint(job_id,stage="knowledge",knowledge_done=sorted(knowledge_done),knowledge_failures=knowledge_failures,percent=percent)
             progress(percent,f"Extracting machine knowledge — {processed_knowledge}/{total} chunks")
     else: progress(75,"Machine knowledge extraction skipped")
     progress(76,"Machine knowledge extraction complete")
@@ -109,12 +127,37 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
             if job_id: save_checkpoint(job_id,stage="schematics",schematics_done=sorted(schematics_done),percent=percent)
             progress(percent,f"Analyzing schematics — {processed_schematics}/{total_d} diagrams")
     else: progress(90,"No schematic extraction required")
-    progress(96,"Finalizing ingestion")
+    # Canonical integration is part of machine readiness, not a separate manual step.
+    # It is skipped only when this revision has no persisted knowledge at all.
+    if not cp.get("integration_done", False):
+        context, _, _ = build_effective_revision_knowledge_context(session, revision_id)
+        has_knowledge = any(bool(rows) for rows in context.values())
+        if has_knowledge:
+            progress(93,"Building canonical machine knowledge")
+            integration = integrate_revision_knowledge(session, revision_id)
+            issues = verify_machine_model(integration.model)
+            errors = [i for i in issues if i.severity == "error"]
+            warnings = [i.__dict__ for i in issues if i.severity != "error"]
+            if errors:
+                if job_id:
+                    save_checkpoint(job_id, stage="verification_failed", verification_warnings=warnings)
+                raise ValueError("Canonical machine model failed verification: " + "; ".join(i.message for i in errors[:5]))
+            stored = persist_integration_result(session, revision_id, integration)
+            session.commit()
+            if job_id:
+                save_checkpoint(job_id, stage="integration", integration_done=True, verification_warnings=warnings, integration_version=stored["version"], percent=98)
+            progress(98, f"Machine knowledge verified — {len(warnings)} warnings")
+        else:
+            if job_id: save_checkpoint(job_id, stage="integration_skipped", integration_done=True, verification_warnings=[], percent=98)
+            progress(98,"No machine knowledge to integrate")
+    else:
+        progress(98,"Canonical machine knowledge already integrated")
+    progress(99,"Finalizing ingestion")
     if job_id: save_checkpoint(job_id,stage="completed",percent=100)
     return document
 
 def _stamp_provenance(model,source_document:str,page:int|None,chunk_id:str,source_type:str)->None:
-    def evidence(fact:str)->MachineEvidence: return MachineEvidence(fact=fact,source_document=source_document,page=page,chunk=chunk_id,source_type=source_type,confidence=0.7,extraction_method="llm_extraction")
+    def evidence(fact:str)->MachineEvidence: return MachineEvidence(fact=fact,source_document=source_document,page=page,chunk=chunk_id,source_type=source_type,confidence=0.7,claim_status="observed",extraction_method="llm_extraction")
     for entity in model.entities:
         if not entity.evidence: entity.evidence.append(evidence(f"Entity {entity.name}"))
     for relation in model.relations:

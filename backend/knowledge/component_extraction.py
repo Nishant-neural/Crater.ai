@@ -46,6 +46,11 @@ from backend.knowledge.machine_model import (
 from backend.knowledge.schema import ExtractionResult, MachineKnowledgeExtractionResult
 from backend.llm import gateway
 
+
+class ExtractionError(RuntimeError):
+    """Raised when an extraction attempt fails rather than producing valid empty knowledge."""
+
+
 _EXTRACTION_PROMPT = """You are extracting structured technical knowledge from one page of an \
 industrial equipment manual. Only extract what is explicitly stated — do not infer or \
 invent components, connections, or procedures that aren't clearly described in the text.
@@ -60,7 +65,7 @@ Text:
 
 Respond with ONLY JSON matching this shape (omit fields that don't apply, use empty lists \
 where nothing was found). Every extracted item must include an evidence object with fact, \
-source_type, confidence from 0.0 to 1.0, and extraction_method. Use status KNOWN, UNKNOWN, \
+source_type, confidence from 0.0 to 1.0, claim_status (observed|inferred|uncertain), and extraction_method. Use status KNOWN, UNKNOWN, \
 or UNCERTAIN when a value is not explicit:
 
 {{
@@ -79,16 +84,34 @@ or UNCERTAIN when a value is not explicit:
 
 
 def _extract_result(content: str) -> MachineKnowledgeExtractionResult:
-    raw = gateway.complete("extraction",
-        messages=[{"role": "user", "content": _EXTRACTION_PROMPT.format(content=content)}],
-        max_tokens=4000,
-    )
-    if not raw:
-        return MachineKnowledgeExtractionResult()
     try:
-        return MachineKnowledgeExtractionResult.model_validate(json.loads(raw))
-    except (json.JSONDecodeError, ValueError):
-        return MachineKnowledgeExtractionResult()
+        raw = gateway.complete("extraction",
+            messages=[{"role": "user", "content": _EXTRACTION_PROMPT.format(content=content)}],
+            max_tokens=4000,
+        )
+    except Exception as exc:
+        raise ExtractionError(f"LLM extraction request failed: {exc}") from exc
+    if not raw:
+        raise ExtractionError("LLM returned no extraction output")
+    text = raw.strip()
+    if text.startswith("```"):
+        import re
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        start, end = text.find("{"), text.rfind("}")
+        if start < 0 or end <= start:
+            raise ExtractionError("LLM returned invalid JSON")
+        try:
+            payload = json.loads(text[start:end + 1])
+        except json.JSONDecodeError as exc:
+            raise ExtractionError(f"LLM returned invalid JSON: {exc.msg}") from exc
+    try:
+        return MachineKnowledgeExtractionResult.model_validate(payload)
+    except ValueError as exc:
+        raise ExtractionError(f"LLM extraction schema validation failed: {exc}") from exc
 
 
 def _legacy_result(result: MachineKnowledgeExtractionResult) -> ExtractionResult:
@@ -342,6 +365,7 @@ def _persist_evidence(session: Session, item_type: str, item_id: str | None, evi
             region=ev.region,
             confidence=ev.confidence,
             extraction_method=ev.extraction_method,
+            claim_status=ev.claim_status,
             evidence_metadata=ev.metadata,
         ))
 
@@ -360,6 +384,7 @@ def _persist_evidence_dicts(session: Session, item_type: str, item_id: str, evid
             region=item.get("region"),
             confidence=item.get("confidence", 0.0),
             extraction_method=item.get("extraction_method"),
+            claim_status=item.get("claim_status", "observed"),
             evidence_metadata=item.get("metadata", {}),
         ))
 
