@@ -38,10 +38,18 @@ class Settings(BaseSettings):
     tesseract_cmd: str = "tesseract"
 
     # Chunking
-    chunk_size_chars: int = 1800
-    chunk_overlap_chars: int = 200
-    chunk_min_chars: int = 500
-    chunk_max_chars: int = 2200
+    # Technical manuals benefit from larger semantic context. Keep enough text
+    # together for the extractor to see component descriptions, specifications,
+    # procedures, and their surrounding context instead of isolated fragments.
+    chunk_size_chars: int = 6000
+    chunk_overlap_chars: int = 600
+    chunk_min_chars: int = 1500
+    chunk_max_chars: int = 8000
+
+    # Gemini free-tier/project limits are enforced as requests per minute.
+    # Stay below a 15 RPM ceiling with headroom for transient/retry behavior.
+    extraction_gemini_rpm: int = 12
+    extraction_rate_limit_backoff_seconds: float = 5.0
 
     # Retrieval
     hybrid_top_k: int = 40          # candidates pulled from each of vector/BM25 before fusion

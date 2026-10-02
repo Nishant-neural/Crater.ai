@@ -27,3 +27,20 @@ def test_table_to_markdown_basic():
 
 def test_table_to_markdown_empty():
     assert _table_to_markdown([]) == ""
+
+
+def test_pages_to_chunks_combines_context_across_pages(monkeypatch):
+    from backend.ingestion import chunking
+    from backend.ingestion.pdf_loader import RawPage
+
+    monkeypatch.setattr(chunking, "ocr_page_if_needed", lambda _pdf, _page, text: text)
+    pages = [
+        RawPage(1, "MOTOR CONTROL\nThe main motor M1 is protected by breaker Q1. " + "details " * 100),
+        RawPage(2, "The breaker trips when current exceeds the specified limit. " + "more details " * 100),
+    ]
+    chunks = chunking.pages_to_chunks("manual.pdf", pages)
+    text_chunks = [c for c in chunks if c.chunk_type.value == "text"]
+    assert text_chunks
+    assert any((c.extra or {}).get("page_start") == 1 and (c.extra or {}).get("page_end") == 2 for c in text_chunks)
+    assert any("breaker trips" in c.content for c in text_chunks)
+    assert max(len(c.content) for c in text_chunks) <= chunking.settings.chunk_max_chars
