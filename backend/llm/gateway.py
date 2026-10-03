@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+import threading
+import time
 
 from backend.config import settings
 from backend.llm.provider import LLMProvider, get_provider_for_model
@@ -32,6 +34,37 @@ class ModelGateway:
 
     def complete(self, task: str, messages: list[dict[str, Any]], max_tokens: int | None = None) -> str | None:
         provider, route = self.provider(task)
+        if task == "extraction" and route.provider == "gemini":
+            _gemini_extraction_limiter.wait()
         return provider.complete(messages=messages, max_tokens=max_tokens or route.max_tokens)
+
+
+class _GeminiExtractionRateLimiter:
+    """Process-local limiter for Gemini extraction calls.
+
+    The project currently targets a 15 RPM Gemini limit. We deliberately run
+    below that ceiling so retries/transient timing do not immediately cause
+    another 429. This is intentionally scoped to extraction; interactive
+    diagnosis and other model routes keep their own throughput.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._last_call = 0.0
+
+    def wait(self) -> None:
+        rpm = max(1, int(settings.extraction_gemini_rpm))
+        interval = 60.0 / rpm
+        with self._lock:
+            now = time.monotonic()
+            delay = max(0.0, self._last_call + interval - now)
+            if delay:
+                time.sleep(delay)
+            self._last_call = time.monotonic()
+
+
+_gemini_extraction_limiter = _GeminiExtractionRateLimiter()
+
+
 
 gateway = ModelGateway()

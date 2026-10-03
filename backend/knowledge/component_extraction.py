@@ -1,17 +1,9 @@
-"""
-LLM-based structured extraction: turns raw chunk text into Component /
-ComponentRelationship / Procedure rows (plan.md §3-4).
+"""LLM-based structured extraction for large semantic manual chunks.
 
-This is intentionally a thin, single-purpose call — extract from ONE
-chunk at a time, with the chunk id carried through as source_chunk_id
-so every extracted fact stays traceable to its evidence (plan.md §8:
-answers must expose "source document / page / section"). Batching
-chunks together for efficiency is a reasonable later optimization, but
-it makes provenance fuzzier, so it isn't the MVP default.
-
-Extraction quality on tables/diagram-caption chunks will be weaker than
-on prose text chunks — that's expected at this stage; treat low-yield
-extractions as a retrieval-quality signal, not a bug to chase yet.
+Chunks are deliberately larger and may span pages so the model can see the
+context needed to extract useful components, specifications, relationships,
+and procedures. Each result is still persisted against one source chunk, so
+provenance remains exact at the chunk/page-range level.
 """
 from __future__ import annotations
 
@@ -51,8 +43,8 @@ class ExtractionError(RuntimeError):
     """Raised when an extraction attempt fails rather than producing valid empty knowledge."""
 
 
-_EXTRACTION_PROMPT = """You are extracting structured technical knowledge from one page of an \
-industrial equipment manual. Only extract what is explicitly stated — do not infer or \
+_EXTRACTION_PROMPT = """You are extracting structured technical knowledge from a technical excerpt of an \
+industrial equipment manual. The excerpt may span multiple pages. Only extract what is explicitly stated — do not infer or \
 invent components, connections, or procedures that aren't clearly described in the text.
 
 If the text contains no extractable technical knowledge (e.g. it's a cover page, \

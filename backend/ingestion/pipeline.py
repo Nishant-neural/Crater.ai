@@ -2,10 +2,11 @@
 from __future__ import annotations
 from pathlib import Path
 from typing import Callable
+import time
 from sqlalchemy.orm import Session
 from backend.schematic.vision_extraction import extract_schematic
 from backend.db.models import Chunk, Document, DocType, IngestionJob
-from backend.ingestion.chunking import page_to_chunks
+from backend.ingestion.chunking import pages_to_chunks
 from backend.ingestion.pdf_loader import load_pdf
 from backend.knowledge.component_extraction import ExtractionError, extract_chunk_knowledge, persist_extraction, persist_machine_knowledge
 from backend.knowledge.validation import validate_machine_model
@@ -14,6 +15,7 @@ from backend.knowledge.verification import verify_machine_model
 from backend.retrieval.vector_store import upsert_chunks
 from backend.schematic.graph import persist_schematic, schematic_to_machine_model
 from backend.knowledge.evidence import MachineEvidence
+from backend.config import settings
 from backend.ingestion.checkpoints import load_checkpoint, save_checkpoint
 
 ProgressCallback = Callable[[int, str], None]
@@ -62,24 +64,52 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
     else:
         document.page_count=len(pages); session.commit()
     progress(15,f"Document ready — {len(pages)} pages")
-    # Chunk stage: only checkpoint pages after their DB transaction is committed.
-    for idx,page in enumerate(pages,start=1):
-        if idx in completed_pages: continue
-        # A page not checkpointed may contain partial rows after an interruption; remove them before retrying.
-        session.query(Chunk).filter(Chunk.document_id==document.id, Chunk.page_number==getattr(page,"page_number",idx)).delete(synchronize_session=False)
-        pending_rows=[]
-        for pending in page_to_chunks(str(pdf_path),page):
-            row=Chunk(document_id=document.id,chunk_type=pending.chunk_type,page_number=pending.page_number,content=pending.content,extra=pending.extra); session.add(row); pending_rows.append(row)
-        session.commit(); completed_pages.add(idx)
-        if job_id: save_checkpoint(job_id,stage="chunks",completed_pages=sorted(completed_pages))
-        progress(15+int(idx/max(1,len(pages))*17),f"Creating chunks — page {idx}/{len(pages)}")
-    all_chunks=session.query(Chunk).filter(Chunk.document_id==document.id).all(); progress(32,f"Created {len(all_chunks)} chunks")
+    # Chunk stage is document-level: text chunks are allowed to cross page
+    # boundaries so the extractor sees complete technical context. Rebuild the
+    # chunk set atomically if this stage was interrupted before completion.
+    existing_chunks = session.query(Chunk).filter(Chunk.document_id == document.id).all()
+    chunking_version = cp.get("chunking_version")
+    needs_rechunk = len(completed_pages) < len(pages)
+    # A legacy checkpoint can say all pages were chunked even though those
+    # chunks used the old small page-local strategy. Only migrate automatically
+    # when no knowledge has been persisted yet; otherwise preserving source IDs
+    # is safer than silently orphaning already-extracted facts.
+    if (chunking_version != "large_cross_page_v2" and not knowledge_done
+            and existing_chunks and any(
+                (c.extra or {}).get("chunking") != "structure_aware_cross_page"
+                for c in existing_chunks
+            )):
+        needs_rechunk = True
+
+    if needs_rechunk:
+        session.query(Chunk).filter(Chunk.document_id == document.id).delete(synchronize_session=False)
+        pending_rows = []
+        for pending in pages_to_chunks(str(pdf_path), pages):
+            row = Chunk(
+                document_id=document.id,
+                chunk_type=pending.chunk_type,
+                page_number=pending.page_number,
+                content=pending.content,
+                extra=pending.extra,
+            )
+            session.add(row)
+            pending_rows.append(row)
+        session.commit()
+        completed_pages = {p.page_number for p in pages}
+        if job_id:
+            save_checkpoint(job_id, stage="chunks", completed_pages=sorted(completed_pages), chunking_version="large_cross_page_v2")
+        progress(30, f"Creating large semantic chunks — {len(pending_rows)} chunks")
+    all_chunks = session.query(Chunk).filter(Chunk.document_id == document.id).all()
+    progress(32, f"Created {len(all_chunks)} chunks")
     if all_chunks and not cp.get("vectors_done",False):
         progress(34,f"Indexing {len(all_chunks)} chunks in vector search")
         upsert_chunks(chunk_ids=[c.id for c in all_chunks],texts=[c.content for c in all_chunks],payloads=[{"product_id":product_id,"revision_id":revision_id,"doc_type":doc_type.value,"chunk_type":c.chunk_type.value,"document_id":document.id} for c in all_chunks])
         if job_id: save_checkpoint(job_id,vectors_done=True,stage="vectors")
     else: progress(40,"Vector index already complete")
-    text_chunks=[c for c in all_chunks if c.content.strip()]
+    # Diagram placeholders are not useful to the text extractor; they have a
+    # dedicated schematic/vision pass below. Keeping them out here avoids a
+    # wasted Gemini request for every embedded image.
+    text_chunks=[c for c in all_chunks if c.content.strip() and c.chunk_type.value in {"text", "table"}]
     total=len(text_chunks)
     if run_knowledge_extraction:
         processed_knowledge = len(knowledge_done)
@@ -96,6 +126,12 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
                 except ExtractionError as exc:
                     last_error = exc
                     knowledge_failures[chunk.id] = {"attempts": attempt, "error": str(exc)[:1000]}
+                    # A 429 means the provider window is exhausted. The normal
+                    # limiter already spaces calls, but an external/shared
+                    # quota can still trigger one. Give the window time to
+                    # recover instead of immediately retrying three times.
+                    if "429" in str(exc) or "resource_exhausted" in str(exc).lower() or "rate limit" in str(exc).lower():
+                        time.sleep(max(60.0, settings.extraction_rate_limit_backoff_seconds))
                     if job_id:
                         save_checkpoint(job_id, stage="knowledge_retry", knowledge_done=sorted(knowledge_done), knowledge_failures=knowledge_failures, percent=42 + int(processed_knowledge/max(1,total)*33))
             if last_error is not None or machine_model is None:
