@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     # Stay below a 15 RPM ceiling with headroom for transient/retry behavior.
     extraction_gemini_rpm: int = 12
     extraction_rate_limit_backoff_seconds: float = 5.0
+    # Large-manual ingestion controls. Vectorization is checkpointed in small
+    # batches; LLM extraction groups independent source chunks into one request
+    # to avoid paying one provider request per chunk.
+    vector_index_batch_size: int = 64
+    extraction_batch_size: int = 12
+    extraction_batch_max_chars: int = 72000
 
     # Retrieval
     hybrid_top_k: int = 40          # candidates pulled from each of vector/BM25 before fusion
