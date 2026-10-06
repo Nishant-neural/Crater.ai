@@ -27,17 +27,39 @@ def ensure_collection(client: QdrantClient | None = None) -> None:
         )
 
 
-def upsert_chunks(chunk_ids: list[str], texts: list[str], payloads: list[dict], client: QdrantClient | None = None) -> None:
+def upsert_chunks(
+    chunk_ids: list[str],
+    texts: list[str],
+    payloads: list[dict],
+    client: QdrantClient | None = None,
+    batch_size: int | None = None,
+) -> None:
+    """Embed and upsert one bounded batch of chunks.
+
+    Ingestion owns the outer checkpointing loop so a successful call is a
+    durable unit. Keeping this function batch-oriented also makes retries
+    idempotent because Qdrant point IDs are the source chunk IDs.
+    """
+    if not (len(chunk_ids) == len(texts) == len(payloads)):
+        raise ValueError("chunk_ids, texts and payloads must have the same length")
+    if not chunk_ids:
+        return
     client = client or get_client()
     ensure_collection(client)
-    vectors = get_embedding_provider().embed(texts)
-    client.upsert(
-        collection_name=settings.qdrant_collection,
-        points=[
-            qm.PointStruct(id=cid, vector=vec, payload=payload)
-            for cid, vec, payload in zip(chunk_ids, vectors, payloads, strict=True)
-        ],
-    )
+    size = max(1, int(batch_size or settings.vector_index_batch_size))
+    provider = get_embedding_provider()
+    for start in range(0, len(chunk_ids), size):
+        ids = chunk_ids[start:start + size]
+        batch_texts = texts[start:start + size]
+        batch_payloads = payloads[start:start + size]
+        vectors = provider.embed(batch_texts, batch_size=size)
+        client.upsert(
+            collection_name=settings.qdrant_collection,
+            points=[
+                qm.PointStruct(id=cid, vector=vec, payload=payload)
+                for cid, vec, payload in zip(ids, vectors, batch_payloads, strict=True)
+            ],
+        )
 
 
 def semantic_search(

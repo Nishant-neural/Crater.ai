@@ -159,6 +159,9 @@ class UniversalMachineModel(BaseModel):
     failure_modes: list[MachineFailureMode] = Field(default_factory=list)
     conflicts: list[MachineConflict] = Field(default_factory=list)
     unresolved_facts: list[MachineUnresolvedFact] = Field(default_factory=list)
+    # Optional explicit executable rules. These are accepted only when grounded in source data;
+    # the simulator never invents rules from prose.
+    simulation_rules: list[dict[str, Any]] = Field(default_factory=list)
     evidence: list[MachineEvidence] = Field(default_factory=list)
 
     def all_facts(self) -> list[tuple[str, str, Any]]:
