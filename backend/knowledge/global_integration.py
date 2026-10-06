@@ -62,7 +62,8 @@ Rules:
 8. Preserve evidence by copying source evidence references into the canonical objects. Keep each evidence claim_status (observed|inferred|uncertain); do not upgrade inferred or uncertain claims to observed.
 9. Every persisted source record must be referenced by source_ids on at least one canonical item. Never silently drop a source record.
 10. If a source record cannot be canonically integrated, put it in unresolved_facts with its source_id, fact_type and original payload.
-11. The output must contain only the requested JSON.
+11. simulation_rules are optional. Include a rule ONLY when the persisted evidence explicitly defines a machine-state transition. Never infer a rule merely from a component type or a vague behavior description. Each rule must use existing canonical entity/state/signal paths.
+12. The output must contain only the requested JSON.
 
 PERSISTED KNOWLEDGE:
 {knowledge}
@@ -79,6 +80,7 @@ Return JSON with this exact top-level shape:
   "constraints": [{{"id":"", "entity_id":null, "name":"", "description":"", "source_ids":[], "evidence":[]}}],
   "procedures": [{{"id":"", "name":"", "procedure_type":"", "steps":[], "entity_ids":[], "source_ids":[], "evidence":[]}}],
   "failure_modes": [{{"id":"", "name":"", "symptoms":[], "possible_causes":[], "diagnostic_test":"", "expected_observation":"", "repair_procedure_id":null, "entity_ids":[], "source_ids":[], "evidence":[]}}],
+  "simulation_rules": [{{"id":"", "name":"", "conditions":{{}}, "effects":{{}}, "description":"", "safety_notes":[], "source_ids":[], "evidence":[]}}],
   "conflicts": [{{"id":"", "subject":"", "property":"", "values":[], "resolution":null, "status":"unresolved", "source_ids":[], "evidence":[]}}],
   "unresolved_facts": [{{"source_id":"", "fact_type":"", "payload":{{}}, "reason":""}}]
 }}"""
@@ -269,6 +271,7 @@ def _model_from_payload(payload: dict[str, Any]) -> UniversalMachineModel:
         entities=entities, relations=relations, ports=ports, quantities=quantities,
         states=states, events=events, behaviors=behaviors, constraints=constraints,
         procedures=procedures, failure_modes=failures, conflicts=conflicts,
+        simulation_rules=payload.get("simulation_rules", []) if isinstance(payload.get("simulation_rules", []), list) else [],
     )
 
 

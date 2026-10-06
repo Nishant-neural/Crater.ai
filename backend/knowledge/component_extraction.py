@@ -37,6 +37,7 @@ from backend.knowledge.machine_model import (
 )
 from backend.knowledge.schema import ExtractionResult, MachineKnowledgeExtractionResult
 from backend.llm import gateway
+from backend.config import settings
 
 
 class ExtractionError(RuntimeError):
@@ -104,6 +105,114 @@ def _extract_result(content: str) -> MachineKnowledgeExtractionResult:
         return MachineKnowledgeExtractionResult.model_validate(payload)
     except ValueError as exc:
         raise ExtractionError(f"LLM extraction schema validation failed: {exc}") from exc
+
+
+_BATCH_EXTRACTION_PROMPT = """You are extracting structured technical knowledge from MULTIPLE independent excerpts of an industrial equipment manual.
+
+Process every excerpt independently. Do not merge facts between excerpts and do not move a fact from one source_chunk_id to another.
+Only extract what is explicitly stated. Do not infer or invent components, connections, or procedures.
+If an excerpt contains no extractable technical knowledge, return empty lists for that excerpt.
+
+Return ONLY JSON in this shape:
+{{
+  "chunks": [
+    {
+      "source_chunk_id": "the exact supplied id",
+      "knowledge": {{
+        "components": [], "relationships": [], "procedures": [],
+        "entities": [], "relations": [], "evidence": [], "ports": [],
+        "states": [], "quantities": [], "events": [], "behaviors": [], "constraints": []
+      }
+    }
+  ]
+}}
+
+The knowledge object for each excerpt must use exactly the same field shapes as the single-excerpt extraction contract. Every supplied source_chunk_id must appear exactly once.
+
+EXCERPTS:
+__EXCERPTS__
+"""
+
+
+def _parse_json_response(raw: str) -> dict:
+    if not raw:
+        raise ExtractionError("LLM returned no extraction output")
+    text = raw.strip()
+    if text.startswith("```"):
+        import re
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        start, end = text.find("{"), text.rfind("}")
+        if start < 0 or end <= start:
+            raise ExtractionError("LLM returned invalid JSON")
+        try:
+            return json.loads(text[start:end + 1])
+        except json.JSONDecodeError as exc:
+            raise ExtractionError(f"LLM returned invalid JSON: {exc.msg}") from exc
+
+
+def extract_chunk_knowledge_batch(chunks: list[tuple[str, str]]) -> dict[str, tuple[ExtractionResult, UniversalMachineModel]]:
+    """Extract several independent chunks in one provider request.
+
+    The result is keyed by source chunk ID. The batch contract is deliberately
+    strict: missing or duplicate IDs cause an ExtractionError so the caller can
+    retry with a smaller batch instead of silently losing provenance.
+    """
+    if not chunks:
+        return {}
+    if len(chunks) == 1:
+        result, model = extract_chunk_knowledge(chunks[0][1])
+        return {chunks[0][0]: (result, model)}
+
+    excerpts = "\n\n".join(
+        f"===== SOURCE_CHUNK_ID: {chunk_id} =====\n{content}\n===== END SOURCE_CHUNK_ID: {chunk_id} ====="
+        for chunk_id, content in chunks
+    )
+    if len(excerpts) > settings.extraction_batch_max_chars:
+        raise ExtractionError("Extraction batch exceeds configured character budget")
+
+    try:
+        raw = gateway.complete(
+            "extraction",
+            messages=[{"role": "user", "content": _BATCH_EXTRACTION_PROMPT.replace("__EXCERPTS__", excerpts)}],
+            max_tokens=max(4000, min(16000, len(chunks) * 1000)),
+        )
+    except Exception as exc:
+        raise ExtractionError(f"LLM batch extraction request failed: {exc}") from exc
+
+    payload = _parse_json_response(raw)
+    rows = payload.get("chunks") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        raise ExtractionError("LLM batch extraction response missing chunks list")
+
+    expected = [chunk_id for chunk_id, _ in chunks]
+    seen: set[str] = set()
+    out: dict[str, tuple[ExtractionResult, UniversalMachineModel]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ExtractionError("LLM batch extraction contained a non-object chunk result")
+        chunk_id = str(row.get("source_chunk_id") or "")
+        if chunk_id not in expected or chunk_id in seen:
+            raise ExtractionError("LLM batch extraction returned an unknown or duplicate source_chunk_id")
+        knowledge = row.get("knowledge")
+        if not isinstance(knowledge, dict):
+            raise ExtractionError(f"LLM batch extraction missing knowledge object for {chunk_id}")
+        try:
+            result = MachineKnowledgeExtractionResult.model_validate(knowledge)
+        except ValueError as exc:
+            raise ExtractionError(f"LLM batch extraction schema validation failed for {chunk_id}: {exc}") from exc
+        legacy = _legacy_result(result)
+        model = _universal_model_from_result(result) if _has_universal_facts(result) else _legacy_model(result)
+        out[chunk_id] = (legacy, model)
+        seen.add(chunk_id)
+
+    missing = [chunk_id for chunk_id in expected if chunk_id not in seen]
+    if missing:
+        raise ExtractionError(f"LLM batch extraction omitted {len(missing)} source chunks")
+    return out
 
 
 def _legacy_result(result: MachineKnowledgeExtractionResult) -> ExtractionResult:

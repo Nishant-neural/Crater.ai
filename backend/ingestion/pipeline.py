@@ -8,7 +8,7 @@ from backend.schematic.vision_extraction import extract_schematic
 from backend.db.models import Chunk, Document, DocType, IngestionJob
 from backend.ingestion.chunking import pages_to_chunks
 from backend.ingestion.pdf_loader import load_pdf
-from backend.knowledge.component_extraction import ExtractionError, extract_chunk_knowledge, persist_extraction, persist_machine_knowledge
+from backend.knowledge.component_extraction import ExtractionError, extract_chunk_knowledge, extract_chunk_knowledge_batch, persist_extraction, persist_machine_knowledge
 from backend.knowledge.validation import validate_machine_model
 from backend.knowledge.global_integration import build_effective_revision_knowledge_context, integrate_revision_knowledge, persist_integration_result
 from backend.knowledge.verification import verify_machine_model
@@ -41,7 +41,7 @@ def _load_pages_optional_ocr(pdf_path: Path, image_out_dir: Path):
             else: os.environ["CRATER_DISABLE_OCR"] = old
 
 def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product_id: str, doc_type: DocType, title: str, image_out_dir: str | Path, run_knowledge_extraction: bool=True, run_schematic_extraction: bool=True, existing_document_id: str|None=None, progress_callback: ProgressCallback|None=None, job_id: str|None=None) -> Document:
-    pdf_path=Path(pdf_path); image_out_dir=Path(image_out_dir); cp=load_checkpoint(job_id) if job_id else {"stage":"start","completed_pages":[],"vectors_done":False,"knowledge_done":[],"knowledge_failures":{},"schematics_done":[],"integration_done":False,"verification_warnings":[]}; completed_pages=set(cp.get("completed_pages",[])); knowledge_done=set(cp.get("knowledge_done",[])); schematics_done=set(cp.get("schematics_done",[])); knowledge_failures=dict(cp.get("knowledge_failures",{}))
+    pdf_path=Path(pdf_path); image_out_dir=Path(image_out_dir); cp=load_checkpoint(job_id) if job_id else {"stage":"start","completed_pages":[],"vectors_done":False,"knowledge_done":[],"knowledge_failures":{},"schematics_done":[],"integration_done":False,"verification_warnings":[]}; completed_pages=set(cp.get("completed_pages",[])); vector_chunks_done=set(cp.get("vector_chunks_done",[])); knowledge_done=set(cp.get("knowledge_done",[])); schematics_done=set(cp.get("schematics_done",[])); knowledge_failures=dict(cp.get("knowledge_failures",{}))
     def progress(p:int,label:str):
         if job_id: save_checkpoint(job_id, stage=label, percent=p)
         if progress_callback: progress_callback(p,label)
@@ -102,9 +102,27 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
     all_chunks = session.query(Chunk).filter(Chunk.document_id == document.id).all()
     progress(32, f"Created {len(all_chunks)} chunks")
     if all_chunks and not cp.get("vectors_done",False):
-        progress(34,f"Indexing {len(all_chunks)} chunks in vector search")
-        upsert_chunks(chunk_ids=[c.id for c in all_chunks],texts=[c.content for c in all_chunks],payloads=[{"product_id":product_id,"revision_id":revision_id,"doc_type":doc_type.value,"chunk_type":c.chunk_type.value,"document_id":document.id} for c in all_chunks])
-        if job_id: save_checkpoint(job_id,vectors_done=True,stage="vectors")
+        total_vectors = len(all_chunks)
+        pending_vectors = [c for c in all_chunks if c.id not in vector_chunks_done]
+        batch_size = max(1, int(settings.vector_index_batch_size))
+        processed_vectors = total_vectors - len(pending_vectors)
+        progress(34, f"Indexing chunks: {processed_vectors}/{total_vectors}")
+        for start in range(0, len(pending_vectors), batch_size):
+            batch = pending_vectors[start:start + batch_size]
+            upsert_chunks(
+                chunk_ids=[c.id for c in batch],
+                texts=[c.content for c in batch],
+                payloads=[{"product_id": product_id, "revision_id": revision_id, "doc_type": doc_type.value, "chunk_type": c.chunk_type.value, "document_id": document.id} for c in batch],
+                batch_size=batch_size,
+            )
+            vector_chunks_done.update(c.id for c in batch)
+            processed_vectors += len(batch)
+            percent = 34 + int(processed_vectors / max(1, total_vectors) * 6)
+            if job_id:
+                save_checkpoint(job_id, vector_chunks_done=sorted(vector_chunks_done), vectors_done=(processed_vectors >= total_vectors), stage="vectors", percent=percent)
+            progress(percent, f"Indexing chunks: {processed_vectors}/{total_vectors}")
+        if job_id:
+            save_checkpoint(job_id, vector_chunks_done=sorted(vector_chunks_done), vectors_done=True, stage="vectors", percent=40)
     else: progress(40,"Vector index already complete")
     # Diagram placeholders are not useful to the text extractor; they have a
     # dedicated schematic/vision pass below. Keeping them out here avoids a
@@ -113,39 +131,66 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
     total=len(text_chunks)
     if run_knowledge_extraction:
         processed_knowledge = len(knowledge_done)
-        for chunk in text_chunks:
-            if chunk.id in knowledge_done: continue
-            last_error: Exception | None = None
-            result = None
-            machine_model = None
-            for attempt in range(1, 4):
-                try:
-                    result, machine_model = extract_chunk_knowledge(chunk.content)
-                    last_error = None
+        pending_knowledge = [c for c in text_chunks if c.id not in knowledge_done]
+        batch_size = max(1, int(settings.extraction_batch_size))
+        total = len(text_chunks)
+        batch_index = 0
+        while pending_knowledge:
+            # Keep both request count and character size bounded. The latter
+            # protects the local process and leaves room for the model output.
+            batch = []
+            chars = 0
+            for chunk in pending_knowledge:
+                if batch and (len(batch) >= batch_size or chars + len(chunk.content) > settings.extraction_batch_max_chars):
                     break
-                except ExtractionError as exc:
-                    last_error = exc
-                    knowledge_failures[chunk.id] = {"attempts": attempt, "error": str(exc)[:1000]}
-                    # A 429 means the provider window is exhausted. The normal
-                    # limiter already spaces calls, but an external/shared
-                    # quota can still trigger one. Give the window time to
-                    # recover instead of immediately retrying three times.
-                    if "429" in str(exc) or "resource_exhausted" in str(exc).lower() or "rate limit" in str(exc).lower():
-                        time.sleep(max(60.0, settings.extraction_rate_limit_backoff_seconds))
-                    if job_id:
-                        save_checkpoint(job_id, stage="knowledge_retry", knowledge_done=sorted(knowledge_done), knowledge_failures=knowledge_failures, percent=42 + int(processed_knowledge/max(1,total)*33))
-            if last_error is not None or machine_model is None:
-                if job_id:
-                    save_checkpoint(job_id, stage="knowledge_failed", knowledge_done=sorted(knowledge_done), knowledge_failures=knowledge_failures, percent=42 + int(processed_knowledge/max(1,total)*33))
-                raise ExtractionError(f"Chunk {chunk.id} extraction failed after 3 attempts: {last_error}")
-            if result and (result.components or result.relationships or result.procedures): persist_extraction(session,revision_id,chunk.id,result)
-            _stamp_provenance(machine_model,document.title,chunk.page_number,chunk.id,chunk.chunk_type.value)
-            if (machine_model.entities or machine_model.relations or machine_model.ports or machine_model.quantities or machine_model.states or machine_model.events or machine_model.behaviors or machine_model.constraints):
-                if not validate_machine_model(machine_model): persist_machine_knowledge(session,revision_id,chunk.id,machine_model)
-            session.commit(); knowledge_done.add(chunk.id); knowledge_failures.pop(chunk.id, None); processed_knowledge += 1
-            percent = 42 + int(processed_knowledge/max(1,total)*33)
-            if job_id: save_checkpoint(job_id,stage="knowledge",knowledge_done=sorted(knowledge_done),knowledge_failures=knowledge_failures,percent=percent)
-            progress(percent,f"Extracting machine knowledge — {processed_knowledge}/{total} chunks")
+                batch.append(chunk)
+                chars += len(chunk.content)
+            if not batch:
+                batch = [pending_knowledge[0]]
+
+            def run_batch(current_batch):
+                last_error: Exception | None = None
+                for attempt in range(1, 4):
+                    try:
+                        return extract_chunk_knowledge_batch([(c.id, c.content) for c in current_batch])
+                    except ExtractionError as exc:
+                        last_error = exc
+                        for c in current_batch:
+                            knowledge_failures[c.id] = {"attempts": attempt, "error": str(exc)[:1000]}
+                        if "429" in str(exc) or "resource_exhausted" in str(exc).lower() or "rate limit" in str(exc).lower():
+                            time.sleep(max(60.0, settings.extraction_rate_limit_backoff_seconds))
+                        if job_id:
+                            save_checkpoint(job_id, stage="knowledge_retry", knowledge_done=sorted(knowledge_done), knowledge_failures=knowledge_failures, percent=42 + int(processed_knowledge / max(1, total) * 33))
+                # A malformed/truncated multi-chunk response should not poison
+                # the whole manual. Split recursively; each half is still one
+                # rate-limited request and successful IDs remain checkpointable.
+                if len(current_batch) > 1:
+                    mid = len(current_batch) // 2
+                    left = run_batch(current_batch[:mid])
+                    right = run_batch(current_batch[mid:])
+                    return {**left, **right}
+                raise ExtractionError(f"Chunk {current_batch[0].id} extraction failed after 3 attempts: {last_error}")
+
+            results = run_batch(batch)
+            for chunk in batch:
+                result, machine_model = results[chunk.id]
+                if result and (result.components or result.relationships or result.procedures):
+                    persist_extraction(session, revision_id, chunk.id, result)
+                _stamp_provenance(machine_model, document.title, chunk.page_number, chunk.id, chunk.chunk_type.value)
+                if (machine_model.entities or machine_model.relations or machine_model.ports or machine_model.quantities or machine_model.states or machine_model.events or machine_model.behaviors or machine_model.constraints):
+                    if not validate_machine_model(machine_model):
+                        persist_machine_knowledge(session, revision_id, chunk.id, machine_model)
+                knowledge_done.add(chunk.id)
+                knowledge_failures.pop(chunk.id, None)
+            session.commit()
+            processed_knowledge += len(batch)
+            pending_ids = {c.id for c in batch}
+            pending_knowledge = [c for c in pending_knowledge if c.id not in pending_ids]
+            percent = 42 + int(processed_knowledge / max(1, total) * 33)
+            batch_index += 1
+            if job_id:
+                save_checkpoint(job_id, stage="knowledge", knowledge_done=sorted(knowledge_done), knowledge_failures=knowledge_failures, percent=percent)
+            progress(percent, f"Extracting machine knowledge — {processed_knowledge}/{total} chunks ({batch_index}-batch)")
     else: progress(75,"Machine knowledge extraction skipped")
     progress(76,"Machine knowledge extraction complete")
     diagrams=[c for c in all_chunks if c.chunk_type.value=="diagram" and c.extra and c.extra.get("image_path")]
