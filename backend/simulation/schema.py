@@ -9,6 +9,7 @@ class TwinComponent(BaseModel):
     name: str
     component_type: Literal["sensor", "relay", "controller", "actuator", "signal", "power_source", "connector", "other"]
     initial_state: dict[str, Any] = Field(default_factory=dict)
+    source_ids: list[str] = Field(default_factory=list)
 
 
 class TwinTransition(BaseModel):
@@ -26,6 +27,7 @@ class DigitalTwinDefinition(BaseModel):
     components: list[TwinComponent]
     initial_signals: dict[str, Any] = Field(default_factory=dict)
     transitions: list[TwinTransition] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class TwinCommand(BaseModel):

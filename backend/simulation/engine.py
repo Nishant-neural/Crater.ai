@@ -35,6 +35,7 @@ class DigitalTwinEngine:
         self.warnings = [
             "Simulation is deterministic and virtual; it is not proof of physical safety or real-machine behavior."
         ]
+        self.metadata = dict(definition.metadata or {})
 
     def _initial_state(self) -> dict[str, Any]:
         state = {"signals": deepcopy(self.definition.initial_signals), "components": {}}
