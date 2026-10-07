@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ComponentExplorer from "./components/ComponentExplorer";
 import ProcedureViewer from "./components/ProcedureViewer";
 import DiagramViewer from "./technical-viewer/DiagramViewer";
@@ -22,6 +22,17 @@ export default function App() {
   const [procedureId, setProcedureId] = useState("");
   const [activeChunkId, setActiveChunkId] = useState("");
   const [highlightLabels, setHighlightLabels] = useState([]);
+  const [simulationContext, setSimulationContext] = useState(null);
+
+  useEffect(() => {
+    const handler = (event) => {
+      setSimulationContext(event.detail || null);
+      setRevisionId(event.detail?.revisionId || revisionId);
+      setTab(TABS.SIMULATION);
+    };
+    window.addEventListener("crater-open-simulation", handler);
+    return () => window.removeEventListener("crater-open-simulation", handler);
+  }, [revisionId]);
 
   function openAppearance(appearance) {
     setActiveChunkId(appearance.chunk_id);
@@ -93,7 +104,7 @@ export default function App() {
         </aside>
 
         <main className="app__main">
-          {tab === TABS.DIAGNOSTIC ? <DiagnosticWorkspace onMachineReady={({revisionId}) => { setRevisionId(revisionId); setTab(TABS.MODEL); }} /> : tab === TABS.MODEL ? <MachineModelViewer initialRevisionId={revisionId} /> : tab === TABS.EXPERT ? <ExpertKnowledge /> : tab === TABS.TWIN ? <DigitalTwin /> : tab === TABS.SIMULATION ? <SimulationAgent /> : <DiagramViewer chunkId={activeChunkId} highlightLabels={highlightLabels} />}
+          {tab === TABS.DIAGNOSTIC ? <DiagnosticWorkspace onMachineReady={({revisionId}) => { setRevisionId(revisionId); setTab(TABS.MODEL); }} /> : tab === TABS.MODEL ? <MachineModelViewer initialRevisionId={revisionId} /> : tab === TABS.EXPERT ? <ExpertKnowledge /> : tab === TABS.TWIN ? <DigitalTwin /> : tab === TABS.SIMULATION ? <SimulationAgent initialRevisionId={revisionId} diagnosticContext={simulationContext} /> : <DiagramViewer chunkId={activeChunkId} highlightLabels={highlightLabels} />}
         </main>
       </div>
     </div>

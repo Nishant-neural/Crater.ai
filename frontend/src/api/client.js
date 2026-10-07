@@ -34,6 +34,9 @@ export async function getDigitalTwinEvents(twinId) { return getJson(`/digital-tw
 
 export async function runSimulationExperiment(twinId, payload) { return postJson(`/simulation/twins/${twinId}/experiment`, payload, "simulation experiment"); }
 export async function runSimulationHypotheses(twinId, payload) { return postJson(`/simulation/twins/${twinId}/hypotheses`, payload, "simulation hypotheses"); }
+export async function compileSimulationRevision(revisionId) { return postRequest(`/simulation/revisions/${revisionId}/compile`, "compile simulation"); }
+export async function getRevisionSimulation(revisionId) { return getJson(`/simulation/revisions/${revisionId}/twin`); }
+export async function getSimulationContext(twinId) { return getJson(`/simulation/twins/${twinId}/context`); }
 
 export async function startDiagnostic(payload) { return postJson("/diagnose/start", payload, "start diagnostic"); }
 export async function getDiagnostic(sessionId) { return getJson(`/diagnose/${sessionId}`); }
