@@ -251,7 +251,7 @@ export default function DiagnosticWorkspace({ onMachineReady }) {
           </div> : <div className="empty-state">A structured repair recommendation will appear after the diagnostic state reaches a grounded conclusion.</div>}
         </Card>
         <Card title="VERIFICATION">
-          <div className="verification-unavailable"><b>Simulation contract</b><p>Verification is only marked PASS/FAIL when a real digital-twin experiment is executed. No simulated success is shown here.</p><button onClick={()=>window.dispatchEvent(new CustomEvent("crater-open-simulation"))}>Open simulation workspace</button></div>
+          <div className="verification-unavailable"><b>Simulation contract</b><p>Verification is only marked PASS/FAIL when a real digital-twin experiment is executed. No simulated success is shown here.</p><button onClick={()=>window.dispatchEvent(new CustomEvent("crater-open-simulation", {detail:{revisionId, sessionId:session?.session_id, hypothesis:leading?.cause || ""}}))}>Open simulation workspace</button></div>
         </Card>
       </aside>
     </div>
