@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from backend.db.models import DigitalTwin, MachineKnowledgeModelSnapshot, Product, Revision
+from backend.db.models import DigitalTwin, MachineKnowledgeModelSnapshot, Product, Revision, TwinStatus
 from backend.db.session import get_session
 from backend.simulation.schema import DigitalTwinDefinition
 from backend.simulation.simulation_schema import ExperimentRequest, ExperimentResult, HypothesisBatchRequest, HypothesisBatchResult
@@ -45,11 +45,29 @@ def compile_revision(revision_id: str, db: Session = Depends(get_session)):
         definition=definition.model_dump(mode="json"),
         state={"signals": dict(definition.initial_signals), "components": {c.id: dict(c.initial_state) for c in definition.components}},
         model_version=row.version,
+        status=TwinStatus.draft,
     )
     db.add(twin)
     db.commit()
     db.refresh(twin)
-    return {"twin_id": twin.id, "revision_id": revision_id, "model_version": row.version, "warnings": warnings, "definition": definition.model_dump(mode="json"), "snapshot": snapshot(twin)}
+    return {"twin_id": twin.id, "revision_id": revision_id, "model_version": row.version, "status": "draft", "approval_required": True, "warnings": warnings, "definition": definition.model_dump(mode="json"), "snapshot": snapshot(twin)}
+
+
+@router.post("/twins/{twin_id}/approve")
+def approve_twin(twin_id: str, db: Session = Depends(get_session)):
+    """Explicit human review gate before a compiled twin can be used by diagnosis."""
+    twin = db.get(DigitalTwin, twin_id)
+    if not twin: raise HTTPException(404, "Digital twin not found")
+    definition = _definition(twin)
+    metadata = dict(definition.metadata or {})
+    warnings = metadata.get("compiler_warnings", [])
+    if not definition.components:
+        raise HTTPException(409, "Cannot approve a twin with no compiled components")
+    # Approval is explicit; warnings are returned for reviewer acknowledgement, not hidden.
+    twin.status = TwinStatus.active
+    db.commit(); db.refresh(twin)
+    return {"twin_id": twin.id, "status": twin.status.value, "warnings": warnings,
+            "message": "Twin approved for functional simulation. This is not a physical safety certification."}
 
 
 @router.get("/revisions/{revision_id}/twin")
@@ -74,6 +92,7 @@ def experiment(twin_id: str, payload: ExperimentRequest, db: Session = Depends(g
     twin = db.get(DigitalTwin, twin_id)
     if not twin:
         raise HTTPException(404, "Digital twin not found")
+    if twin.status != TwinStatus.active: raise HTTPException(409, "Twin is draft; review and approve it before simulation")
     return run_experiment(_definition(twin), twin.state, payload)
 
 
@@ -82,4 +101,5 @@ def hypotheses(twin_id: str, payload: HypothesisBatchRequest, db: Session = Depe
     twin = db.get(DigitalTwin, twin_id)
     if not twin:
         raise HTTPException(404, "Digital twin not found")
+    if twin.status != TwinStatus.active: raise HTTPException(409, "Twin is draft; review and approve it before simulation")
     return HypothesisBatchResult(results=run_hypotheses(_definition(twin), twin.state, payload.experiments))

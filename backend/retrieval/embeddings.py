@@ -11,7 +11,7 @@ from backend.config import settings
 
 
 class EmbeddingProvider:
-    def embed(self, texts: list[str] ,  batch_size) -> list[list[float]]:
+    def embed(self, texts: list[str]) -> list[list[float]]:
         raise NotImplementedError
 
     @property

@@ -616,6 +616,7 @@ class MachineKnowledgeModelSnapshot(Base):
 # ---------------------------------------------------------------------------
 
 class TwinStatus(str, enum.Enum):
+    draft = "draft"
     active = "active"
     archived = "archived"
 
