@@ -12,12 +12,16 @@ from .schema import DigitalTwinDefinition, TwinSnapshot
 
 def _matches(actual: Any, expected: Any) -> bool:
     if isinstance(expected, dict):
-        if "equals" in expected:
-            return actual == expected["equals"]
-        if "not_equals" in expected:
-            return actual != expected["not_equals"]
-        if "in" in expected:
-            return actual in expected["in"]
+        if "equals" in expected: return actual == expected["equals"]
+        if "not_equals" in expected: return actual != expected["not_equals"]
+        if "in" in expected: return actual in expected["in"]
+        if "greater_than" in expected: return actual is not None and actual > expected["greater_than"]
+        if "greater_than_or_equal" in expected: return actual is not None and actual >= expected["greater_than_or_equal"]
+        if "less_than" in expected: return actual is not None and actual < expected["less_than"]
+        if "less_than_or_equal" in expected: return actual is not None and actual <= expected["less_than_or_equal"]
+        if "between" in expected:
+            bounds = expected["between"]
+            return actual is not None and len(bounds) == 2 and bounds[0] <= actual <= bounds[1]
     return actual == expected
 
 
@@ -32,6 +36,9 @@ class DigitalTwinEngine:
         self.definition = definition
         self.state = deepcopy(state) if state is not None else self._initial_state()
         self.trace: list[str] = []
+        self.step_count = 0
+        self._condition_streaks: dict[str, int] = {}
+        self._condition_last_step: dict[str, int] = {}
         self.warnings = [
             "Simulation is deterministic and virtual; it is not proof of physical safety or real-machine behavior."
         ]
@@ -50,11 +57,9 @@ class DigitalTwinEngine:
         )
 
     def _derived(self) -> dict[str, Any]:
-        return {
-            "safety_relay_energized": self._component_field("safety_relay", "energized"),
-            "controller_enabled": self._component_field("controller", "enabled"),
-            "motor_running": self._component_field("motor", "running"),
-        }
+        derived = {f"{cid}.{field}": value for cid, fields in self.state.get("components", {}).items() for field, value in fields.items()}
+        derived.update({f"signal.{key}": value for key, value in self.state.get("signals", {}).items()})
+        return derived
 
     def _component_field(self, component_id: str, field: str) -> Any:
         return self.state.get("components", {}).get(component_id, {}).get(field)
@@ -75,11 +80,25 @@ class DigitalTwinEngine:
 
     def step(self) -> list[str]:
         changes: list[str] = []
+        self.step_count += 1
         # Fixed-point evaluation makes dependent transitions settle in one step.
         for _ in range(max(1, len(self.definition.transitions) + 1)):
             changed = False
             for t in self.definition.transitions:
-                if all(_matches(self._get_path(k), v) for k, v in t.conditions.items()):
+                conditions_ok = True
+                for key, spec in t.conditions.items():
+                    duration = spec.get("for_steps", 1) if isinstance(spec, dict) else 1
+                    test_spec = {k: v for k, v in spec.items() if k != "for_steps"} if isinstance(spec, dict) else spec
+                    matched = _matches(self._get_path(key), test_spec)
+                    streak_key = f"{t.id}:{key}"
+                    if self._condition_last_step.get(streak_key) != self.step_count:
+                        self._condition_streaks[streak_key] = self._condition_streaks.get(streak_key, 0) + 1 if matched else 0
+                        self._condition_last_step[streak_key] = self.step_count
+                    elif not matched:
+                        self._condition_streaks[streak_key] = 0
+                    if not matched or self._condition_streaks[streak_key] < max(1, int(duration)):
+                        conditions_ok = False
+                if conditions_ok:
                     for path, value in t.effects.items():
                         old = self._get_path(path)
                         if old != value:

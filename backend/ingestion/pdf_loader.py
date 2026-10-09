@@ -40,8 +40,18 @@ def extract_tables_per_page(pdf_path: str | Path) -> dict[int, list[list[list[st
     with pdfplumber.open(pdf_path) as pdf:
         for i, page in enumerate(pdf.pages, start=1):
             tables = page.extract_tables()
-            if tables:
-                tables_by_page[i] = tables
+            validated = []
+            for table in tables or []:
+                width = max((len(row or []) for row in table), default=0)
+                if width < 2: continue
+                rows = []
+                for row in table:
+                    cells = [str(cell).strip() if cell is not None else "" for cell in (row or [])]
+                    if not any(cells): continue
+                    cells = (cells + [""] * width)[:width]
+                    if sum(bool(cell) for cell in cells) >= 2 or not rows: rows.append(cells)
+                if len(rows) >= 2: validated.append(rows)
+            if validated: tables_by_page[i] = validated
     return tables_by_page
 
 

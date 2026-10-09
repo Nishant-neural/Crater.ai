@@ -417,9 +417,34 @@ def persist_integration_result(session: Session, revision_id: str, result: Integ
 
 def integrate_revision_knowledge(session: Session, revision_id: str) -> IntegrationResult:
     context, counts, lineage = build_effective_revision_knowledge_context(session, revision_id)
-    prompt = _GLOBAL_PROMPT.format(knowledge=json.dumps(context, ensure_ascii=False, separators=(",", ":")))
-    raw = gateway.complete("integration",messages=[{"role": "user", "content": prompt}], max_tokens=12000)
-    payload = _parse_json(raw)
+    # Bound each completion's context/output size. Every source category is integrated in
+    # small batches, then merged and audited against the complete persisted-source ledger.
+    category_keys = list(context)
+    batches = []
+    for key in category_keys:
+        rows = context[key]
+        for start in range(0, len(rows), 80):
+            part = {k: [] for k in category_keys}
+            part[key] = rows[start:start + 80]
+            if key != "universal_entities":
+                part["universal_entities"] = context.get("universal_entities", [])[:150]
+            batches.append(part)
+    if not batches: batches = [context]
+    output_keys = ("entities", "relations", "ports", "quantities", "states", "events", "behaviors", "constraints", "procedures", "failure_modes", "simulation_rules", "conflicts", "unresolved_facts")
+    payload = {k: [] for k in output_keys}
+    for index, batch in enumerate(batches):
+        prompt = _GLOBAL_PROMPT.format(knowledge=json.dumps(batch, ensure_ascii=False, separators=(",", ":")))
+        parsed = _parse_json(gateway.complete("integration", messages=[{"role": "user", "content": prompt}], max_tokens=12000))
+        if not parsed:
+            raise ValueError(f"Integration batch {index + 1}/{len(batches)} returned invalid or empty JSON")
+        for key in output_keys:
+            if isinstance(parsed.get(key), list): payload[key].extend(x for x in parsed[key] if isinstance(x, dict))
+    for key, rows in payload.items():
+        seen, unique = set(), []
+        for row in rows:
+            ident = row.get("id") or row.get("source_id") or json.dumps(row, sort_keys=True, ensure_ascii=False)
+            if ident not in seen: seen.add(ident); unique.append(row)
+        payload[key] = unique
     audit = completeness_check(context, payload)
     payload["completeness"] = audit
     payload["revision_lineage"] = lineage
