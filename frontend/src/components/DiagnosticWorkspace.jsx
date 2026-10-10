@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { listMachines } from "../api/machines";
 import { listRevisions } from "../api/revisions";
 import { getRevisionIngestionStatus } from "../api/client";
-import { startDiagnostic, getDiagnostic, getDiagnosticContext, respondDiagnostic } from "../api/diagnostics";
+import { startDiagnostic, getDiagnostic, getDiagnosticContext, respondDiagnostic,
+  recordDiagnosticOutcome, getMostInformativeTest, getGuidedPhysicalChecks } from "../api/diagnostics";
 import MachineOnboarding from "./MachineOnboarding";
 
 function Card({title, children, className=""}) {
@@ -45,6 +46,11 @@ export default function DiagnosticWorkspace({ onMachineReady }) {
   const [selectedEvidence,setSelectedEvidence]=useState(null);
   const [showOnboarding,setShowOnboarding]=useState(false);
   const [revisionIngestion,setRevisionIngestion]=useState(null);
+  const [outcomeForm,setOutcomeForm]=useState({outcome:"fixed",confirmed_cause:"",repair_performed:"",technician_notes:"",submit_correction_for_review:false});
+  const [outcomeResult,setOutcomeResult]=useState(null);
+  const [nextTest,setNextTest]=useState(null);
+  const [guidedChecks,setGuidedChecks]=useState(null);
+  const [feedbackBusy,setFeedbackBusy]=useState(false);
 
   async function loadMachines(selectProductId = null, selectRevisionId = null) {
     try {
@@ -113,6 +119,25 @@ export default function DiagnosticWorkspace({ onMachineReady }) {
     if(!session) return;
     try { setSession(await getDiagnostic(session.session_id)); setContext(await getDiagnosticContext(session.session_id)); }
     catch(e){setError(e.message)}
+  }
+
+  async function loadNextTest(){
+    if(!session) return;
+    setFeedbackBusy(true); setError("");
+    try { setNextTest(await getMostInformativeTest(session.session_id)); }
+    catch(e){setError(e.message)} finally{setFeedbackBusy(false)}
+  }
+  async function loadGuidedChecks(){
+    if(!session) return;
+    setFeedbackBusy(true); setError("");
+    try { setGuidedChecks(await getGuidedPhysicalChecks(session.session_id)); }
+    catch(e){setError(e.message)} finally{setFeedbackBusy(false)}
+  }
+  async function submitOutcome(){
+    if(!session) return;
+    setFeedbackBusy(true); setError("");
+    try { setOutcomeResult(await recordDiagnosticOutcome(session.session_id, outcomeForm)); }
+    catch(e){setError(e.message)} finally{setFeedbackBusy(false)}
   }
 
   const state=session?.state;
@@ -249,6 +274,38 @@ export default function DiagnosticWorkspace({ onMachineReady }) {
             <p>{step.rationale || "Grounded in the evidence shown in this session."}</p>
             {evidence.slice(0,4).map(e=><div className="repair-source" key={e.chunk_id}>↳ {e.source_document}{e.page_number?` · p.${e.page_number}`:""}</div>)}
           </div> : <div className="empty-state">A structured repair recommendation will appear after the diagnostic state reaches a grounded conclusion.</div>}
+        </Card>
+        <Card title="MOST INFORMATIVE NEXT TEST">
+          <p className="muted">Ranks documented tests that may separate the leading hypotheses. This is a heuristic, not calculated probabilistic information gain.</p>
+          <button onClick={loadNextTest} disabled={feedbackBusy}>{feedbackBusy ? "Working…" : "Find discriminating test"}</button>
+          {nextTest && (nextTest.tests?.length ? nextTest.tests.map((t,i)=><article className="guided-check" key={`${t.test}-${i}`}>
+            <b>{i+1}. {t.test}</b>
+            {t.expected_observation && <p>Expected observation: {t.expected_observation}</p>}
+            <small>May distinguish: {t.matched_hypotheses?.join(", ") || "not mapped to a current hypothesis"}</small>
+          </article>) : <p className="muted">{nextTest.reason || "No documented discriminating test found."}</p>)}
+        </Card>
+        <Card title="GUIDED PHYSICAL CHECKS">
+          <p className="muted">Only documented tests are presented. Verify the exact machine, connector and safety procedure before touching hardware.</p>
+          <button onClick={loadGuidedChecks} disabled={feedbackBusy}>{feedbackBusy ? "Working…" : "Prepare physical checks"}</button>
+          {guidedChecks?.checks?.map((c,i)=><article className="guided-check" key={`${c.instruction}-${i}`}>
+            <b>{i+1}. {c.instruction}</b>
+            {c.expected_observation && <p>Expected: {c.expected_observation}</p>}
+            {c.candidate_schematic_labels?.length>0 && <p>Candidate schematic labels: {c.candidate_schematic_labels.join(", ")} (not verified pin mapping)</p>}
+            <small>{c.safety_note}</small><p className="muted">{c.limits}</p>
+          </article>)}
+          {guidedChecks && !guidedChecks.checks?.length && <p className="muted">{guidedChecks.message} No stored documented test matched the current hypotheses.</p>}
+        </Card>
+        <Card title="DID THE REPAIR WORK?">
+          {outcomeResult ? <div className="ready-check"><StatusPill tone="ok">RECORDED</StatusPill> Outcome saved · {outcomeResult.review_status}{outcomeResult.knowledge_version_id ? <p>Draft knowledge version: {outcomeResult.knowledge_version_id}. Review and approve it in Expert Knowledge before it influences diagnosis.</p> : null}</div> : <>
+            <label>Repair outcome<select value={outcomeForm.outcome} onChange={e=>setOutcomeForm(v=>({...v,outcome:e.target.value}))}>
+              <option value="fixed">Fixed</option><option value="not_fixed">Not fixed</option><option value="inconclusive">Inconclusive / not yet verified</option>
+            </select></label>
+            <label>Confirmed cause / correction<input value={outcomeForm.confirmed_cause} onChange={e=>setOutcomeForm(v=>({...v,confirmed_cause:e.target.value}))} placeholder="What was actually wrong?"/></label>
+            <label>Repair performed<input value={outcomeForm.repair_performed} onChange={e=>setOutcomeForm(v=>({...v,repair_performed:e.target.value}))} placeholder="What did the technician change?"/></label>
+            <label>Notes<textarea rows={2} value={outcomeForm.technician_notes} onChange={e=>setOutcomeForm(v=>({...v,technician_notes:e.target.value}))} placeholder="What happened after repair?"/></label>
+            <label className="feedback-checkbox"><input type="checkbox" checked={outcomeForm.submit_correction_for_review} onChange={e=>setOutcomeForm(v=>({...v,submit_correction_for_review:e.target.checked}))}/> Submit correction as draft expert knowledge for review</label>
+            <button onClick={submitOutcome} disabled={feedbackBusy}>{feedbackBusy ? "Saving…" : "Save repair outcome"}</button>
+          </>}
         </Card>
         <Card title="VERIFICATION">
           <div className="verification-unavailable"><b>Simulation contract</b><p>Verification is only marked PASS/FAIL when a real digital-twin experiment is executed. No simulated success is shown here.</p><button onClick={()=>window.dispatchEvent(new CustomEvent("crater-open-simulation", {detail:{revisionId, sessionId:session?.session_id, hypothesis:leading?.cause || ""}}))}>Open simulation workspace</button></div>

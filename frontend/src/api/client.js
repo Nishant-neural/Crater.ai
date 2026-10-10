@@ -42,6 +42,9 @@ export async function startDiagnostic(payload) { return postJson("/diagnose/star
 export async function getDiagnostic(sessionId) { return getJson(`/diagnose/${sessionId}`); }
 export async function getDiagnosticContext(sessionId) { return getJson(`/diagnose/${sessionId}/context`); }
 export async function respondDiagnostic(sessionId, payload) { return postJson(`/diagnose/${sessionId}/respond`, payload, "diagnostic response"); }
+export async function recordDiagnosticOutcome(sessionId, payload) { return postJson(`/diagnose/${sessionId}/outcome`, payload, "record repair outcome"); }
+export async function getMostInformativeTest(sessionId) { return getJson(`/diagnose/${sessionId}/next-test`); }
+export async function getGuidedPhysicalChecks(sessionId) { return getJson(`/diagnose/${sessionId}/guided-checks`); }
 
 export async function postJson(path, payload, label = path) {
   const res = await fetch(`${API_BASE}${path}`, {

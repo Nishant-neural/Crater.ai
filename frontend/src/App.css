@@ -380,3 +380,11 @@ button { font: inherit; }
 .simulation-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:12px 0; }
 .simulation-form-grid label,.simulation-experiment > label { display:grid; gap:5px; color:var(--muted); font-size:13px; }
 @media(max-width:900px){.simulation-layout{grid-template-columns:1fr}.simulation-form-grid{grid-template-columns:1fr}}
+
+
+/* Outcome feedback and field-check cards */
+.guided-check { border: 1px solid var(--border, #d8dee8); border-radius: 10px; padding: 12px; margin-top: 10px; }
+.guided-check p { margin: 7px 0; }
+.guided-check small { display: block; line-height: 1.45; color: var(--muted, #667085); }
+.feedback-checkbox { display: flex; align-items: flex-start; gap: 8px; margin: 10px 0; }
+.feedback-checkbox input { width: auto; margin-top: 3px; }
