@@ -265,6 +265,23 @@ class DiagnosticSession(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class DiagnosticOutcome(Base):
+    """Technician-reported repair outcome; feedback remains auditable and never auto-approved."""
+    __tablename__ = "diagnostic_outcomes"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    session_id: Mapped[str] = mapped_column(ForeignKey("diagnostic_sessions.id"), unique=True, index=True)
+    product_id: Mapped[str] = mapped_column(ForeignKey("products.id"), index=True)
+    revision_id: Mapped[str | None] = mapped_column(ForeignKey("revisions.id"), nullable=True, index=True)
+    outcome: Mapped[str] = mapped_column(String)  # fixed | not_fixed | inconclusive
+    confirmed_cause: Mapped[str | None] = mapped_column(Text, nullable=True)
+    repair_performed: Mapped[str | None] = mapped_column(Text, nullable=True)
+    technician_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    review_status: Mapped[str] = mapped_column(String, default="recorded")
+    knowledge_version_id: Mapped[str | None] = mapped_column(ForeignKey("knowledge_versions.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class InterviewStatus(str, enum.Enum):
     active = "active"
     completed = "completed"
