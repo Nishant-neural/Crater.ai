@@ -45,3 +45,15 @@ def test_global_integration_resolves_duplicate_entities(monkeypatch):
     result = integrate_revision_knowledge(db, revision.id)
     assert result.model.entities[0].id == "entity:p1"
     assert result.model.entities[0].name == "Pump P1"
+
+
+def test_global_integration_normalizes_evidence_reference_without_fact():
+    from backend.knowledge.global_integration import _ev
+
+    source_id = "15e2369d-b123-4567-8901-123456789abc"
+    evidence = _ev([{"source_id": source_id, "claim_status": "observed"}])
+
+    assert len(evidence) == 1
+    assert evidence[0].fact == f"Evidence reference to source record {source_id}"
+    assert evidence[0].claim_status == "observed"
+    assert evidence[0].metadata["source_id"] == source_id

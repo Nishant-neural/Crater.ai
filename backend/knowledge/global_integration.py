@@ -218,7 +218,34 @@ def _parse_json(raw: str | None) -> dict[str, Any]:
 
 
 def _ev(raw: list[dict[str, Any]] | None) -> list[MachineEvidence]:
-    return [MachineEvidence.model_validate(x) for x in (raw or [])]
+    """Normalize integration evidence without discarding source provenance.
+
+    The integration LLM sometimes returns an evidence *reference* (source_id and
+    claim_status) rather than the full MachineEvidence shape.  MachineEvidence.fact
+    is required, so turn that reference into an explicit reference claim and retain
+    the identifier in metadata instead of failing the entire revision integration.
+    """
+    normalized: list[MachineEvidence] = []
+    for item in raw or []:
+        if not isinstance(item, dict):
+            continue
+        data = dict(item)
+        source_id = data.pop("source_id", None)
+        metadata = data.get("metadata")
+        metadata = dict(metadata) if isinstance(metadata, dict) else {}
+        if source_id:
+            metadata.setdefault("source_id", str(source_id))
+        data["metadata"] = metadata
+        if not isinstance(data.get("fact"), str) or not data["fact"].strip():
+            if source_id:
+                data["fact"] = f"Evidence reference to source record {source_id}"
+            else:
+                # A malformed evidence item must not crash integration, but mark it
+                # as unresolved rather than pretending a factual claim was supplied.
+                data["fact"] = "Evidence claim text missing from integration output"
+                metadata["normalization_warning"] = "missing_fact_and_source_id"
+        normalized.append(MachineEvidence.model_validate(data))
+    return normalized
 
 
 def _model_from_payload(payload: dict[str, Any]) -> UniversalMachineModel:
