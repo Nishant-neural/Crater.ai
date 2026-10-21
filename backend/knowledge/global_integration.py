@@ -275,10 +275,42 @@ def _model_from_payload(payload: dict[str, Any]) -> UniversalMachineModel:
         id=x["id"], source_ids=x.get("source_ids", []), entity_id=x["entity_id"], name=x["name"], description=x.get("description"),
         evidence=_ev(x.get("evidence")),
     ) for x in payload.get("events", []) if x.get("id") and x.get("entity_id")]
-    behaviors = [MachineBehavior(
-        id=x["id"], source_ids=x.get("source_ids", []), subject_id=x["subject_id"], subject_name=x["subject_name"], description=x["description"],
-        evidence=_ev(x.get("evidence")),
-    ) for x in payload.get("behaviors", []) if x.get("id") and x.get("subject_id")]
+    behaviors = []
+    for index, raw_behavior in enumerate(payload.get("behaviors", [])):
+        if not isinstance(raw_behavior, dict):
+            continue
+        x = dict(raw_behavior)
+        # LLM output may use extraction-style keys (component/behavior) instead
+        # of the canonical MachineBehavior schema (subject_id/description).
+        source_ids = x.get("source_ids") or ([str(x["source_id"])] if x.get("source_id") else [])
+        component = x.get("component") or x.get("subject_name") or x.get("subject") or "Unknown component"
+        subject_name = str(x.get("subject_name") or component)
+        description = x.get("description") or x.get("behavior") or x.get("behaviour") or x.get("effect")
+        if isinstance(description, dict):
+            description = json.dumps(description, ensure_ascii=False, sort_keys=True)
+        if not description:
+            # Preserve the original record as transparent unresolved detail rather
+            # than silently inventing a behavior description.
+            description = "Behavior description missing; original payload retained in evidence metadata"
+        subject_id = x.get("subject_id") or x.get("entity_id")
+        if not subject_id:
+            # Mark unlinked subjects explicitly; do not pretend they resolve to a
+            # canonical entity just because a component label was supplied.
+            subject_id = "unresolved:behavior-subject:" + re.sub(r"[^a-z0-9]+", "-", subject_name.lower()).strip("-")[:80]
+        behavior_id = x.get("id") or ("behavior:" + str(source_ids[0])) if source_ids else x.get("id")
+        if not behavior_id:
+            stable_seed = f"{subject_name}|{description}|{index}"
+            behavior_id = "behavior:" + re.sub(r"[^a-z0-9]+", "-", stable_seed.lower()).strip("-")[:100]
+        evidence = x.get("evidence") or []
+        if not evidence and ("component" in x or "behavior" in x or "behaviour" in x):
+            evidence = [{"fact": str(description), "claim_status": "observed",
+                         "metadata": {"normalization_warning": "canonical_behavior_fields_missing",
+                                       "original_payload": x}}]
+        behaviors.append(MachineBehavior(
+            id=str(behavior_id), source_ids=[str(v) for v in source_ids],
+            subject_id=str(subject_id), subject_name=subject_name,
+            description=str(description), evidence=_ev(evidence),
+        ))
     constraints = [MachineConstraint(
         id=x["id"], source_ids=x.get("source_ids", []), entity_id=x.get("entity_id"), name=x["name"], description=x["description"],
         evidence=_ev(x.get("evidence")),
