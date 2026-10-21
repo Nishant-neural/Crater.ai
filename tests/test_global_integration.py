@@ -57,3 +57,17 @@ def test_global_integration_normalizes_evidence_reference_without_fact():
     assert evidence[0].fact == f"Evidence reference to source record {source_id}"
     assert evidence[0].claim_status == "observed"
     assert evidence[0].metadata["source_id"] == source_id
+
+
+def test_machine_behavior_normalizes_extraction_style_payload():
+    from backend.knowledge.global_integration import _model_from_payload
+
+    model = _model_from_payload({
+        "behaviors": [{"component": "Welding area", "behavior": "produce toxic fumes"}],
+    })
+    assert len(model.behaviors) == 1
+    behavior = model.behaviors[0]
+    assert behavior.subject_name == "Welding area"
+    assert behavior.description == "produce toxic fumes"
+    assert behavior.subject_id.startswith("unresolved:behavior-subject:")
+    assert behavior.evidence[0].metadata["normalization_warning"] == "canonical_behavior_fields_missing"

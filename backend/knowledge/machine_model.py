@@ -7,13 +7,87 @@ are carried as extra properties on the entities and as supplemental metadata.
 from __future__ import annotations
 
 from typing import Any
+import hashlib
+import json
+import re
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from backend.knowledge.evidence import MachineEvidence
 
 
-class MachineEntity(BaseModel):
+class MachineModelBase(BaseModel):
+    """Shared boundary normalizer for imperfect LLM/legacy payloads.
+
+    It maps common aliases and supplies explicit unresolved placeholders for
+    structurally required fields. It never treats placeholders as verified facts.
+    """
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_external_payload(cls, value):
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        aliases = {
+            "id": ("fact_id", "behavior_id", "event_id", "port_id", "quantity_id", "constraint_id", "procedure_id", "failure_id"),
+            "name": ("component", "label", "title", "alarm", "failure", "procedure_name"),
+            "description": ("behavior", "behaviour", "effect", "function", "details", "text", "fact"),
+            "subject_id": ("entity_id", "component_id", "source_entity_id"),
+            "subject_name": ("component", "entity_name", "subject", "name"),
+            "entity_id": ("component_id", "subject_id"),
+            "entity_type": ("type", "component_type", "kind"),
+            "relation_type": ("type", "relationship", "relation"),
+            "object_id": ("target_id", "to_id", "object_entity_id"),
+            "object_name": ("target", "to_component", "to", "object"),
+            "value": ("setting", "parameter_value"),
+            "unit": ("units",),
+            "steps": ("procedure_steps", "instructions"),
+            "possible_causes": ("causes", "cause"),
+            "symptoms": ("symptom",),
+            "source_ids": ("source_id", "evidence_ids"),
+        }
+        fields = getattr(cls, "model_fields", {})
+        for target, candidates in aliases.items():
+            if target not in fields or data.get(target) not in (None, "", []):
+                continue
+            for alias in candidates:
+                candidate = data.get(alias)
+                if candidate not in (None, "", []):
+                    data[target] = candidate
+                    break
+        def stable_id(prefix: str) -> str:
+            raw = json.dumps(data, sort_keys=True, default=str, ensure_ascii=False)
+            digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+            return f"{prefix}:{digest}"
+        defaults = {
+            "id": lambda: stable_id(cls.__name__.removeprefix("Machine").lower()),
+            "name": lambda: "Unresolved item",
+            "entity_type": lambda: "unknown",
+            "subject_id": lambda: "unresolved:subject",
+            "subject_name": lambda: str(data.get("component") or data.get("name") or "Unresolved subject"),
+            "description": lambda: "Description missing; original payload retained",
+            "relation_type": lambda: "unspecified",
+            "object_id": lambda: "unresolved:object",
+            "object_name": lambda: "Unresolved object",
+            "entity_id": lambda: "unresolved:entity",
+            "procedure_type": lambda: "unspecified",
+            "steps": list, "properties": dict, "ports": list, "states": list,
+            "source_ids": list, "evidence": list, "quantities": list,
+            "symptoms": list, "possible_causes": list, "entity_ids": list,
+            "values": list, "status": lambda: "unresolved",
+        }
+        for field_name, field in fields.items():
+            if field_name in data and data[field_name] not in (None, ""):
+                continue
+            if field_name in defaults and field.is_required():
+                data[field_name] = defaults[field_name]()
+        # Normalize scalar identifiers to strings and source_id to a list.
+        if isinstance(data.get("source_ids"), str):
+            data["source_ids"] = [data["source_ids"]]
+        return data
+
+
+class MachineEntity(MachineModelBase):
     id: str
     name: str
     entity_type: str
@@ -24,7 +98,7 @@ class MachineEntity(BaseModel):
     evidence: list[MachineEvidence] = Field(default_factory=list)
 
 
-class MachineEntityRelation(BaseModel):
+class MachineEntityRelation(MachineModelBase):
     id: str | None = None
     subject_id: str | None = None
     subject_name: str | None = None
@@ -35,7 +109,7 @@ class MachineEntityRelation(BaseModel):
     evidence: list[MachineEvidence] = Field(default_factory=list)
 
 
-class MachineRelation(BaseModel):
+class MachineRelation(MachineModelBase):
     source_ids: list[str] = Field(default_factory=list)
     subject_id: str
     subject_name: str
@@ -46,7 +120,7 @@ class MachineRelation(BaseModel):
     evidence: list[MachineEvidence] = Field(default_factory=list)
 
 
-class MachinePort(BaseModel):
+class MachinePort(MachineModelBase):
     id: str
     source_ids: list[str] = Field(default_factory=list)
     entity_id: str
@@ -56,7 +130,7 @@ class MachinePort(BaseModel):
     evidence: list[MachineEvidence] = Field(default_factory=list)
 
 
-class MachineQuantity(BaseModel):
+class MachineQuantity(MachineModelBase):
     id: str
     source_ids: list[str] = Field(default_factory=list)
     entity_id: str
@@ -67,7 +141,7 @@ class MachineQuantity(BaseModel):
     evidence: list[MachineEvidence] = Field(default_factory=list)
 
 
-class MachineState(BaseModel):
+class MachineState(MachineModelBase):
     source_ids: list[str] = Field(default_factory=list)
     entity_id: str
     name: str
@@ -76,7 +150,7 @@ class MachineState(BaseModel):
     evidence: list[MachineEvidence] = Field(default_factory=list)
 
 
-class MachineEvent(BaseModel):
+class MachineEvent(MachineModelBase):
     id: str
     source_ids: list[str] = Field(default_factory=list)
     entity_id: str
@@ -85,7 +159,7 @@ class MachineEvent(BaseModel):
     evidence: list[MachineEvidence] = Field(default_factory=list)
 
 
-class MachineBehavior(BaseModel):
+class MachineBehavior(MachineModelBase):
     id: str
     source_ids: list[str] = Field(default_factory=list)
     subject_id: str
@@ -94,7 +168,7 @@ class MachineBehavior(BaseModel):
     evidence: list[MachineEvidence] = Field(default_factory=list)
 
 
-class MachineConstraint(BaseModel):
+class MachineConstraint(MachineModelBase):
     id: str
     source_ids: list[str] = Field(default_factory=list)
     entity_id: str | None = None
@@ -103,7 +177,7 @@ class MachineConstraint(BaseModel):
     evidence: list[MachineEvidence] = Field(default_factory=list)
 
 
-class MachineProcedure(BaseModel):
+class MachineProcedure(MachineModelBase):
     id: str
     source_ids: list[str] = Field(default_factory=list)
     name: str
@@ -113,7 +187,7 @@ class MachineProcedure(BaseModel):
     evidence: list[MachineEvidence] = Field(default_factory=list)
 
 
-class MachineFailureMode(BaseModel):
+class MachineFailureMode(MachineModelBase):
     id: str
     source_ids: list[str] = Field(default_factory=list)
     name: str
@@ -126,7 +200,7 @@ class MachineFailureMode(BaseModel):
     evidence: list[MachineEvidence] = Field(default_factory=list)
 
 
-class MachineConflict(BaseModel):
+class MachineConflict(MachineModelBase):
     id: str
     source_ids: list[str] = Field(default_factory=list)
     subject: str
@@ -137,14 +211,14 @@ class MachineConflict(BaseModel):
     status: str = "unresolved"
 
 
-class MachineUnresolvedFact(BaseModel):
+class MachineUnresolvedFact(MachineModelBase):
     source_id: str
     fact_type: str
     payload: dict[str, Any] = Field(default_factory=dict)
     reason: str = "not_accounted_for_by_global_integration"
 
 
-class UniversalMachineModel(BaseModel):
+class UniversalMachineModel(MachineModelBase):
     """A compact, extensible representation for machine knowledge."""
 
     entities: list[MachineEntity] = Field(default_factory=list)
