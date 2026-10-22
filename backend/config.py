@@ -41,21 +41,24 @@ class Settings(BaseSettings):
     # Technical manuals benefit from larger semantic context. Keep enough text
     # together for the extractor to see component descriptions, specifications,
     # procedures, and their surrounding context instead of isolated fragments.
-    chunk_size_chars: int = 6000
-    chunk_overlap_chars: int = 600
-    chunk_min_chars: int = 1500
-    chunk_max_chars: int = 8000
+    chunk_size_chars: int = 12000
+    chunk_overlap_chars: int = 1000
+    chunk_min_chars: int = 2500
+    chunk_max_chars: int = 15000
 
     # Gemini free-tier/project limits are enforced as requests per minute.
     # Stay below a 15 RPM ceiling with headroom for transient/retry behavior.
-    extraction_gemini_rpm: int = 12
+    extraction_gemini_rpm: int = 10
     extraction_rate_limit_backoff_seconds: float = 5.0
-    # Large-manual ingestion controls. Vectorization is checkpointed in small
-    # batches; LLM extraction groups independent source chunks into one request
-    # to avoid paying one provider request per chunk.
+    # Large-manual ingestion controls. The character budget is a conservative
+    # proxy for tokens (roughly 4 chars/token for ordinary technical prose).
+    # 80k characters ~= 20k input tokens; at 10 RPM plus up to 4k output tokens
+    # per call this targets <=240k tokens/min, leaving a little headroom under
+    # a 250k TPM quota. Actual tokenization varies, so reduce RPM/budget if 429s
+    # or TPM throttling occur. Prompt budget includes IDs and separators.
     vector_index_batch_size: int = 64
-    extraction_batch_size: int = 12
-    extraction_batch_max_chars: int = 72000
+    extraction_batch_size: int = 18
+    extraction_batch_max_chars: int = 80000
 
     # Retrieval
     hybrid_top_k: int = 40          # candidates pulled from each of vector/BM25 before fusion
