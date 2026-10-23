@@ -24,6 +24,7 @@ from backend.db.models import (
     ProcedureType,
 )
 from backend.knowledge.evidence import MachineEvidence
+from backend.knowledge.normalization import normalize_payload
 from backend.knowledge.machine_model import (
     MachineBehavior,
     MachineConstraint,
@@ -41,7 +42,12 @@ from backend.config import settings
 
 
 class ExtractionError(RuntimeError):
-    """Raised when an extraction attempt fails rather than producing valid empty knowledge."""
+    """Extraction failure with retry guidance for the ingestion scheduler."""
+
+    def __init__(self, message: str, *, retryable: bool = False, rate_limited: bool = False):
+        super().__init__(message)
+        self.retryable = retryable
+        self.rate_limited = rate_limited
 
 
 _EXTRACTION_PROMPT = """You are extracting structured technical knowledge from a technical excerpt of an \
@@ -83,7 +89,14 @@ def _extract_result(content: str) -> MachineKnowledgeExtractionResult:
             max_tokens=4000,
         )
     except Exception as exc:
-        raise ExtractionError(f"LLM extraction request failed: {exc}") from exc
+        message = str(exc)
+        lower = message.lower()
+        rate_limited = any(token in lower for token in ("429", "resource_exhausted", "rate limit", "quota exceeded", "too many requests"))
+        raise ExtractionError(
+            f"LLM extraction request failed: {message}",
+            retryable=True,
+            rate_limited=rate_limited,
+        ) from exc
     if not raw:
         raise ExtractionError("LLM returned no extraction output")
     text = raw.strip()
@@ -102,6 +115,12 @@ def _extract_result(content: str) -> MachineKnowledgeExtractionResult:
         except json.JSONDecodeError as exc:
             raise ExtractionError(f"LLM returned invalid JSON: {exc.msg}") from exc
     try:
+        if not isinstance(payload, dict):
+            raise ValueError("extraction root must be an object")
+        # Apply one shared alias contract to every typed fact collection before validation.
+        for key in ("components", "relationships", "procedures", "entities", "relations", "ports", "quantities", "states", "events", "behaviors", "constraints"):
+            if isinstance(payload.get(key), list):
+                payload[key] = [normalize_payload(item, kind=key[:-1] if key.endswith("s") else key) if isinstance(item, dict) else item for item in payload[key]]
         return MachineKnowledgeExtractionResult.model_validate(payload)
     except ValueError as exc:
         raise ExtractionError(f"LLM extraction schema validation failed: {exc}") from exc
@@ -181,9 +200,22 @@ def extract_chunk_knowledge_batch(chunks: list[tuple[str, str]]) -> dict[str, tu
             max_tokens=max(4000, min(16000, len(chunks) * 1000)),
         )
     except Exception as exc:
-        raise ExtractionError(f"LLM batch extraction request failed: {exc}") from exc
+        message = str(exc)
+        lower = message.lower()
+        rate_limited = any(token in lower for token in ("429", "resource_exhausted", "rate limit", "quota exceeded", "too many requests"))
+        raise ExtractionError(
+            f"LLM batch extraction request failed: {message}",
+            retryable=True,
+            rate_limited=rate_limited,
+        ) from exc
 
-    payload = _parse_json_response(raw)
+    try:
+        payload = _parse_json_response(raw)
+    except ExtractionError as exc:
+        # A malformed/truncated batch response is usually caused by too much
+        # output for the selected batch. The caller should split it immediately,
+        # not spend two more RPM slots asking for the same malformed response.
+        raise ExtractionError(str(exc), retryable=False) from exc
     rows = payload.get("chunks") if isinstance(payload, dict) else None
     if not isinstance(rows, list):
         raise ExtractionError("LLM batch extraction response missing chunks list")
@@ -201,6 +233,9 @@ def extract_chunk_knowledge_batch(chunks: list[tuple[str, str]]) -> dict[str, tu
         if not isinstance(knowledge, dict):
             raise ExtractionError(f"LLM batch extraction missing knowledge object for {chunk_id}")
         try:
+            for key in ("components", "relationships", "procedures", "entities", "relations", "ports", "quantities", "states", "events", "behaviors", "constraints"):
+                if isinstance(knowledge.get(key), list):
+                    knowledge[key] = [normalize_payload(item, kind=key[:-1] if key.endswith("s") else key) if isinstance(item, dict) else item for item in knowledge[key]]
             result = MachineKnowledgeExtractionResult.model_validate(knowledge)
         except ValueError as exc:
             raise ExtractionError(f"LLM batch extraction schema validation failed for {chunk_id}: {exc}") from exc

@@ -9,12 +9,13 @@ from backend.db.models import Chunk, Document, DocType, IngestionJob
 from backend.ingestion.chunking import pages_to_chunks
 from backend.ingestion.pdf_loader import load_pdf
 from backend.knowledge.component_extraction import ExtractionError, extract_chunk_knowledge, extract_chunk_knowledge_batch, persist_extraction, persist_machine_knowledge
-from backend.knowledge.validation import validate_machine_model
+from backend.knowledge.validation import validate_machine_model, validate_machine_model_with_ledger
 from backend.knowledge.global_integration import build_effective_revision_knowledge_context, integrate_revision_knowledge, persist_integration_result
 from backend.knowledge.verification import verify_machine_model
 from backend.retrieval.vector_store import upsert_chunks
 from backend.schematic.graph import persist_schematic, schematic_to_machine_model
 from backend.knowledge.evidence import MachineEvidence
+from backend.knowledge.normalization import persist_unresolved_fact
 from backend.config import settings
 from backend.ingestion.checkpoints import load_checkpoint, save_checkpoint
 
@@ -138,48 +139,95 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
         while pending_knowledge:
             # Keep both request count and character size bounded. The latter
             # protects the local process and leaves room for the model output.
+            # Include the per-chunk wrapper overhead in the character budget;
+            # previously 12 x 6000-character chunks could exceed the configured
+            # limit after IDs/separators were added and waste retries before split.
             batch = []
-            chars = 0
+            prompt_chars = 0
             for chunk in pending_knowledge:
-                if batch and (len(batch) >= batch_size or chars + len(chunk.content) > settings.extraction_batch_max_chars):
+                wrapper_chars = len(chunk.id) * 2 + 100
+                added_chars = len(chunk.content) + wrapper_chars + (2 if batch else 0)
+                if batch and (len(batch) >= batch_size or prompt_chars + added_chars > settings.extraction_batch_max_chars):
+                    break
+                if not batch and added_chars > settings.extraction_batch_max_chars:
+                    # A single unusually large chunk still gets a chance to be
+                    # processed; the extractor will return a clear size error.
+                    batch.append(chunk)
+                    prompt_chars += added_chars
                     break
                 batch.append(chunk)
-                chars += len(chunk.content)
+                prompt_chars += added_chars
             if not batch:
                 batch = [pending_knowledge[0]]
 
             def run_batch(current_batch):
                 last_error: Exception | None = None
-                for attempt in range(1, 4):
+                # Retry only provider/transient failures. Schema/truncation errors
+                # should split immediately; repeating the same prompt consumes RPM
+                # and RPD without changing the likely outcome.
+                for attempt in range(1, 3):
                     try:
                         return extract_chunk_knowledge_batch([(c.id, c.content) for c in current_batch])
                     except ExtractionError as exc:
                         last_error = exc
                         for c in current_batch:
                             knowledge_failures[c.id] = {"attempts": attempt, "error": str(exc)[:1000]}
-                        if "429" in str(exc) or "resource_exhausted" in str(exc).lower() or "rate limit" in str(exc).lower():
-                            time.sleep(max(60.0, settings.extraction_rate_limit_backoff_seconds))
                         if job_id:
                             save_checkpoint(job_id, stage="knowledge_retry", knowledge_done=sorted(knowledge_done), knowledge_failures=knowledge_failures, percent=42 + int(processed_knowledge / max(1, total) * 33))
-                # A malformed/truncated multi-chunk response should not poison
-                # the whole manual. Split recursively; each half is still one
-                # rate-limited request and successful IDs remain checkpointable.
+                        if exc.rate_limited:
+                            # One quota-aware retry only. Do not recursively split a
+                            # 429 batch into more requests; that amplifies the quota
+                            # problem. The limiter already spaces normal calls.
+                            if attempt == 1:
+                                time.sleep(max(60.0, settings.extraction_rate_limit_backoff_seconds))
+                                continue
+                            raise
+                        if not exc.retryable:
+                            break
+                        if attempt == 1:
+                            time.sleep(min(8.0, max(1.0, settings.extraction_rate_limit_backoff_seconds)))
+                # Split malformed/truncated or persistently failing multi-chunk
+                # outputs, but never split a quota-limited request into more calls.
+                if last_error and getattr(last_error, "rate_limited", False):
+                    raise last_error
                 if len(current_batch) > 1:
                     mid = len(current_batch) // 2
                     left = run_batch(current_batch[:mid])
                     right = run_batch(current_batch[mid:])
                     return {**left, **right}
-                raise ExtractionError(f"Chunk {current_batch[0].id} extraction failed after 3 attempts: {last_error}")
+                raise ExtractionError(f"Chunk {current_batch[0].id} extraction failed: {last_error}")
 
-            results = run_batch(batch)
+            batch_started = time.monotonic()
+            try:
+                results = run_batch(batch)
+                batch_elapsed = time.monotonic() - batch_started
+            except Exception as exc:
+                for failed_chunk in batch:
+                    persist_unresolved_fact(session, revision_id=revision_id, source_id=failed_chunk.id,
+                        fact_type="chunk_extraction_failure",
+                        payload={"chunk_id": failed_chunk.id, "content_excerpt": failed_chunk.content[:4000]},
+                        reason=f"extraction_failed_after_retries: {str(exc)[:1000]}")
+                session.commit()
+                raise
             for chunk in batch:
                 result, machine_model = results[chunk.id]
                 if result and (result.components or result.relationships or result.procedures):
                     persist_extraction(session, revision_id, chunk.id, result)
                 _stamp_provenance(machine_model, document.title, chunk.page_number, chunk.id, chunk.chunk_type.value)
-                if (machine_model.entities or machine_model.relations or machine_model.ports or machine_model.quantities or machine_model.states or machine_model.events or machine_model.behaviors or machine_model.constraints):
-                    if not validate_machine_model(machine_model):
+                if (machine_model.entities or machine_model.relations or machine_model.ports or machine_model.quantities or machine_model.states or machine_model.events or machine_model.behaviors or machine_model.constraints or machine_model.procedures or machine_model.failure_modes):
+                    issues, unresolved = validate_machine_model_with_ledger(machine_model)
+                    for record in unresolved:
+                        persist_unresolved_fact(session, revision_id=revision_id,
+                            source_id=record.get("source_id") or chunk.id,
+                            fact_type=record.get("fact_type", "semantic_validation"),
+                            payload=record.get("payload", record), reason=record.get("reason", "semantic_validation_failed"))
+                    if not issues:
                         persist_machine_knowledge(session, revision_id, chunk.id, machine_model)
+                    else:
+                        # Preserve the whole rejected model as an audit item; never silently drop it.
+                        persist_unresolved_fact(session, revision_id=revision_id, source_id=chunk.id,
+                            fact_type="machine_model_semantic_validation", payload=machine_model.model_dump(mode="json"),
+                            reason="; ".join(issues)[:4000])
                 knowledge_done.add(chunk.id)
                 knowledge_failures.pop(chunk.id, None)
             session.commit()
@@ -190,7 +238,7 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
             batch_index += 1
             if job_id:
                 save_checkpoint(job_id, stage="knowledge", knowledge_done=sorted(knowledge_done), knowledge_failures=knowledge_failures, percent=percent)
-            progress(percent, f"Extracting machine knowledge — {processed_knowledge}/{total} chunks ({batch_index}-batch)")
+            progress(percent, f"Extracting machine knowledge — {processed_knowledge}/{total} chunks ({batch_index}-batch; {len(batch)} chunks, {prompt_chars:,} chars, {batch_elapsed:.1f}s)")
     else: progress(75,"Machine knowledge extraction skipped")
     progress(76,"Machine knowledge extraction complete")
     diagrams=[c for c in all_chunks if c.chunk_type.value=="diagram" and c.extra and c.extra.get("image_path")]
@@ -199,10 +247,29 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
         processed_schematics = len(schematics_done)
         for chunk in diagrams:
             if chunk.id in schematics_done: continue
-            result=extract_schematic(chunk.extra["image_path"])
+            try:
+                result=extract_schematic(chunk.extra["image_path"])
+            except Exception as exc:
+                persist_unresolved_fact(session, revision_id=revision_id, source_id=chunk.id,
+                    fact_type="schematic_extraction_failure", payload={"image_path": chunk.extra.get("image_path"), "chunk_id": chunk.id},
+                    reason=f"schematic_extraction_failed: {str(exc)[:1000]}")
+                session.commit()
+                schematics_done.add(chunk.id)
+                continue
             if result.nodes:
-                persist_schematic(session,document.id,chunk.id,revision_id,result); model=schematic_to_machine_model(result,document.title,chunk.page_number,chunk.id)
-                if not validate_machine_model(model): persist_machine_knowledge(session,revision_id,chunk.id,model)
+                persist_schematic(session,document.id,chunk.id,revision_id,result)
+                model=schematic_to_machine_model(result,document.title,chunk.page_number,chunk.id)
+                issues, unresolved = validate_machine_model_with_ledger(model)
+                for record in unresolved:
+                    persist_unresolved_fact(session, revision_id=revision_id, source_id=record.get("source_id") or chunk.id,
+                        fact_type=record.get("fact_type", "schematic_semantic_validation"), payload=record.get("payload", record),
+                        reason=record.get("reason", "schematic_semantic_validation_failed"))
+                if not issues:
+                    persist_machine_knowledge(session,revision_id,chunk.id,model)
+                else:
+                    persist_unresolved_fact(session, revision_id=revision_id, source_id=chunk.id,
+                        fact_type="schematic_model_semantic_validation", payload=model.model_dump(mode="json"),
+                        reason="; ".join(issues)[:4000])
             session.commit(); schematics_done.add(chunk.id); processed_schematics += 1
             percent = 78 + int(processed_schematics/max(1,total_d)*12)
             if job_id: save_checkpoint(job_id,stage="schematics",schematics_done=sorted(schematics_done),percent=percent)
