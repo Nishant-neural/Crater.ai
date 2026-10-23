@@ -17,6 +17,10 @@ import pymupdf as fitz  # PyMuPDF (module renamed from `fitz`; alias kept for re
 import pdfplumber
 
 
+MIN_IMAGE_SIDE_PX = 200
+MIN_IMAGE_PIXELS = 60_000
+
+
 @dataclass
 class RawPage:
     page_number: int                     # 1-indexed
@@ -64,14 +68,25 @@ def extract_images_per_page(pdf_path: str | Path, out_dir: str | Path) -> dict[i
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     images_by_page: dict[int, list[str]] = {}
+    seen_xrefs: set[int] = set()   # identical embedded bitmaps are analysed once
 
     with fitz.open(pdf_path) as doc:
         for page_index in range(len(doc)):
             page_number = page_index + 1
             page = doc[page_index]
             paths: list[str] = []
-            for img_index, img in enumerate(page.get_images(full=True)):
-                xref = img[0]
+            img_index = -1
+            for img in page.get_images(full=True):
+                xref, width, height = img[0], img[2], img[3]
+                # Skip decorative fragments (icons, dial ticks, bullets, logos).
+                # Each kept image costs one vision LLM call, so only keep images
+                # large enough to plausibly be a diagram or schematic.
+                if width < MIN_IMAGE_SIDE_PX or height < MIN_IMAGE_SIDE_PX or width * height < MIN_IMAGE_PIXELS:
+                    continue
+                if xref in seen_xrefs:
+                    continue
+                seen_xrefs.add(xref)
+                img_index += 1
                 pix = fitz.Pixmap(doc, xref)
                 if pix.n - pix.alpha >= 4:  # CMYK -> convert to RGB before saving
                     pix = fitz.Pixmap(fitz.csRGB, pix)

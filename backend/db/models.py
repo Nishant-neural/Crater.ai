@@ -616,6 +616,20 @@ class MachineKnowledgeFact(Base):
     canonical_id: Mapped[str | None] = mapped_column(String, index=True, nullable=True)
 
 
+class UnresolvedFact(Base):
+    """Durable audit ledger for extracted facts that cannot safely be normalized or linked."""
+    __tablename__ = "unresolved_facts"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    revision_id: Mapped[str | None] = mapped_column(ForeignKey("revisions.id"), nullable=True, index=True)
+    source_id: Mapped[str] = mapped_column(String, index=True)
+    fact_type: Mapped[str] = mapped_column(String, index=True)
+    payload: Mapped[dict] = mapped_column(JSON)
+    reason: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String, default="open", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class MachineKnowledgeModelSnapshot(Base):
     """Revision-wide canonical UniversalMachineModel produced by global integration."""
     __tablename__ = "machine_knowledge_model_snapshots"

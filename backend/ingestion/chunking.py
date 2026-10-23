@@ -29,7 +29,14 @@ _PROCEDURE = re.compile(r"^(?:step\s*)?\d+[.)]\s+|^(?:warning|caution|danger|not
 
 def _heading(line: str) -> bool:
     x = line.strip()
-    return bool(x) and (x.endswith(":") or _HEADING.match(x) is not None)
+    if not x:
+        return False
+    # Numbered steps ("3. Connect the cable ...") and WARNING:/NOTE: lines are
+    # procedure content, not section boundaries. Treating them as headings made
+    # every step its own chunk, ignoring chunk_size_chars entirely.
+    if _PROCEDURE.match(x):
+        return False
+    return x.endswith(":") or _HEADING.match(x) is not None
 
 
 def _units(text: str) -> list[tuple[str, str]]:
@@ -48,6 +55,9 @@ def _units(text: str) -> list[tuple[str, str]]:
         if _heading(line):
             flush()
             section = line
+            # Keep the heading text in the chunk body too; previously it lived
+            # only in metadata, so the extractor never saw it.
+            buf = [line]
         elif _PROCEDURE.match(line) and buf:
             flush()
             buf = [line]
@@ -87,6 +97,18 @@ def _semantic_chunks(text: str) -> list[tuple[str, str]]:
     return out
 
 
+def _running_lines(texts: list[str]) -> set[str]:
+    """Lines that repeat on many pages (running headers, footers, nav tabs)."""
+    if len(texts) < 6:
+        return set()
+    seen: dict[str, int] = {}
+    for t in texts:
+        for key in {re.sub(r"\d+", "#", ln.strip()) for ln in t.splitlines() if ln.strip()}:
+            seen[key] = seen.get(key, 0) + 1
+    cutoff = max(4, int(0.3 * len(texts)))
+    return {k for k, n in seen.items() if n >= cutoff}
+
+
 def _document_text_chunks(pdf_path: str, pages: list[RawPage]) -> list[PendingChunk]:
     """Build larger semantic text chunks across page boundaries.
 
@@ -121,15 +143,18 @@ def _document_text_chunks(pdf_path: str, pages: list[RawPage]) -> list[PendingCh
         buffer = ""
         page_numbers = []
 
-    for page in pages:
-        text = ocr_page_if_needed(pdf_path, page.page_number, page.text)
+    page_texts = [ocr_page_if_needed(pdf_path, p.page_number, p.text) for p in pages]
+    boiler = _running_lines(page_texts)
+    for page, text in zip(pages, page_texts):
+        if boiler:
+            text = "\n".join(ln for ln in text.splitlines() if re.sub(r"\d+", "#", ln.strip()) not in boiler)
         for sec, unit in _units(text):
             if not unit:
                 continue
             # A new explicit section starts a new chunk only when the current
             # chunk already has meaningful content. This avoids losing context
             # while still preventing unrelated manual sections from blending.
-            if sec and section and sec != section and buffer:
+            if sec and section and sec != section and len(buffer) >= settings.chunk_min_chars:
                 flush()
             if sec:
                 section = sec
