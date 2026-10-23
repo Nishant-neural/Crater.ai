@@ -14,9 +14,11 @@ import re
 from pydantic import BaseModel, Field, model_validator
 
 from backend.knowledge.evidence import MachineEvidence
+from backend.knowledge.normalization import normalize_payload
 
 
 class MachineModelBase(BaseModel):
+    model_config = {"extra": "allow"}
     """Shared boundary normalizer for imperfect LLM/legacy payloads.
 
     It maps common aliases and supplies explicit unresolved placeholders for
@@ -27,7 +29,7 @@ class MachineModelBase(BaseModel):
     def normalize_external_payload(cls, value):
         if not isinstance(value, dict):
             return value
-        data = dict(value)
+        data = normalize_payload(value, kind=cls.__name__.removeprefix("Machine").lower())
         aliases = {
             "id": ("fact_id", "behavior_id", "event_id", "port_id", "quantity_id", "constraint_id", "procedure_id", "failure_id"),
             "name": ("component", "label", "title", "alarm", "failure", "procedure_name"),

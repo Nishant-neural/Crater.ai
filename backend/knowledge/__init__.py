@@ -19,7 +19,8 @@ from backend.knowledge.machine_model import (
     State,
     UniversalMachineModel,
 )
-from backend.knowledge.validation import validate_machine_model
+from backend.knowledge.validation import validate_machine_model, validate_machine_model_with_ledger
+from backend.knowledge.normalization import normalize_payload, unresolved_record
 
 __all__ = [
     "MachineEvidence",
@@ -43,4 +44,7 @@ __all__ = [
     "Behavior",
     "Constraint",
     "validate_machine_model",
+    "validate_machine_model_with_ledger",
+    "normalize_payload",
+    "unresolved_record",
 ]

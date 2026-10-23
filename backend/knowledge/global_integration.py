@@ -43,6 +43,7 @@ from backend.knowledge.machine_model import (
     UniversalMachineModel,
 )
 from backend.llm import gateway
+from backend.knowledge.normalization import normalize_payload, persist_unresolved_fact
 
 _GLOBAL_PROMPT = """You are the global integration engine for an industrial machine knowledge system.
 You are given ALL persisted extracted knowledge for ONE machine revision. The records were
@@ -213,7 +214,10 @@ def _parse_json(raw: str | None) -> dict[str, Any]:
     except json.JSONDecodeError:
         start, end = text.find("{"), text.rfind("}")
         if start >= 0 and end > start:
-            return json.loads(text[start:end + 1])
+            try:
+                return json.loads(text[start:end + 1])
+            except json.JSONDecodeError:
+                return {}   # truncated / malformed output: caller splits the batch and retries
         return {}
 
 
@@ -474,6 +478,38 @@ def persist_integration_result(session: Session, revision_id: str, result: Integ
     return {"revision_id": revision_id, "version": snapshot.version, "source_counts": result.source_counts, "completeness": raw.get("completeness", {}), "revision_lineage": raw.get("revision_lineage", [revision_id]), "model": raw}
 
 
+_INTEGRATION_ROWS_PER_BATCH = 30      # was 80: 80 re-emitted rows overflowed the output cap
+_INTEGRATION_MAX_TOKENS = 16000
+
+
+def _integrate_part(key: str | None, part: dict[str, Any], label: str) -> list[tuple[str, dict[str, Any]]]:
+    """Run one integration call. If the JSON is truncated/invalid, split the rows
+    of the batch's category in half and retry each half (down to single rows),
+    instead of failing the whole ingestion job."""
+    prompt = _GLOBAL_PROMPT.format(knowledge=json.dumps(part, ensure_ascii=False, separators=(",", ":")))
+    raw = gateway.complete("integration", messages=[{"role": "user", "content": prompt}], max_tokens=_INTEGRATION_MAX_TOKENS)
+    if not raw:
+        raise ValueError(f"Integration batch {label} returned no output (check API key / quota)")
+    parsed = _parse_json(raw)
+    if parsed:
+        return [(label, parsed)]
+    rows = part.get(key) if key else None
+    if not isinstance(rows, list) or not rows:
+        raise ValueError(f"Integration batch {label} returned invalid JSON and cannot be split further")
+    if len(rows) == 1:
+        row = rows[0]
+        sid = str(row.get("id") or row.get("source_id") or "") if isinstance(row, dict) else ""
+        return [(label, {"unresolved_facts": [{
+            "source_id": sid or f"integration:{label}",
+            "fact_type": f"integration_{key}",
+            "payload": {"value": row},
+            "reason": "integration_output_unparseable_after_split",
+        }]})]
+    mid = len(rows) // 2
+    return (_integrate_part(key, {**part, key: rows[:mid]}, label + "a")
+            + _integrate_part(key, {**part, key: rows[mid:]}, label + "b"))
+
+
 def integrate_revision_knowledge(session: Session, revision_id: str) -> IntegrationResult:
     context, counts, lineage = build_effective_revision_knowledge_context(session, revision_id)
     # Bound each completion's context/output size. Every source category is integrated in
@@ -482,22 +518,30 @@ def integrate_revision_knowledge(session: Session, revision_id: str) -> Integrat
     batches = []
     for key in category_keys:
         rows = context[key]
-        for start in range(0, len(rows), 80):
+        for start in range(0, len(rows), _INTEGRATION_ROWS_PER_BATCH):
             part = {k: [] for k in category_keys}
-            part[key] = rows[start:start + 80]
+            part[key] = rows[start:start + _INTEGRATION_ROWS_PER_BATCH]
             if key != "universal_entities":
                 part["universal_entities"] = context.get("universal_entities", [])[:150]
-            batches.append(part)
-    if not batches: batches = [context]
+            batches.append((key, part))
+    if not batches: batches = [(None, context)]
     output_keys = ("entities", "relations", "ports", "quantities", "states", "events", "behaviors", "constraints", "procedures", "failure_modes", "simulation_rules", "conflicts", "unresolved_facts")
     payload = {k: [] for k in output_keys}
-    for index, batch in enumerate(batches):
-        prompt = _GLOBAL_PROMPT.format(knowledge=json.dumps(batch, ensure_ascii=False, separators=(",", ":")))
-        parsed = _parse_json(gateway.complete("integration", messages=[{"role": "user", "content": prompt}], max_tokens=12000))
-        if not parsed:
-            raise ValueError(f"Integration batch {index + 1}/{len(batches)} returned invalid or empty JSON")
+    parsed_parts: list[tuple[str, dict[str, Any]]] = []
+    for index, (batch_key, batch) in enumerate(batches):
+        parsed_parts.extend(_integrate_part(batch_key, batch, str(index + 1)))
+    for index, parsed in parsed_parts:
         for key in output_keys:
-            if isinstance(parsed.get(key), list): payload[key].extend(x for x in parsed[key] if isinstance(x, dict))
+            values = parsed.get(key)
+            if not isinstance(values, list):
+                if values is not None:
+                    persist_unresolved_fact(session, revision_id=revision_id, source_id=f"integration:{index}:{key}", fact_type=f"integration_{key}", payload={"value": values}, reason="integration_category_not_a_list")
+                continue
+            for row_index, item in enumerate(values):
+                if not isinstance(item, dict):
+                    persist_unresolved_fact(session, revision_id=revision_id, source_id=f"integration:{index}:{key}:{row_index}", fact_type=f"integration_{key}", payload={"value": item}, reason="integration_item_not_an_object")
+                    continue
+                payload[key].append(normalize_payload(item, kind=key[:-1] if key.endswith("s") else key))
     for key, rows in payload.items():
         seen, unique = set(), []
         for row in rows:
@@ -505,6 +549,13 @@ def integrate_revision_knowledge(session: Session, revision_id: str) -> Integrat
             if ident not in seen: seen.add(ident); unique.append(row)
         payload[key] = unique
     audit = completeness_check(context, payload)
+    for unresolved in payload.get("unresolved_facts", []):
+        if isinstance(unresolved, dict):
+            persist_unresolved_fact(session, revision_id=revision_id,
+                source_id=str(unresolved.get("source_id") or unresolved.get("id") or ""),
+                fact_type=str(unresolved.get("fact_type") or "global_integration"),
+                payload=unresolved.get("payload", unresolved),
+                reason=str(unresolved.get("reason") or "unresolved_by_global_integration"))
     payload["completeness"] = audit
     payload["revision_lineage"] = lineage
     model = _model_from_payload(payload)
