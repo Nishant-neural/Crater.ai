@@ -34,7 +34,7 @@ class ModelGateway:
 
     def complete(self, task: str, messages: list[dict[str, Any]], max_tokens: int | None = None) -> str | None:
         provider, route = self.provider(task)
-        if task == "extraction" and route.provider == "gemini":
+        if task in ("extraction", "integration") and route.provider == "gemini":
             _gemini_extraction_limiter.wait()
         return provider.complete(messages=messages, max_tokens=max_tokens or route.max_tokens)
 

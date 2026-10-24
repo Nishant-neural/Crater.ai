@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from backend.knowledge.machine_model import UniversalMachineModel
+from backend.knowledge.normalization import unresolved_record
 
 
 def validate_machine_model(model: UniversalMachineModel) -> list[str]:
@@ -87,3 +88,52 @@ def _evidence_issues(label: str, evidence) -> list[str]:
 
 
 validate_model = validate_machine_model
+
+
+def validate_machine_model_with_ledger(model: UniversalMachineModel) -> tuple[list[str], list[dict]]:
+    """Validate semantics and return an explicit ledger for facts that cannot be trusted.
+
+    The model is not mutated and no fact is silently discarded. Callers may persist
+    returned ledger records alongside the model for review/reprocessing.
+    """
+    issues = validate_machine_model(model)
+    ledger: list[dict] = []
+
+    def record(kind: str, item, reason: str) -> None:
+        payload = item.model_dump(mode="json") if hasattr(item, "model_dump") else dict(item)
+        ledger.append(unresolved_record(
+            payload, source_id=payload.get("id") or (payload.get("source_ids") or [None])[0],
+            fact_type=kind, reason=reason,
+        ))
+
+    entity_ids = {entity.id for entity in model.entities}
+    for relation in model.relations:
+        if relation.subject_id not in entity_ids or relation.object_id not in entity_ids:
+            missing = []
+            if relation.subject_id not in entity_ids:
+                missing.append(f"subject:{relation.subject_id}")
+            if relation.object_id not in entity_ids:
+                missing.append(f"object:{relation.object_id}")
+            record("relation", relation, "unresolved_entity_reference:" + ",".join(missing))
+    for kind, collection in (
+        ("port", model.ports), ("quantity", model.quantities), ("state", model.states),
+        ("event", model.events), ("behavior", model.behaviors), ("constraint", model.constraints),
+    ):
+        for item in collection:
+            entity_id = getattr(item, "entity_id", None) or getattr(item, "subject_id", None)
+            if entity_id and entity_id not in entity_ids and not str(entity_id).startswith("unresolved:"):
+                record(kind, item, f"unresolved_entity_reference:{entity_id}")
+            elif entity_id and str(entity_id).startswith("unresolved:"):
+                record(kind, item, "placeholder_entity_reference")
+    for kind, collection in (("procedure", model.procedures), ("failure_mode", model.failure_modes)):
+        for item in collection:
+            if not item.evidence:
+                record(kind, item, "missing_evidence")
+    for item in model.unresolved_facts:
+        ledger.append(item.model_dump(mode="json"))
+    # De-duplicate repeated issue records deterministically.
+    unique = {}
+    for item in ledger:
+        key = (item.get("fact_type"), item.get("source_id"), item.get("reason"))
+        unique[key] = item
+    return issues, list(unique.values())

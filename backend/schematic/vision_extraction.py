@@ -21,6 +21,7 @@ from pathlib import Path
 
 from backend.llm import gateway
 from backend.schematic.schema import SchematicExtractionResult
+from backend.knowledge.normalization import normalize_payload
 
 _EXTENSION_TO_MEDIA_TYPE = {
     ".png": "image/png",
@@ -81,6 +82,12 @@ def extract_schematic(image_path: str | Path) -> SchematicExtractionResult:
     if not raw:
         return SchematicExtractionResult()
     try:
-        return SchematicExtractionResult.model_validate(json.loads(raw))
+        payload = json.loads(raw)
+        if isinstance(payload, dict):
+            if isinstance(payload.get("nodes"), list):
+                payload["nodes"] = [normalize_payload(x, kind="schematic_node") if isinstance(x, dict) else x for x in payload["nodes"]]
+            if isinstance(payload.get("edges"), list):
+                payload["edges"] = [normalize_payload(x, kind="schematic_edge") if isinstance(x, dict) else x for x in payload["edges"]]
+        return SchematicExtractionResult.model_validate(payload)
     except (json.JSONDecodeError, ValueError):
         return SchematicExtractionResult()
