@@ -32,10 +32,8 @@ class MachineEvidence(BaseModel):
             data["fact"] = f"Evidence reference to source record {source_id}" if source_id else "Evidence claim text missing from input"
             metadata.setdefault("normalization_warning", "missing_fact_text")
         data["metadata"] = metadata
-        status = data.get("claim_status")
-        if status not in {"observed", "inferred", "uncertain"}:
-            data["claim_status"] = "uncertain"
-            metadata.setdefault("normalization_warning", "invalid_claim_status_normalized_to_uncertain")
+        # Invalid claim statuses are not safely normalizable: let the Literal
+        # contract reject them instead of silently changing their meaning.
         return data
 
     fact: str
