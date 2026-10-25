@@ -24,3 +24,14 @@ def test_checkpoint_preserves_vector_chunk_progress(tmp_path, monkeypatch):
     assert cp["vector_chunks_done"] == ["c1", "c2"]
     assert cp["vectors_done"] is False
     clear_checkpoint(job)
+
+
+def test_malformed_batch_response_is_not_marked_retryable(monkeypatch):
+    monkeypatch.setattr(ce.gateway, "complete", lambda *args, **kwargs: "not json")
+    try:
+        ce.extract_chunk_knowledge_batch([("c1", "servo text"), ("c2", "motor text")])
+    except ce.ExtractionError as exc:
+        assert exc.retryable is False
+        assert exc.rate_limited is False
+    else:
+        raise AssertionError("malformed response should raise ExtractionError")
