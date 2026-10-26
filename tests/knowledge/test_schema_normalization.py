@@ -21,3 +21,28 @@ def test_procedure_aliases_and_required_defaults():
     assert procedure.name == "Check pressure"
     assert procedure.steps == ["Read gauge"]
     assert procedure.id
+
+
+
+def test_generic_normalizer_preserves_original_and_maps_aliases():
+    from backend.knowledge.normalization import normalize_payload
+
+    result = normalize_payload({"component": "Pump", "behavior": "overheats", "extra_signal": 17}, kind="behavior")
+    assert result["name"] == "Pump"
+    assert result["description"] == "overheats"
+    assert result["extra_signal"] == 17
+    assert result["_original_payload"]["component"] == "Pump"
+    assert "generated_stable_id" in result["normalization_warnings"]
+
+
+def test_semantic_validation_returns_unresolved_reference_ledger():
+    from backend.knowledge.machine_model import MachineRelation, UniversalMachineModel
+    from backend.knowledge.validation import validate_machine_model_with_ledger
+
+    model = UniversalMachineModel(relations=[MachineRelation(
+        subject_id="missing-a", subject_name="A", relation_type="connects",
+        object_id="missing-b", object_name="B",
+    )])
+    issues, ledger = validate_machine_model_with_ledger(model)
+    assert any("missing subject entity" in issue for issue in issues)
+    assert any(item["fact_type"] == "relation" and "unresolved_entity_reference" in item["reason"] for item in ledger)
