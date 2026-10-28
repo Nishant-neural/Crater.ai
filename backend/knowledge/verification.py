@@ -53,7 +53,7 @@ KNOWN_RELATION_TYPES = {
 def verify_machine_model(model: UniversalMachineModel) -> list[VerificationIssue]:
     issues: list[VerificationIssue] = []
     entities = model.entity_map()
-    names: dict[str, str] = {}
+    by_name: dict[str, list[str]] = {}
     for e in model.entities:
         entity_type = e.entity_type.strip().lower()
         if entity_type and entity_type not in KNOWN_ENTITY_TYPES:
@@ -62,16 +62,28 @@ def verify_machine_model(model: UniversalMachineModel) -> list[VerificationIssue
                 f"unknown entity type '{e.entity_type}' for {e.name}; accepted as extensible vocabulary",
                 [e.id],
             ))
-        key = e.name.strip().lower()
-        if key in names and names[key] != e.id:
-            issues.append(VerificationIssue("topology", "error", f"duplicate entity identity: {e.name}", [names[key], e.id]))
-        names[key] = e.id
+        # Identity is the canonical id, not the display name. Repeated part
+        # names (two fans, two knobs, ...) are normal in parts lists, so a shared
+        # name is a review warning, never a reason to reject the whole model.
+        by_name.setdefault(e.name.strip().lower(), [])
+        if e.id not in by_name[e.name.strip().lower()]:
+            by_name[e.name.strip().lower()].append(e.id)
 
         bbox = _bbox(e.properties.get("bbox"))
         if bbox is not None:
             x, y, w, h = bbox
             if w <= 0 or h <= 0 or x < 0 or y < 0 or x + w > 1 or y + h > 1:
                 issues.append(VerificationIssue("spatial", "error", f"invalid/out-of-page bbox for {e.name}", [e.id]))
+
+    display = {e.name.strip().lower(): e.name for e in model.entities}
+    for key, ids in by_name.items():
+        if len(ids) > 1:
+            issues.append(VerificationIssue(
+                "topology", "warning",
+                f"{len(ids)} entities share the name '{display[key]}' (distinct ids); kept as separate parts. "
+                "Normal for repeated parts-list items; review if they are aliases of one component.",
+                ids,
+            ))
 
     adjacency: dict[str, set[str]] = {e.id: set() for e in model.entities}
     for r in model.relations:

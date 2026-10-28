@@ -510,6 +510,33 @@ def _integrate_part(key: str | None, part: dict[str, Any], label: str) -> list[t
             + _integrate_part(key, {**part, key: rows[mid:]}, label + "b"))
 
 
+def _merge_rows_by_identity(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse rows that share a canonical id WITHOUT losing provenance.
+
+    The old logic kept the first row and silently discarded later ones, so their
+    source_ids/evidence vanished (and showed up as 'missing' in the completeness
+    audit). Now source_ids and evidence are unioned and missing properties filled in.
+    """
+    merged: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for row in rows:
+        ident = row.get("id") or row.get("source_id") or json.dumps(row, sort_keys=True, ensure_ascii=False)
+        keep = merged.get(ident)
+        if keep is None:
+            merged[ident] = row
+            order.append(ident)
+            continue
+        for list_key in ("source_ids", "evidence"):
+            extra = row.get(list_key)
+            current = keep.get(list_key)
+            if isinstance(extra, list) and extra and isinstance(current, list):
+                current.extend(item for item in extra if item not in current)
+        if isinstance(keep.get("properties"), dict) and isinstance(row.get("properties"), dict):
+            for k, v in row["properties"].items():
+                keep["properties"].setdefault(k, v)
+    return [merged[i] for i in order]
+
+
 def integrate_revision_knowledge(session: Session, revision_id: str) -> IntegrationResult:
     context, counts, lineage = build_effective_revision_knowledge_context(session, revision_id)
     # Bound each completion's context/output size. Every source category is integrated in
@@ -543,11 +570,7 @@ def integrate_revision_knowledge(session: Session, revision_id: str) -> Integrat
                     continue
                 payload[key].append(normalize_payload(item, kind=key[:-1] if key.endswith("s") else key))
     for key, rows in payload.items():
-        seen, unique = set(), []
-        for row in rows:
-            ident = row.get("id") or row.get("source_id") or json.dumps(row, sort_keys=True, ensure_ascii=False)
-            if ident not in seen: seen.add(ident); unique.append(row)
-        payload[key] = unique
+        payload[key] = _merge_rows_by_identity(rows)
     audit = completeness_check(context, payload)
     for unresolved in payload.get("unresolved_facts", []):
         if isinstance(unresolved, dict):
