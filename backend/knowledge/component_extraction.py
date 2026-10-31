@@ -552,7 +552,16 @@ def _legacy_model(result: MachineKnowledgeExtractionResult) -> UniversalMachineM
 
 
 def _universal_model_from_result(result: MachineKnowledgeExtractionResult) -> UniversalMachineModel:
-    """Convert the provider-neutral extraction contract into typed primitives."""
+    """Convert the provider-neutral extraction contract into typed primitives.
+
+    Legacy components/relationships/procedures are merged in when they
+    are not already present as universal items. Previously, a chunk
+    with any universal fact (including a failure mode) took this path
+    and its legacy components were silently dropped from the universal
+    model -- in crater-2.db, pages 39/42/43 produced 7/6/64 legacy
+    components but 0 universal entities, while page 46 (no failure
+    modes) took the legacy path and its 12 components became entities.
+    """
     model = UniversalMachineModel()
     for item in result.entities:
         model.entities.append(MachineEntity.model_validate(item.model_dump()))
@@ -572,6 +581,37 @@ def _universal_model_from_result(result: MachineKnowledgeExtractionResult) -> Un
         model.constraints.append(MachineConstraint.model_validate(item))
     for item in result.failure_modes:
         model.failure_modes.append(MachineFailureMode.model_validate(item.model_dump()))
+    # Merge legacy items that universal extraction did not already cover.
+    legacy_model = _legacy_model(result)
+    existing_entity_names = {e.name.strip().lower() for e in model.entities}
+    for entity in legacy_model.entities:
+        if entity.name.strip().lower() not in existing_entity_names:
+            model.entities.append(entity)
+            existing_entity_names.add(entity.name.strip().lower())
+    existing_relations = {(r.subject_name.strip().lower(), r.relation_type, r.object_name.strip().lower()) for r in model.relations}
+    for relation in legacy_model.relations:
+        key = (relation.subject_name.strip().lower(), relation.relation_type, relation.object_name.strip().lower())
+        if key not in existing_relations:
+            model.relations.append(relation)
+            existing_relations.add(key)
+    existing_behaviors = {(b.subject_name.strip().lower(), b.description.strip().lower()) for b in model.behaviors}
+    for behavior in legacy_model.behaviors:
+        key = (behavior.subject_name.strip().lower(), behavior.description.strip().lower())
+        if key not in existing_behaviors:
+            model.behaviors.append(behavior)
+            existing_behaviors.add(key)
+    # Legacy procedures as typed procedures (in addition to the behavior
+    # form _legacy_model produces), so they survive in universal facts.
+    existing_procedures = {p.name.strip().lower() for p in model.procedures}
+    for proc in result.procedures:
+        if proc.name.strip().lower() not in existing_procedures:
+            from backend.knowledge.machine_model import MachineProcedure
+            model.procedures.append(MachineProcedure(
+                id=f"procedure:{proc.name.lower().replace(' ', '-')}",
+                name=proc.name, procedure_type=proc.procedure_type or "maintenance",
+                steps=list(proc.steps or []), entity_ids=[],
+            ))
+            existing_procedures.add(proc.name.strip().lower())
     model.evidence.extend(result.evidence)
     return model
 

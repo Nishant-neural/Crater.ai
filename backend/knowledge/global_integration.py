@@ -716,7 +716,7 @@ def _coverage_for_revision(session: Session, revision_id: str) -> dict[str, int]
     }
 
 
-def integrate_revision_knowledge(session: Session, revision_id: str) -> IntegrationResult:
+def _integrate_revision_knowledge_llm(session: Session, revision_id: str) -> IntegrationResult:
     context, counts, lineage = build_effective_revision_knowledge_context(session, revision_id)
     total_rows = sum(len(v) for v in context.values())
     output_keys = ("entities", "relations", "ports", "quantities", "states", "events", "behaviors", "constraints", "procedures", "failure_modes", "simulation_rules", "conflicts", "unresolved_facts")
@@ -816,6 +816,117 @@ def integrate_revision_knowledge(session: Session, revision_id: str) -> Integrat
     audit = completeness_check(context, payload)
     payload["completeness"] = audit
     payload["revision_lineage"] = lineage
+    try:
+        payload["coverage"] = _coverage_for_revision(session, revision_id)
+    except Exception:
+        payload["coverage"] = {}
+    model.unresolved_facts = [__import__("backend.knowledge.machine_model", fromlist=["MachineUnresolvedFact"]).MachineUnresolvedFact.model_validate(x) for x in payload.get("unresolved_facts", []) if isinstance(x, dict)]
+    if not model.entities and not model.relations and not model.procedures and not model.failure_modes and not model.unresolved_facts:
+        raise ValueError("Global integration returned no canonical machine knowledge")
+    counts = dict(counts)
+    counts["completeness_missing"] = audit["missing_count"]
+    counts["completeness_source_total"] = audit["source_total"]
+    counts.update({f"coverage_{k}": v for k, v in (payload.get("coverage") or {}).items()})
+    return IntegrationResult(model=model, payload=payload, source_counts=counts)
+
+
+def integrate_revision_knowledge(session: Session, revision_id: str, *, method: str = "code_first", progress_callback=None) -> IntegrationResult:
+    """Code-first integration (default), with LLM adjudication only.
+
+    The old LLM re-emission path is kept as
+    _integrate_revision_knowledge_llm and is used only when
+    method="llm" is passed explicitly. Code-first is the default
+    because it is O(rows) in code, preserves provenance exactly,
+    and cannot get stuck at 93% on a truncated 16,000-token output.
+    """
+    if method == "llm":
+        return _integrate_revision_knowledge_llm(session, revision_id)
+    from backend.knowledge.code_first_integration import (
+        adjudicate_clusters, apply_adjudication, build_code_first_payload,
+        code_first_completeness, source_fingerprint,
+    )
+
+    def _progress(percent: int, label: str) -> None:
+        if progress_callback is not None:
+            try:
+                progress_callback(percent, label)
+            except Exception:
+                pass
+
+    # Code-first context: concatenate lineage rows WITHOUT the
+    # _merge_contexts shadowing used by the old LLM path. That function
+    # keys universal entities by (name, type) and lets a later row
+    # shadow an earlier one -- for code-first that would silently drop
+    # a source row (e.g. "Pump P1" shadowed by "pump p1") instead of
+    # merging it with unioned source_ids. Grouping below does the merge.
+    lineage = [r.id for r in revision_lineage(session, revision_id)]
+    _contexts = [build_revision_knowledge_context(session, rev_id)[0] for rev_id in lineage]
+    context = {k: [] for k in _contexts[0]} if _contexts else {}
+    for _ctx in _contexts:
+        for _k, _v in _ctx.items():
+            context.setdefault(_k, []).extend(_v)
+    counts = {k: len(v) for k, v in context.items()}
+    fingerprint = source_fingerprint(context)
+    # Pre-LLM (and pre-code-build) idempotency: if the source rows have
+    # not changed since the last snapshot, return that snapshot. This
+    # is what makes the frontend's second /integrate call free, unlike
+    # the old path, which checked the fingerprint only after the LLM call.
+    try:
+        from backend.db.models import MachineKnowledgeModelSnapshot
+        latest = session.query(MachineKnowledgeModelSnapshot).filter_by(revision_id=revision_id).order_by(MachineKnowledgeModelSnapshot.version.desc()).first()
+    except Exception:
+        latest = None
+    if latest is not None and isinstance(latest.model, dict) and latest.model.get("source_fingerprint") == fingerprint:
+        _progress(98, "Canonical machine knowledge already integrated")
+        model = _model_from_payload(latest.model)
+        model.unresolved_facts = [__import__("backend.knowledge.machine_model", fromlist=["MachineUnresolvedFact"]).MachineUnresolvedFact.model_validate(x) for x in latest.model.get("unresolved_facts", []) if isinstance(x, dict)]
+        return IntegrationResult(model=model, payload=latest.model, source_counts=counts)
+    _progress(93, "Building canonical machine knowledge (code-first)")
+    state = build_code_first_payload(context)
+    payload = state["payload"]
+    clusters = state["clusters"]
+    if clusters:
+        _progress(95, f"Adjudicating {len(clusters)} ambiguous clusters")
+        decisions = adjudicate_clusters(clusters)
+        if decisions:
+            apply_adjudication(state, decisions)
+            payload = state["payload"]
+    _progress(97, "Verifying canonical model")
+    audit = code_first_completeness(context, payload)
+    model = _model_from_payload(payload)
+    from backend.knowledge.validation import quarantine_machine_model
+    kept_model, quarantined = quarantine_machine_model(model)
+    if quarantined:
+        kept_payload = {
+            "entities": [e.model_dump(mode="json") for e in kept_model.entities],
+            "relations": [r.model_dump(mode="json") for r in kept_model.relations],
+            "ports": [x.model_dump(mode="json") for x in kept_model.ports],
+            "quantities": [x.model_dump(mode="json") for x in kept_model.quantities],
+            "states": [x.model_dump(mode="json") for x in kept_model.states],
+            "events": [x.model_dump(mode="json") for x in kept_model.events],
+            "behaviors": [x.model_dump(mode="json") for x in kept_model.behaviors],
+            "constraints": [x.model_dump(mode="json") for x in kept_model.constraints],
+            "procedures": [x.model_dump(mode="json") for x in kept_model.procedures],
+            "failure_modes": [x.model_dump(mode="json") for x in kept_model.failure_modes],
+            "simulation_rules": kept_model.simulation_rules,
+            "conflicts": [x.model_dump(mode="json") for x in kept_model.conflicts],
+            "unresolved_facts": list(payload.get("unresolved_facts", [])),
+        }
+        for rec in quarantined:
+            kept_payload["unresolved_facts"].append(rec)
+        payload = kept_payload
+        model = kept_model
+        audit = code_first_completeness(context, payload)
+    for unresolved in payload.get("unresolved_facts", []):
+        if isinstance(unresolved, dict):
+            persist_unresolved_fact(session, revision_id=revision_id,
+                source_id=str(unresolved.get("source_id") or unresolved.get("id") or ""),
+                fact_type=str(unresolved.get("fact_type") or "global_integration"),
+                payload=unresolved.get("payload", unresolved),
+                reason=str(unresolved.get("reason") or "unresolved_by_global_integration"))
+    payload["completeness"] = audit
+    payload["revision_lineage"] = lineage
+    payload["source_fingerprint"] = fingerprint
     try:
         payload["coverage"] = _coverage_for_revision(session, revision_id)
     except Exception:

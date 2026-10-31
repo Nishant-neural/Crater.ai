@@ -360,7 +360,7 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
         has_knowledge = any(bool(rows) for rows in context.values())
         if has_knowledge:
             progress(93,"Building canonical machine knowledge")
-            integration = integrate_revision_knowledge(session, revision_id)
+            integration = integrate_revision_knowledge(session, revision_id, progress_callback=progress)
             issues = verify_machine_model(integration.model)
             errors = [i for i in issues if i.severity == "error"]
             warnings = [i.__dict__ for i in issues if i.severity != "error"]
