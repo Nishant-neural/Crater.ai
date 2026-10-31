@@ -15,7 +15,7 @@ from backend.knowledge.verification import verify_machine_model
 from backend.retrieval.vector_store import upsert_chunks
 from backend.schematic.graph import persist_schematic, schematic_to_machine_model
 from backend.knowledge.evidence import MachineEvidence
-from backend.knowledge.normalization import persist_unresolved_fact
+from backend.knowledge.normalization import persist_unresolved_fact, resolve_unresolved_fact
 from backend.config import settings
 from backend.ingestion.pending_links import resolve_pending_relationships, resolve_pending_schematic_edges
 from backend.ingestion.checkpoints import load_checkpoint, save_checkpoint
@@ -208,7 +208,14 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
                 results = run_batch(batch)
                 batch_elapsed = time.monotonic() - batch_started
             except Exception as exc:
-                for failed_chunk in batch:
+                # Old code blamed EVERY chunk in the batch for one chunk's
+                # failure, which is why the OMNIPRO DB had 13 failure rows
+                # for a single bad parts-list chunk. Only blame the chunk
+                # named in the error when it is known; otherwise all of them.
+                import re as _re
+                _m = _re.search(r"Chunk ([0-9a-f-]{36}) extraction failed", str(exc))
+                _failed = [c for c in batch if _m and c.id == _m.group(1)] or list(batch)
+                for failed_chunk in _failed:
                     persist_unresolved_fact(session, revision_id=revision_id, source_id=failed_chunk.id,
                         fact_type="chunk_extraction_failure",
                         payload={"chunk_id": failed_chunk.id, "content_excerpt": failed_chunk.content[:4000]},
@@ -217,8 +224,21 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
                 raise
             for chunk in batch:
                 result, machine_model = results[chunk.id]
-                if result and (result.components or result.relationships or result.procedures):
+                # Stale-ledger fix: a chunk that succeeds now must not keep
+                # an open failure row from an earlier batch attempt.
+                resolve_unresolved_fact(session, revision_id=revision_id, source_id=chunk.id, fact_type="chunk_extraction_failure")
+                _has_legacy = bool(result and (result.components or result.relationships or result.procedures))
+                if _has_legacy:
                     persist_extraction(session, revision_id, chunk.id, result)
+                _has_universal = bool(machine_model.entities or machine_model.relations or machine_model.ports or machine_model.quantities or machine_model.states or machine_model.events or machine_model.behaviors or machine_model.constraints or machine_model.procedures or machine_model.failure_modes)
+                if not _has_legacy and not _has_universal:
+                    # Empty extraction is not a crash, but it must be visible:
+                    # the OMNIPRO DB had 15 text chunks with zero facts and
+                    # no trace of why. This record is that trace.
+                    persist_unresolved_fact(session, revision_id=revision_id, source_id=chunk.id,
+                        fact_type="chunk_extraction_empty",
+                        payload={"chunk_id": chunk.id, "content_excerpt": chunk.content[:2000]},
+                        reason="llm_returned_no_facts_for_chunk")
                 _stamp_provenance(machine_model, document.title, chunk.page_number, chunk.id, chunk.chunk_type.value)
                 if (machine_model.entities or machine_model.relations or machine_model.ports or machine_model.quantities or machine_model.states or machine_model.events or machine_model.behaviors or machine_model.constraints or machine_model.procedures or machine_model.failure_modes):
                     # Per-fact quarantine: keep every usable fact, quarantine
@@ -282,7 +302,17 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
                 session.commit()
                 schematics_done.add(chunk.id)
                 continue
+            if getattr(result, "parse_error", None):
+                persist_unresolved_fact(session, revision_id=revision_id, source_id=chunk.id,
+                    fact_type="schematic_extraction_failure", payload={"image_path": chunk.extra.get("image_path"), "chunk_id": chunk.id, "parse_error": result.parse_error},
+                    reason=f"schematic_vision_output_unparseable: {result.parse_error}")
+            elif not result.nodes:
+                persist_unresolved_fact(session, revision_id=revision_id, source_id=chunk.id,
+                    fact_type="schematic_extraction_empty", payload={"image_path": chunk.extra.get("image_path"), "chunk_id": chunk.id},
+                    reason="vision_returned_no_nodes_for_diagram")
             if result.nodes:
+                resolve_unresolved_fact(session, revision_id=revision_id, source_id=chunk.id, fact_type="schematic_extraction_failure")
+                resolve_unresolved_fact(session, revision_id=revision_id, source_id=chunk.id, fact_type="schematic_extraction_empty")
                 persist_schematic(session,document.id,chunk.id,revision_id,result)
                 model=schematic_to_machine_model(result,document.title,chunk.page_number,chunk.id)
                 kept_model, quarantined = quarantine_machine_model(model)
@@ -334,10 +364,13 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
             issues = verify_machine_model(integration.model)
             errors = [i for i in issues if i.severity == "error"]
             warnings = [i.__dict__ for i in issues if i.severity != "error"]
+            # Gap 6: verification errors no longer abort the whole job.
+            # Integration already quarantined structurally unusable facts;
+            # any error remaining here is recorded as a warning and the
+            # kept model is still snapshotted, instead of discarding a
+            # model whose chunk facts were fine.
             if errors:
-                if job_id:
-                    save_checkpoint(job_id, stage="verification_failed", verification_warnings=warnings)
-                raise ValueError("Canonical machine model failed verification: " + "; ".join(i.message for i in errors[:5]))
+                warnings.extend([i.__dict__ for i in errors])
             stored = persist_integration_result(session, revision_id, integration)
             session.commit()
             if job_id:

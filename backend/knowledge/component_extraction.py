@@ -52,6 +52,149 @@ class ExtractionError(RuntimeError):
         self.rate_limited = rate_limited
 
 
+# --- Lenient JSON parsing for LLM extraction output ---------------------
+# "Expecting property name enclosed in double quotes" is the JSON parser
+# complaining about a property that is not a double-quoted string. In LLM
+# output that almost always means one of:
+#   * a trailing comma:  {"a": 1,}
+#   * single-quoted keys/strings:  {'a': 1}
+#   * an unquoted key:  {a: 1}
+#   * a // or /* */ comment inside the JSON
+# The old code only stripped code fences and brace-hunted, then gave up and
+# failed the whole ingestion job for that chunk. The parser below tries, in
+# order: strict JSON, trailing-comma repair, Python-literal parsing
+# (single quotes + trailing commas), regex repair for unquoted keys, and
+# finally ONE LLM repair call that returns only corrected JSON. Only if all
+# of those fail does it raise, and the pipeline then records that one chunk
+# as failed instead of silently losing it.
+import ast as _ast
+import re as _json_re
+
+
+def _strip_fence(text: str) -> str:
+    text = text.strip()
+    if text.startswith("```"):
+        text = _json_re.sub(r"^```(?:json)?\s*", "", text)
+        text = _json_re.sub(r"\s*```$", "", text)
+    return text.strip()
+
+
+def _brace_hunt(text: str) -> str:
+    start, end = text.find("{"), text.rfind("}")
+    if start >= 0 and end > start:
+        return text[start:end + 1]
+    return text
+
+
+def _strict_json(text: str):
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        return None
+
+
+def _outside_strings_replace(text: str, mapping: dict[str, str]) -> str:
+    """Replace whole words only when they are outside quoted strings."""
+    out: list[str] = []
+    i = 0
+    quote = None
+    while i < len(text):
+        ch = text[i]
+        if quote is not None:
+            out.append(ch)
+            if ch == "\\" and i + 1 < len(text):
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in ("\"", "'"):
+            quote = ch
+            out.append(ch)
+            i += 1
+            continue
+        matched = False
+        for src, dst in mapping.items():
+            if text.startswith(src, i):
+                before = text[i - 1] if i else " "
+                after = text[i + len(src)] if i + len(src) < len(text) else " "
+                if not (before.isalnum() or before == "_") and not (after.isalnum() or after == "_"):
+                    out.append(dst)
+                    i += len(src)
+                    matched = True
+                    break
+        if not matched:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
+def _literal_json(text: str):
+    """Parse single-quoted / trailing-comma output via ast.literal_eval."""
+    converted = _outside_strings_replace(text, {"true": "True", "false": "False", "null": "None"})
+    try:
+        parsed = _ast.literal_eval(converted)
+    except Exception:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _regex_repair_json(text: str):
+    """Quote unquoted keys and drop comments, then strict-parse."""
+    # Drop // comments outside strings (best-effort; strict parse validates).
+    lines = []
+    for line in text.splitlines():
+        if "//" in line and not line.strip().startswith("http"):
+            # Only strip a comment that is not inside a quoted string.
+            idx = line.find("//")
+            before = line[:idx]
+            if before.count('"') % 2 == 0 and before.count("'") % 2 == 0:
+                line = before
+        lines.append(line)
+    repaired = "\n".join(lines)
+    repaired = _json_re.sub(r"([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:", r'\1"\2":', repaired)
+    repaired = _json_re.sub(r",\s*([}\]])", r"\1", repaired)
+    return _strict_json(repaired)
+
+
+def _parse_lenient_json(raw: str | None, *, allow_repair: bool = True) -> dict:
+    if not raw:
+        raise ExtractionError("LLM returned no extraction output")
+    text = _strip_fence(raw)
+    candidates = [text, _brace_hunt(text)]
+    for cand in candidates:
+        for attempt in (_strict_json, lambda c: _strict_json(_json_re.sub(r",\s*([}\]])", r"\1", c)), _literal_json, _regex_repair_json):
+            parsed = attempt(cand)
+            if parsed is not None:
+                return parsed
+    if allow_repair:
+        # One repair call: ask the model to fix its own JSON, not to
+        # re-extract. This recovers broken strings / unescaped quotes that
+        # deterministic repair cannot safely fix.
+        try:
+            repaired_raw = gateway.complete(
+                "extraction",
+                messages=[{"role": "user", "content": (
+                    "The following is a structured extraction that is not valid JSON. "
+                    "Return ONLY the corrected valid JSON in exactly the same shape, "
+                    "without adding, removing, or inventing any facts. If a string is "
+                    "broken, close it with the content that was present.\n\n" + raw
+                )}],
+                max_tokens=8000,
+            )
+        except Exception:
+            repaired_raw = None
+        if repaired_raw:
+            try:
+                return _parse_lenient_json(repaired_raw, allow_repair=False)
+            except ExtractionError:
+                pass
+    raise ExtractionError("LLM returned invalid JSON: Expecting property name enclosed in double quotes (unrecoverable after lenient parsing and one repair retry)")
+
+
 _EXTRACTION_PROMPT = """You are extracting structured technical knowledge from a technical excerpt of an \
 industrial equipment manual. The excerpt may span multiple pages. Only extract what is explicitly stated — do not infer or \
 invent components, connections, or procedures that aren't clearly described in the text.
@@ -94,7 +237,7 @@ def _extract_result(content: str) -> MachineKnowledgeExtractionResult:
     try:
         raw = gateway.complete("extraction",
             messages=[{"role": "user", "content": _EXTRACTION_PROMPT.format(content=content)}],
-            max_tokens=4000,
+            max_tokens=8000,
         )
     except Exception as exc:
         message = str(exc)
@@ -105,23 +248,7 @@ def _extract_result(content: str) -> MachineKnowledgeExtractionResult:
             retryable=True,
             rate_limited=rate_limited,
         ) from exc
-    if not raw:
-        raise ExtractionError("LLM returned no extraction output")
-    text = raw.strip()
-    if text.startswith("```"):
-        import re
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
-        start, end = text.find("{"), text.rfind("}")
-        if start < 0 or end <= start:
-            raise ExtractionError("LLM returned invalid JSON")
-        try:
-            payload = json.loads(text[start:end + 1])
-        except json.JSONDecodeError as exc:
-            raise ExtractionError(f"LLM returned invalid JSON: {exc.msg}") from exc
+    payload = _parse_lenient_json(raw)
     try:
         if not isinstance(payload, dict):
             raise ValueError("extraction root must be an object")
@@ -163,23 +290,7 @@ __EXCERPTS__
 
 
 def _parse_json_response(raw: str) -> dict:
-    if not raw:
-        raise ExtractionError("LLM returned no extraction output")
-    text = raw.strip()
-    if text.startswith("```"):
-        import re
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        start, end = text.find("{"), text.rfind("}")
-        if start < 0 or end <= start:
-            raise ExtractionError("LLM returned invalid JSON")
-        try:
-            return json.loads(text[start:end + 1])
-        except json.JSONDecodeError as exc:
-            raise ExtractionError(f"LLM returned invalid JSON: {exc.msg}") from exc
+    return _parse_lenient_json(raw)
 
 
 def extract_chunk_knowledge_batch(chunks: list[tuple[str, str]]) -> dict[str, tuple[ExtractionResult, UniversalMachineModel]]:
@@ -206,7 +317,7 @@ def extract_chunk_knowledge_batch(chunks: list[tuple[str, str]]) -> dict[str, tu
         raw = gateway.complete(
             "extraction",
             messages=[{"role": "user", "content": _BATCH_EXTRACTION_PROMPT.replace("__EXCERPTS__", excerpts)}],
-            max_tokens=max(4000, min(16000, len(chunks) * 1000)),
+            max_tokens=max(8000, min(16000, len(chunks) * 1000)),
         )
     except Exception as exc:
         message = str(exc)

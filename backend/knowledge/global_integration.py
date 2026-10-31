@@ -447,6 +447,19 @@ def build_effective_revision_knowledge_context(session: Session, revision_id: st
     return merged, counts, [r.id for r in lineage]
 
 
+def _snapshot_fingerprint(model: dict[str, Any]) -> tuple:
+    """Model-only fingerprint, excluding completeness/coverage/version metadata."""
+    def _names(rows):
+        return tuple(sorted((str(r.get("id")), str(r.get("name"))) for r in rows if isinstance(r, dict)))
+    return (
+        _names(model.get("entities", [])),
+        tuple(sorted((str(r.get("subject_id")), str(r.get("relation_type")), str(r.get("object_id"))) for r in model.get("relations", []) if isinstance(r, dict))),
+        _names(model.get("failure_modes", [])),
+        _names(model.get("procedures", [])),
+        tuple(sorted(str(r.get("id")) for r in model.get("quantities", []) if isinstance(r, dict))),
+    )
+
+
 def persist_integration_result(session: Session, revision_id: str, result: IntegrationResult) -> dict[str, Any]:
     """Persist a canonical integration result and map source rows to canonical ids."""
     from backend.db.models import MachineKnowledgeModelSnapshot
@@ -467,6 +480,11 @@ def persist_integration_result(session: Session, revision_id: str, result: Integ
         if row.id in source_maps["facts"]: row.canonical_id = source_maps["facts"][row.id]
 
     latest = session.query(MachineKnowledgeModelSnapshot).filter_by(revision_id=revision_id).order_by(MachineKnowledgeModelSnapshot.version.desc()).first()
+    if latest is not None and _snapshot_fingerprint(latest.model) == _snapshot_fingerprint(raw):
+        # Re-running integration on unchanged source data must not inflate
+        # the snapshot version or duplicate its model (OMNIPRO v1->v2 grew
+        # 32->36 entities with no new source data).
+        return {"revision_id": revision_id, "version": latest.version, "source_counts": result.source_counts, "completeness": raw.get("completeness", {}), "revision_lineage": raw.get("revision_lineage", [revision_id]), "model": raw, "unchanged": True}
     snapshot = MachineKnowledgeModelSnapshot(
         revision_id=revision_id,
         version=(latest.version + 1 if latest else 1),
@@ -495,7 +513,20 @@ def _integrate_part(key: str | None, part: dict[str, Any], label: str) -> list[t
         return [(label, parsed)]
     rows = part.get(key) if key else None
     if not isinstance(rows, list) or not rows:
-        raise ValueError(f"Integration batch {label} returned invalid JSON and cannot be split further")
+        if key is None:
+            # Single full-context batch that failed to parse: split the
+            # largest category and retry, rather than failing the whole job.
+            split_key = None
+            for k, v in part.items():
+                if isinstance(v, list) and len(v) > 1:
+                    split_key = k
+                    break
+            if split_key is None:
+                raise ValueError(f"Integration batch {label} returned invalid JSON and cannot be split further")
+            rows = part[split_key]
+            key = split_key
+        else:
+            raise ValueError(f"Integration batch {label} returned invalid JSON and cannot be split further")
     if len(rows) == 1:
         row = rows[0]
         sid = str(row.get("id") or row.get("source_id") or "") if isinstance(row, dict) else ""
@@ -510,12 +541,39 @@ def _integrate_part(key: str | None, part: dict[str, Any], label: str) -> list[t
             + _integrate_part(key, {**part, key: rows[mid:]}, label + "b"))
 
 
-def _merge_rows_by_identity(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _norm_text(value: object) -> str:
+    import re as _re
+    return _re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
+
+
+def _props_conflict(a: dict, b: dict) -> bool:
+    """True if a and b claim different values for the same property key.
+
+    This is what protects two real parts with the same name (two Fans with
+    different part numbers) from being merged, while still merging a welder
+    that the LLM emitted twice with identical or subset properties.
+    """
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        return False
+    for k, v in a.items():
+        if k in b and b[k] not in (None, "", {}) and v not in (None, "", {}) and v != b[k]:
+            return True
+    return False
+
+
+def _merge_rows_by_identity(rows: list[dict[str, Any]], kind: str = "") -> list[dict[str, Any]]:
     """Collapse rows that share a canonical id WITHOUT losing provenance.
 
     The old logic kept the first row and silently discarded later ones, so their
     source_ids/evidence vanished (and showed up as 'missing' in the completeness
     audit). Now source_ids and evidence are unioned and missing properties filled in.
+
+    Second pass, name-level, only when it cannot merge two distinct parts:
+    two rows with the same normalized name and type, and no conflicting
+    property values, are the same fact emitted twice (the OMNIPRO snapshot
+    had Mig/Tig/Stick Welder twice each, and 5 failure modes twice). Two Fans
+    with different part numbers have conflicting properties and are NOT merged.
+    Relations are merged on identical subject/object/type.
     """
     merged: dict[str, dict[str, Any]] = {}
     order: list[str] = []
@@ -534,26 +592,154 @@ def _merge_rows_by_identity(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if isinstance(keep.get("properties"), dict) and isinstance(row.get("properties"), dict):
             for k, v in row["properties"].items():
                 keep["properties"].setdefault(k, v)
-    return [merged[i] for i in order]
+    kept = [merged[i] for i in order]
+
+    def _name_key(row: dict) -> tuple:
+        if kind == "relations":
+            return (_norm_text(row.get("subject_id")), _norm_text(row.get("relation_type")), _norm_text(row.get("object_id")))
+        if kind == "failure_modes":
+            return (_norm_text(row.get("name")),)
+        return (_norm_text(row.get("name")), _norm_text(row.get("entity_type")))
+
+    out: list[dict[str, Any]] = []
+    for row in kept:
+        if not row.get("name") and kind != "relations":
+            out.append(row)
+            continue
+        target = None
+        for cand in out:
+            if _name_key(cand) != _name_key(row):
+                continue
+            if kind == "relations":
+                target = cand
+                break
+            # Name+type match: merge only if properties do not conflict, and
+            # for failure modes, causes do not conflict either.
+            if _props_conflict(cand.get("properties") or {}, row.get("properties") or {}):
+                continue
+            if kind == "failure_modes":
+                ca, cb = set(cand.get("possible_causes") or []), set(row.get("possible_causes") or [])
+                if ca and cb and ca != cb and not (ca <= cb or cb <= ca):
+                    continue
+            target = cand
+            break
+        if target is None:
+            out.append(row)
+            continue
+        for list_key in ("source_ids", "evidence", "entity_ids"):
+            extra = row.get(list_key)
+            current = target.get(list_key)
+            if isinstance(extra, list) and extra:
+                if isinstance(current, list):
+                    current.extend(item for item in extra if item not in current)
+                else:
+                    target[list_key] = list(extra)
+        if isinstance(target.get("properties"), dict) and isinstance(row.get("properties"), dict):
+            for k, v in row["properties"].items():
+                target["properties"].setdefault(k, v)
+        # Keep the longer description / name casing from the first row; do not
+        # overwrite a populated field with an empty one.
+        for k, v in row.items():
+            if target.get(k) in (None, "", []) and v not in (None, "", []):
+                target[k] = v
+    return out
+
+
+def _rewrite_references(payload: dict[str, Any], id_map: dict[str, str]) -> None:
+    """Rewrite relations/ports/quantities/etc. that point at a merged-away id.
+
+    Without this, merging two entity rows leaves relations pointing at the
+    dropped id, which verification then (correctly) flags as missing.
+    """
+    if not id_map:
+        return
+    for rel in payload.get("relations", []):
+        if rel.get("subject_id") in id_map:
+            rel["subject_id"] = id_map[rel["subject_id"]]
+        if rel.get("object_id") in id_map:
+            rel["object_id"] = id_map[rel["object_id"]]
+    for key in ("ports", "quantities", "states", "events"):
+        for item in payload.get(key, []):
+            if item.get("entity_id") in id_map:
+                item["entity_id"] = id_map[item["entity_id"]]
+    for item in payload.get("behaviors", []):
+        if item.get("subject_id") in id_map:
+            item["subject_id"] = id_map[item["subject_id"]]
+    for item in payload.get("procedures", []) + payload.get("failure_modes", []):
+        ids = item.get("entity_ids") or []
+        item["entity_ids"] = [id_map.get(x, x) for x in ids]
+
+
+def _coverage_for_revision(session: Session, revision_id: str) -> dict[str, int]:
+    """Honest coverage, separate from the source-record completeness audit.
+
+    The OMNIPRO snapshot claimed 76/76 complete while 56 chunks had produced
+    no facts and all 34 diagrams had no nodes. Completeness counts DB rows;
+    coverage counts chunks/diagrams, so a thin model cannot hide behind it.
+    """
+    from backend.db.models import Chunk, Document, UnresolvedFact
+    docs = session.query(Document).filter(Document.revision_id == revision_id).all()
+    doc_ids = [d.id for d in docs]
+    chunks = session.query(Chunk).filter(Chunk.document_id.in_(doc_ids or [""])).all()
+    chunk_ids = [c.id for c in chunks]
+    fact_chunks: set[str] = set()
+    for model_cls, field in (
+        (MachineKnowledgeEntity, "source_chunk_id"),
+        (MachineKnowledgeFact, "source_chunk_id"),
+        (MachineKnowledgeBehavior, "source_chunk_id"),
+        (Component, "source_chunk_id"),
+        (Procedure, "source_chunk_id"),
+        (FailureMode, "source_chunk_id"),
+    ):
+        try:
+            rows = session.query(model_cls).filter_by(revision_id=revision_id).all()
+        except Exception:
+            rows = []
+        for r in rows:
+            if getattr(r, field, None):
+                fact_chunks.add(getattr(r, field))
+    diagram_chunks = [c for c in chunks if c.chunk_type.value == "diagram"]
+    nodes = session.query(SchematicNode).filter(SchematicNode.chunk_id.in_(chunk_ids or [""])).all()
+    node_chunks = {n.chunk_id for n in nodes}
+    unresolved_open = session.query(UnresolvedFact).filter(
+        UnresolvedFact.revision_id == revision_id, UnresolvedFact.status == "open"
+    ).count()
+    return {
+        "total_chunks": len(chunks),
+        "diagram_chunks": len(diagram_chunks),
+        "text_table_chunks": len(chunks) - len(diagram_chunks),
+        "chunks_with_facts": len(fact_chunks & set(chunk_ids)),
+        "chunks_empty": len(chunks) - len(fact_chunks & set(chunk_ids)),
+        "diagrams_with_nodes": len(node_chunks & {c.id for c in diagram_chunks}),
+        "diagrams_empty": len(diagram_chunks) - len(node_chunks & {c.id for c in diagram_chunks}),
+        "unresolved_open": unresolved_open,
+    }
 
 
 def integrate_revision_knowledge(session: Session, revision_id: str) -> IntegrationResult:
     context, counts, lineage = build_effective_revision_knowledge_context(session, revision_id)
-    # Bound each completion's context/output size. Every source category is integrated in
-    # small batches, then merged and audited against the complete persisted-source ledger.
-    category_keys = list(context)
-    batches = []
-    for key in category_keys:
-        rows = context[key]
-        for start in range(0, len(rows), _INTEGRATION_ROWS_PER_BATCH):
-            part = {k: [] for k in category_keys}
-            part[key] = rows[start:start + _INTEGRATION_ROWS_PER_BATCH]
-            if key != "universal_entities":
-                part["universal_entities"] = context.get("universal_entities", [])[:150]
-            batches.append((key, part))
-    if not batches: batches = [(None, context)]
+    total_rows = sum(len(v) for v in context.values())
     output_keys = ("entities", "relations", "ports", "quantities", "states", "events", "behaviors", "constraints", "procedures", "failure_modes", "simulation_rules", "conflicts", "unresolved_facts")
     payload = {k: [] for k in output_keys}
+    # Code-first, LLM-last: for a normal manual (<=250 source rows, OMNIPRO
+    # had 76), one call sees entities AND relations AND facts together, so
+    # the LLM cannot create the same welder in two batches with two ids.
+    # Only larger manuals fall back to category batches, and even then
+    # non-entity batches see the FULL entity list, not the first 150.
+    if total_rows <= 250:
+        batches = [(None, context)]
+    else:
+        category_keys = list(context)
+        batches = []
+        for key in category_keys:
+            rows = context[key]
+            for start in range(0, len(rows), _INTEGRATION_ROWS_PER_BATCH):
+                part = {k: [] for k in category_keys}
+                part[key] = rows[start:start + _INTEGRATION_ROWS_PER_BATCH]
+                part["universal_entities"] = context.get("universal_entities", [])
+                batches.append((key, part))
+    if not batches:
+        batches = [(None, context)]
     parsed_parts: list[tuple[str, dict[str, Any]]] = []
     for index, (batch_key, batch) in enumerate(batches):
         parsed_parts.extend(_integrate_part(batch_key, batch, str(index + 1)))
@@ -569,9 +755,57 @@ def integrate_revision_knowledge(session: Session, revision_id: str) -> Integrat
                     persist_unresolved_fact(session, revision_id=revision_id, source_id=f"integration:{index}:{key}:{row_index}", fact_type=f"integration_{key}", payload={"value": item}, reason="integration_item_not_an_object")
                     continue
                 payload[key].append(normalize_payload(item, kind=key[:-1] if key.endswith("s") else key))
-    for key, rows in payload.items():
-        payload[key] = _merge_rows_by_identity(rows)
+    # Name-level merge + reference rewriting, in code, before any audit.
+    # Build the dropped-id map from the pre-merge entity list.
+    pre_entities = list(payload.get("entities", []))
+    pre_ids = [r.get("id") for r in pre_entities if r.get("id")]
+    for key, rows in list(payload.items()):
+        payload[key] = _merge_rows_by_identity(rows, kind=key)
+    post_entities = payload.get("entities", [])
+    post_ids = {r.get("id") for r in post_entities if r.get("id")}
+    # Dropped entity id -> kept entity id, only when the kept row is the
+    # unique same-name, non-conflicting row for that dropped entity. This
+    # is what lets relations survive a name-level merge instead of pointing
+    # at a dropped id and then being quarantined as missing.
+    id_map: dict[str, str] = {}
+    for dropped in pre_entities:
+        did = dropped.get("id")
+        if not did or did in post_ids:
+            continue
+        cands = [r for r in post_entities
+                 if _norm_text(r.get("name")) == _norm_text(dropped.get("name"))
+                 and _norm_text(r.get("entity_type")) == _norm_text(dropped.get("entity_type"))
+                 and not _props_conflict(r.get("properties") or {}, dropped.get("properties") or {})]
+        if len(cands) == 1:
+            id_map[did] = cands[0]["id"]
+    _rewrite_references(payload, id_map)
     audit = completeness_check(context, payload)
+    model = _model_from_payload(payload)
+    # Gap 6 at integration level: per-fact quarantine, not job abort.
+    # Invalid bbox, missing-entity relations, duplicate ids are quarantined
+    # here; the kept model is what gets snapshotted.
+    from backend.knowledge.validation import quarantine_machine_model
+    kept_model, quarantined = quarantine_machine_model(model)
+    if quarantined:
+        kept_payload = {
+            "entities": [e.model_dump(mode="json") for e in kept_model.entities],
+            "relations": [r.model_dump(mode="json") for r in kept_model.relations],
+            "ports": [x.model_dump(mode="json") for x in kept_model.ports],
+            "quantities": [x.model_dump(mode="json") for x in kept_model.quantities],
+            "states": [x.model_dump(mode="json") for x in kept_model.states],
+            "events": [x.model_dump(mode="json") for x in kept_model.events],
+            "behaviors": [x.model_dump(mode="json") for x in kept_model.behaviors],
+            "constraints": [x.model_dump(mode="json") for x in kept_model.constraints],
+            "procedures": [x.model_dump(mode="json") for x in kept_model.procedures],
+            "failure_modes": [x.model_dump(mode="json") for x in kept_model.failure_modes],
+            "simulation_rules": kept_model.simulation_rules,
+            "conflicts": [x.model_dump(mode="json") for x in kept_model.conflicts],
+            "unresolved_facts": list(payload.get("unresolved_facts", [])),
+        }
+        for rec in quarantined:
+            kept_payload["unresolved_facts"].append(rec)
+        payload = kept_payload
+        model = kept_model
     for unresolved in payload.get("unresolved_facts", []):
         if isinstance(unresolved, dict):
             persist_unresolved_fact(session, revision_id=revision_id,
@@ -579,13 +813,18 @@ def integrate_revision_knowledge(session: Session, revision_id: str) -> Integrat
                 fact_type=str(unresolved.get("fact_type") or "global_integration"),
                 payload=unresolved.get("payload", unresolved),
                 reason=str(unresolved.get("reason") or "unresolved_by_global_integration"))
+    audit = completeness_check(context, payload)
     payload["completeness"] = audit
     payload["revision_lineage"] = lineage
-    model = _model_from_payload(payload)
-    model.unresolved_facts = [__import__("backend.knowledge.machine_model", fromlist=["MachineUnresolvedFact"]).MachineUnresolvedFact.model_validate(x) for x in payload.get("unresolved_facts", [])]
+    try:
+        payload["coverage"] = _coverage_for_revision(session, revision_id)
+    except Exception:
+        payload["coverage"] = {}
+    model.unresolved_facts = [__import__("backend.knowledge.machine_model", fromlist=["MachineUnresolvedFact"]).MachineUnresolvedFact.model_validate(x) for x in payload.get("unresolved_facts", []) if isinstance(x, dict)]
     if not model.entities and not model.relations and not model.procedures and not model.failure_modes and not model.unresolved_facts:
         raise ValueError("Global integration returned no canonical machine knowledge")
     counts = dict(counts)
     counts["completeness_missing"] = audit["missing_count"]
     counts["completeness_source_total"] = audit["source_total"]
+    counts.update({f"coverage_{k}": v for k, v in (payload.get("coverage") or {}).items()})
     return IntegrationResult(model=model, payload=payload, source_counts=counts)
