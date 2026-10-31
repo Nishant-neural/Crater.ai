@@ -90,6 +90,155 @@ def _evidence_issues(label: str, evidence) -> list[str]:
 validate_model = validate_machine_model
 
 
+def quarantine_machine_model(model: UniversalMachineModel) -> tuple[UniversalMachineModel, list[dict]]:
+    """Per-fact quarantine: keep every usable fact, quarantine only the unusable.
+
+    This replaces the old all-or-nothing pattern in the pipeline, where one
+    bad relation or duplicate name in a chunk caused the *whole* chunk model
+    to be stored as a single unresolved blob and none of its good facts to
+    be persisted.
+
+    Quarantined (removed from the kept model, preserved as a ledger record):
+    - duplicate entity ids (second occurrence)
+    - relations whose subject or object entity is not in the kept set
+    - ports / quantities / states / events whose entity is not in the kept set
+    - a second, conflicting value for the same (entity, state name)
+    - facts with no id / name at all
+
+    Deliberately NOT quarantined, because they are still facts:
+    - duplicate entity *names* with different ids (two fans, two knobs)
+    - low confidence (confidence is a ranking signal, not validity)
+    - behaviors / procedures / failure modes whose subject entity is not
+      yet known -- the description itself is a fact, independent of the
+      chunk it came from. Their missing link is recorded in the ledger
+      for the pending-link pass, but the fact is kept.
+    - entities with an invalid bbox -- the bbox is stripped, the entity kept.
+
+    No deterministic entity register is used here, and no fact is guessed
+    into a canonical identity. Anything quarantined stays in the unresolved
+    ledger with its original payload, so a later pass (or a human) can
+    resurrect it instead of it vanishing.
+    """
+    from backend.knowledge.machine_model import UniversalMachineModel as _UMM
+
+    kept_entities = []
+    seen_ids: set[str] = set()
+    quarantined: list[dict] = []
+
+    def _quarantine(kind: str, item, reason: str):
+        payload = item.model_dump(mode="json") if hasattr(item, "model_dump") else dict(item)
+        quarantined.append(unresolved_record(
+            payload,
+            source_id=payload.get("id") or (payload.get("source_ids") or [None])[0],
+            fact_type=kind, reason=reason,
+        ))
+
+    for entity in model.entities:
+        if not entity.id:
+            _quarantine("entity", entity, "missing_entity_id")
+            continue
+        if entity.id in seen_ids:
+            _quarantine("entity", entity, "duplicate_entity_id")
+            continue
+        seen_ids.add(entity.id)
+        # Invalid bbox: strip it, keep the entity. A bad coordinate must
+        # not kill a real component.
+        props = dict(entity.properties or {})
+        bbox = props.get("bbox")
+        if isinstance(bbox, dict):
+            try:
+                x, y, w, h = (float(bbox[k]) for k in ("x", "y", "w", "h"))
+                if not (w > 0 and h > 0 and x >= 0 and y >= 0 and x + w <= 1 and y + h <= 1):
+                    raise ValueError("out of range")
+            except Exception:
+                props.pop("bbox", None)
+                entity.properties = props
+                quarantined.append(unresolved_record(
+                    {"entity_id": entity.id, "bbox": bbox},
+                    source_id=entity.id, fact_type="entity_bbox",
+                    reason="invalid_bbox_stripped",
+                ))
+        kept_entities.append(entity)
+
+    kept_ids = {e.id for e in kept_entities}
+
+    kept_relations = []
+    for rel in model.relations:
+        if rel.subject_id not in kept_ids or rel.object_id not in kept_ids:
+            missing = []
+            if rel.subject_id not in kept_ids:
+                missing.append(f"subject:{rel.subject_id}")
+            if rel.object_id not in kept_ids:
+                missing.append(f"object:{rel.object_id}")
+            _quarantine("relation", rel, "unresolved_entity_reference:" + ",".join(missing))
+        else:
+            kept_relations.append(rel)
+
+    def _keep_linked(collection, kind):
+        kept = []
+        for item in collection:
+            eid = getattr(item, "entity_id", None)
+            if eid and eid not in kept_ids:
+                _quarantine(kind, item, f"unresolved_entity_reference:{eid}")
+            else:
+                kept.append(item)
+        return kept
+
+    kept_ports = _keep_linked(model.ports, "port")
+    kept_quantities = _keep_linked(model.quantities, "quantity")
+    kept_events = _keep_linked(model.events, "event")
+
+    kept_states = []
+    seen_states: dict[tuple[str, str], str] = {}
+    for state in model.states:
+        if state.entity_id and state.entity_id not in kept_ids:
+            _quarantine("state", state, f"unresolved_entity_reference:{state.entity_id}")
+            continue
+        key = (state.entity_id, state.name)
+        if key in seen_states and seen_states[key] != str(state.value):
+            _quarantine("state", state, f"conflicting_state_value:{seen_states[key]} vs {state.value}")
+            continue
+        seen_states[key] = str(state.value)
+        kept_states.append(state)
+
+    # Behaviors, constraints, procedures and failure modes are kept even
+    # when their subject is not yet in the kept set: the fact itself is
+    # independent of the chunk that produced it. A missing link is noted
+    # in the ledger without removing the fact.
+    for item in list(model.behaviors) + list(model.constraints) + list(model.procedures) + list(model.failure_modes):
+        eid = getattr(item, "entity_id", None) or getattr(item, "subject_id", None)
+        if eid and eid not in kept_ids and not str(eid).startswith("unresolved:"):
+            quarantined.append(unresolved_record(
+                item.model_dump(mode="json") if hasattr(item, "model_dump") else dict(item),
+                source_id=item.model_dump(mode="json").get("id") if hasattr(item, "model_dump") else None,
+                fact_type="missing_link_note",
+                reason=f"subject_not_in_kept_entities:{eid} (fact kept)",
+            ))
+
+    kept = _UMM(
+        entities=kept_entities,
+        relations=kept_relations,
+        ports=kept_ports,
+        quantities=kept_quantities,
+        states=kept_states,
+        events=kept_events,
+        behaviors=list(model.behaviors),
+        constraints=list(model.constraints),
+        procedures=list(model.procedures),
+        failure_modes=list(model.failure_modes),
+        conflicts=list(model.conflicts),
+        unresolved_facts=list(model.unresolved_facts),
+        simulation_rules=list(model.simulation_rules),
+        evidence=list(model.evidence),
+    )
+    # De-duplicate quarantine records deterministically.
+    unique: dict[tuple, dict] = {}
+    for item in quarantined:
+        key = (item.get("fact_type"), item.get("source_id"), item.get("reason"))
+        unique[key] = item
+    return kept, list(unique.values())
+
+
 def validate_machine_model_with_ledger(model: UniversalMachineModel) -> tuple[list[str], list[dict]]:
     """Validate semantics and return an explicit ledger for facts that cannot be trusted.
 

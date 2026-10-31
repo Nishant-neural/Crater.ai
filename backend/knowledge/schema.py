@@ -70,6 +70,19 @@ class UniversalEvidence(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class UniversalFailureMode(BaseModel):
+    id: str | None = None
+    name: str
+    symptoms: list[str] = Field(default_factory=list)
+    possible_causes: list[str] = Field(default_factory=list)
+    diagnostic_test: str | None = None
+    expected_observation: str | None = None
+    repair_procedure_id: str | None = None
+    repair_procedure_name: str | None = None
+    entity_ids: list[str] = Field(default_factory=list)
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class MachineKnowledgeExtractionResult(BaseModel):
     # Legacy fields remain in the same provider response during migration.
     components: list[ExtractedComponent] = Field(default_factory=list)
@@ -84,3 +97,4 @@ class MachineKnowledgeExtractionResult(BaseModel):
     events: list[dict[str, Any]] = Field(default_factory=list)
     behaviors: list[dict[str, Any]] = Field(default_factory=list)
     constraints: list[dict[str, Any]] = Field(default_factory=list)
+    failure_modes: list[UniversalFailureMode] = Field(default_factory=list)

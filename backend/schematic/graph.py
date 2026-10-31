@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from backend.db.models import Component, SchematicEdge, SchematicNode, SymbolType, WireType
 from backend.knowledge.evidence import MachineEvidence
+from backend.knowledge.normalization import persist_unresolved_fact
 from backend.knowledge.machine_model import MachineEntity, MachineRelation, MachinePort, UniversalMachineModel
 from backend.schematic.schema import SchematicExtractionResult
 
@@ -63,9 +64,26 @@ def persist_schematic(
         from_id = label_to_node_id.get(extracted_edge.from_label)
         to_id = label_to_node_id.get(extracted_edge.to_label)
         if not (from_id and to_id):
-            # Edge references a label not extracted as a node in this same
-            # image (e.g. a component visible on an adjacent, un-ingested
-            # page). Skip rather than fabricate a dangling node.
+            # FIX: do not silently drop cross-page / cross-image edges.
+            # Queue them as pending schematic edges; the pipeline resolves
+            # them after all diagrams for this document are extracted,
+            # against the document-wide node label index, and leaves
+            # genuinely unresolvable ones open (never guessed).
+            if revision_id:
+                persist_unresolved_fact(
+                    db, revision_id=revision_id,
+                    source_id=f"pending-schematic-edge:{document_id}:{chunk_id}:{extracted_edge.from_label}->{extracted_edge.to_label}:{extracted_edge.wire_type}",
+                    fact_type="pending_schematic_edge",
+                    payload={
+                        "document_id": document_id,
+                        "chunk_id": chunk_id,
+                        "from_label": extracted_edge.from_label,
+                        "to_label": extracted_edge.to_label,
+                        "wire_type": extracted_edge.wire_type,
+                        "label": extracted_edge.label,
+                    },
+                    reason="schematic_edge_endpoint_not_in_same_image",
+                )
             continue
         try:
             wire_type = WireType(extracted_edge.wire_type)
