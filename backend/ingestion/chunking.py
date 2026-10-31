@@ -120,14 +120,16 @@ def _document_text_chunks(pdf_path: str, pages: list[RawPage]) -> list[PendingCh
     buffer = ""
     section = ""
     page_numbers: list[int] = []
+    page_kinds: list[str] = []
     target = settings.chunk_size_chars
     max_chars = settings.chunk_max_chars
 
-    def flush() -> None:
-        nonlocal buffer, section, page_numbers
+    def flush(keep_overlap: bool = True) -> None:
+        nonlocal buffer, section, page_numbers, page_kinds
         if not buffer.strip():
             return
         pages_seen = sorted(set(page_numbers))
+        kinds_seen = sorted(set(page_kinds))
         chunks.append(PendingChunk(
             ChunkType.text,
             pages_seen[0] if pages_seen else None,
@@ -138,10 +140,26 @@ def _document_text_chunks(pdf_path: str, pages: list[RawPage]) -> list[PendingCh
                 "page_start": pages_seen[0] if pages_seen else None,
                 "page_end": pages_seen[-1] if pages_seen else None,
                 "pages": pages_seen,
+                "page_kinds": kinds_seen,
             },
         ))
-        buffer = ""
-        page_numbers = []
+        # Overlap fix: the old code cleared the buffer completely on every
+        # flush, so a component introduced at the end of chunk N and
+        # described at the start of chunk N+1 was split across two
+        # independent extractions. Keep a sentence-boundary tail so the
+        # next chunk still sees the introduction. Final flush keeps none.
+        if keep_overlap and len(buffer) > 10:
+            tail = buffer[-settings.chunk_overlap_chars:]
+            cut = tail.find(". ")
+            if 0 < cut < len(tail) // 2:
+                tail = tail[cut + 2:]
+            buffer = tail.strip()
+            page_numbers = [pages_seen[-1]] if pages_seen else []
+            page_kinds = [kinds_seen[-1]] if kinds_seen else []
+        else:
+            buffer = ""
+            page_numbers = []
+            page_kinds = []
 
     page_texts = [ocr_page_if_needed(pdf_path, p.page_number, p.text) for p in pages]
     boiler = _running_lines(page_texts)
@@ -162,18 +180,33 @@ def _document_text_chunks(pdf_path: str, pages: list[RawPage]) -> list[PendingCh
             candidate = (buffer + " " + unit).strip()
             if buffer and len(candidate) > max_chars:
                 flush()
-                # Keep a semantic overlap rather than a hard character split.
-                # The previous chunk's section remains in metadata; the new
-                # unit starts a fresh evidence block.
-                candidate = unit
+                # After an overlap-keeping flush, buffer is the tail, not
+                # empty, so the new unit keeps that context instead of
+                # starting from a hard split.
+                candidate = (buffer + " " + unit).strip() if buffer else unit
 
             buffer = candidate
             page_numbers.append(page.page_number)
+            page_kinds.append(getattr(page, "page_kind", "other"))
             if len(buffer) >= target and unit.endswith((".", ":", ";")):
                 flush()
 
-    flush()
+    flush(keep_overlap=False)
     return chunks
+
+
+def _page_section(page, text=None):
+    """First heading on a page, for attaching section context to tables/diagrams."""
+    txt = text if text is not None else getattr(page, "text", "")
+    sections = [sec for sec, _ in _units(txt) if sec]
+    if sections:
+        return sections[0]
+    # Fallback: a short first line without sentence punctuation is usually
+    # a Title Case heading that the ALL-CAPS heading regex misses.
+    lines = [ln.strip() for ln in txt.splitlines() if ln.strip()]
+    if lines and len(lines[0]) <= 80 and not lines[0].endswith((".", ",")):
+        return lines[0]
+    return None
 
 
 def _table_to_markdown(table: list[list[str | None]]) -> str:
@@ -197,19 +230,22 @@ def page_to_chunks(pdf_path: str, page: RawPage) -> list[PendingChunk]:
             piece,
             {"section": section or None, "chunking": "structure_aware"},
         ))
+    _sec = _page_section(page, text)
+    _kind = getattr(page, "page_kind", "other")
     for i, table in enumerate(page.tables):
         md = _table_to_markdown(table)
         if md:
+            content = f"[Section: {_sec or _kind} | Page kind: {_kind}]\n{md}"
             chunks.append(PendingChunk(
-                ChunkType.table, page.page_number, md,
-                {"rows": len(table), "cols": len(table[0]) if table else 0, "table_index": i, "chunking": "atomic"},
+                ChunkType.table, page.page_number, content,
+                {"rows": len(table), "cols": len(table[0]) if table else 0, "table_index": i, "chunking": "atomic", "section": _sec, "page_kind": _kind},
             ))
     for i, image_path in enumerate(page.image_paths):
         chunks.append(PendingChunk(
             ChunkType.diagram,
             page.page_number,
-            f"[Diagram on page {page.page_number}]",
-            {"image_path": image_path, "image_index": i, "chunking": "atomic"},
+            f"[Diagram on page {page.page_number} | Section: {_sec or _kind} | Page kind: {_kind}]",
+            {"image_path": image_path, "image_index": i, "chunking": "atomic", "section": _sec, "page_kind": _kind},
         ))
     return chunks
 
@@ -218,19 +254,22 @@ def pages_to_chunks(pdf_path: str, pages: list[RawPage]) -> list[PendingChunk]:
     """Create document-level text chunks plus atomic tables/diagrams."""
     chunks = _document_text_chunks(pdf_path, pages)
     for page in pages:
+        _sec = _page_section(page)
+        _kind = getattr(page, "page_kind", "other")
         for i, table in enumerate(page.tables):
             md = _table_to_markdown(table)
             if md:
+                content = f"[Section: {_sec or _kind} | Page kind: {_kind}]\n{md}"
                 chunks.append(PendingChunk(
-                    ChunkType.table, page.page_number, md,
-                    {"rows": len(table), "cols": len(table[0]) if table else 0, "table_index": i, "chunking": "atomic"},
+                    ChunkType.table, page.page_number, content,
+                    {"rows": len(table), "cols": len(table[0]) if table else 0, "table_index": i, "chunking": "atomic", "section": _sec, "page_kind": _kind},
                 ))
         for i, image_path in enumerate(page.image_paths):
             chunks.append(PendingChunk(
                 ChunkType.diagram,
                 page.page_number,
-                f"[Diagram on page {page.page_number}]",
-                {"image_path": image_path, "image_index": i, "chunking": "atomic"},
+                f"[Diagram on page {page.page_number} | Section: {_sec or _kind} | Page kind: {_kind}]",
+                {"image_path": image_path, "image_index": i, "chunking": "atomic", "section": _sec, "page_kind": _kind},
             ))
     return chunks
 

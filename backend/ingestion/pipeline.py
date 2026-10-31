@@ -5,11 +5,11 @@ from typing import Callable
 import time
 from sqlalchemy.orm import Session
 from backend.schematic.vision_extraction import extract_schematic
-from backend.db.models import Chunk, Document, DocType, IngestionJob
+from backend.db.models import Chunk, Component, ComponentRelationship, Document, DocType, IngestionJob, RelationType, SchematicEdge, SchematicNode, UnresolvedFact
 from backend.ingestion.chunking import pages_to_chunks
 from backend.ingestion.pdf_loader import load_pdf
 from backend.knowledge.component_extraction import ExtractionError, extract_chunk_knowledge, extract_chunk_knowledge_batch, persist_extraction, persist_machine_knowledge
-from backend.knowledge.validation import validate_machine_model, validate_machine_model_with_ledger
+from backend.knowledge.validation import quarantine_machine_model, validate_machine_model, validate_machine_model_with_ledger
 from backend.knowledge.global_integration import build_effective_revision_knowledge_context, integrate_revision_knowledge, persist_integration_result
 from backend.knowledge.verification import verify_machine_model
 from backend.retrieval.vector_store import upsert_chunks
@@ -17,6 +17,7 @@ from backend.schematic.graph import persist_schematic, schematic_to_machine_mode
 from backend.knowledge.evidence import MachineEvidence
 from backend.knowledge.normalization import persist_unresolved_fact
 from backend.config import settings
+from backend.ingestion.pending_links import resolve_pending_relationships, resolve_pending_schematic_edges
 from backend.ingestion.checkpoints import load_checkpoint, save_checkpoint
 
 ProgressCallback = Callable[[int, str], None]
@@ -102,9 +103,14 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
         progress(30, f"Creating large semantic chunks — {len(pending_rows)} chunks")
     all_chunks = session.query(Chunk).filter(Chunk.document_id == document.id).all()
     progress(32, f"Created {len(all_chunks)} chunks")
-    if all_chunks and not cp.get("vectors_done",False):
-        total_vectors = len(all_chunks)
-        pending_vectors = [c for c in all_chunks if c.id not in vector_chunks_done]
+    # FIX: diagram chunks carry only a placeholder ("[Diagram on page 12]").
+    # Indexing them wastes vector space and lets a useless placeholder be
+    # retrieved as evidence. Diagram content is indexed later, after
+    # schematic extraction, as a real node/edge summary (see below).
+    vector_chunks = [c for c in all_chunks if c.chunk_type.value != "diagram"]
+    if vector_chunks and not cp.get("vectors_done",False):
+        total_vectors = len(vector_chunks)
+        pending_vectors = [c for c in vector_chunks if c.id not in vector_chunks_done]
         batch_size = max(1, int(settings.vector_index_batch_size))
         processed_vectors = total_vectors - len(pending_vectors)
         progress(34, f"Indexing chunks: {processed_vectors}/{total_vectors}")
@@ -215,19 +221,20 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
                     persist_extraction(session, revision_id, chunk.id, result)
                 _stamp_provenance(machine_model, document.title, chunk.page_number, chunk.id, chunk.chunk_type.value)
                 if (machine_model.entities or machine_model.relations or machine_model.ports or machine_model.quantities or machine_model.states or machine_model.events or machine_model.behaviors or machine_model.constraints or machine_model.procedures or machine_model.failure_modes):
-                    issues, unresolved = validate_machine_model_with_ledger(machine_model)
-                    for record in unresolved:
+                    # Per-fact quarantine: keep every usable fact, quarantine
+                    # only the structurally unusable ones. The old code dropped
+                    # the whole chunk model when it had ANY issue.
+                    kept_model, quarantined = quarantine_machine_model(machine_model)
+                    for record in quarantined:
                         persist_unresolved_fact(session, revision_id=revision_id,
-                            source_id=record.get("source_id") or chunk.id,
-                            fact_type=record.get("fact_type", "semantic_validation"),
-                            payload=record.get("payload", record), reason=record.get("reason", "semantic_validation_failed"))
-                    if not issues:
-                        persist_machine_knowledge(session, revision_id, chunk.id, machine_model)
+                            source_id=record.get("source_id") or chunk.id, fact_type=record.get("fact_type", "quarantine"),
+                            payload=record.get("payload", record), reason=record.get("reason", "quarantined"))
+                    if (kept_model.entities or kept_model.relations or kept_model.ports or kept_model.quantities or kept_model.states or kept_model.events or kept_model.behaviors or kept_model.constraints or kept_model.procedures or kept_model.failure_modes):
+                        persist_machine_knowledge(session, revision_id, chunk.id, kept_model)
                     else:
-                        # Preserve the whole rejected model as an audit item; never silently drop it.
                         persist_unresolved_fact(session, revision_id=revision_id, source_id=chunk.id,
-                            fact_type="machine_model_semantic_validation", payload=machine_model.model_dump(mode="json"),
-                            reason="; ".join(issues)[:4000])
+                            fact_type="machine_model_all_quarantined", payload=machine_model.model_dump(mode="json"),
+                            reason="all facts in this chunk model were quarantined")
                 knowledge_done.add(chunk.id)
                 knowledge_failures.pop(chunk.id, None)
             session.commit()
@@ -241,14 +248,33 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
             progress(percent, f"Extracting machine knowledge — {processed_knowledge}/{total} chunks ({batch_index}-batch; {len(batch)} chunks, {prompt_chars:,} chars, {batch_elapsed:.1f}s)")
     else: progress(75,"Machine knowledge extraction skipped")
     progress(76,"Machine knowledge extraction complete")
+    # Fact-centric resolution, independent of chunks: now that every chunk
+    # for this document is extracted, pending cross-chunk relationships
+    # can be resolved against the full revision component index.
+    try:
+        _resolved, _open = resolve_pending_relationships(session, revision_id)
+        progress(76, f"Cross-chunk relationships resolved: {_resolved} resolved, {_open} still open")
+    except Exception as _exc:
+        session.rollback()
+        progress(76, f"Cross-chunk relationship resolution skipped: {str(_exc)[:200]}")
     diagrams=[c for c in all_chunks if c.chunk_type.value=="diagram" and c.extra and c.extra.get("image_path")]
     if run_schematic_extraction and diagrams:
         total_d=len(diagrams)
         processed_schematics = len(schematics_done)
+        # Cache vision results by image_path: the same schematic reused on
+        # two pages is analysed once, but persisted per page (see
+        # pdf_loader provenance fix), so neither cost nor provenance is lost.
+        schematic_result_cache: dict[str, object] = {}
+        diagram_summaries: dict[str, str] = {}
         for chunk in diagrams:
             if chunk.id in schematics_done: continue
             try:
-                result=extract_schematic(chunk.extra["image_path"])
+                _img = chunk.extra["image_path"]
+                if _img in schematic_result_cache:
+                    result = schematic_result_cache[_img]
+                else:
+                    result = extract_schematic(_img)
+                    schematic_result_cache[_img] = result
             except Exception as exc:
                 persist_unresolved_fact(session, revision_id=revision_id, source_id=chunk.id,
                     fact_type="schematic_extraction_failure", payload={"image_path": chunk.extra.get("image_path"), "chunk_id": chunk.id},
@@ -259,22 +285,44 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
             if result.nodes:
                 persist_schematic(session,document.id,chunk.id,revision_id,result)
                 model=schematic_to_machine_model(result,document.title,chunk.page_number,chunk.id)
-                issues, unresolved = validate_machine_model_with_ledger(model)
-                for record in unresolved:
+                kept_model, quarantined = quarantine_machine_model(model)
+                for record in quarantined:
                     persist_unresolved_fact(session, revision_id=revision_id, source_id=record.get("source_id") or chunk.id,
-                        fact_type=record.get("fact_type", "schematic_semantic_validation"), payload=record.get("payload", record),
-                        reason=record.get("reason", "schematic_semantic_validation_failed"))
-                if not issues:
-                    persist_machine_knowledge(session,revision_id,chunk.id,model)
-                else:
-                    persist_unresolved_fact(session, revision_id=revision_id, source_id=chunk.id,
-                        fact_type="schematic_model_semantic_validation", payload=model.model_dump(mode="json"),
-                        reason="; ".join(issues)[:4000])
+                        fact_type=record.get("fact_type", "schematic_quarantine"), payload=record.get("payload", record),
+                        reason=record.get("reason", "schematic_quarantined"))
+                if kept_model.entities or kept_model.relations:
+                    persist_machine_knowledge(session,revision_id,chunk.id,kept_model)
+                # Real diagram content for the vector index, replacing the
+                # placeholder that was deliberately NOT indexed above.
+                _node_text = ", ".join(f"{n.label} ({n.symbol_type})" for n in result.nodes)
+                _edge_text = ", ".join(f"{e.from_label} -{e.wire_type}-> {e.to_label}" for e in result.edges)
+                diagram_summaries[chunk.id] = f"Schematic diagram on page {chunk.page_number}: nodes: {_node_text}; connections: {_edge_text}"
             session.commit(); schematics_done.add(chunk.id); processed_schematics += 1
             percent = 78 + int(processed_schematics/max(1,total_d)*12)
             if job_id: save_checkpoint(job_id,stage="schematics",schematics_done=sorted(schematics_done),percent=percent)
             progress(percent,f"Analyzing schematics — {processed_schematics}/{total_d} diagrams")
     else: progress(90,"No schematic extraction required")
+    # Resolve cross-page schematic edges now that all diagrams for this
+    # document are extracted, and index real diagram summaries.
+    try:
+        _s_res, _s_open = resolve_pending_schematic_edges(session, document.id, revision_id)
+        progress(91, f"Cross-page schematic edges resolved: {_s_res} resolved, {_s_open} still open")
+    except Exception as _exc:
+        session.rollback()
+        progress(91, f"Schematic edge resolution skipped: {str(_exc)[:200]}")
+    try:
+        _summaries = locals().get("diagram_summaries") or {}
+        if _summaries:
+            _ids = list(_summaries.keys())
+            upsert_chunks(
+                chunk_ids=_ids,
+                texts=[_summaries[cid] for cid in _ids],
+                payloads=[{"product_id": product_id, "revision_id": revision_id, "doc_type": doc_type.value, "chunk_type": "diagram", "document_id": document.id} for _ in _ids],
+                batch_size=max(1, int(settings.vector_index_batch_size)),
+            )
+            progress(92, f"Indexed {len(_ids)} diagram summaries")
+    except Exception as _exc:
+        progress(92, f"Diagram summary indexing skipped: {str(_exc)[:200]}")
     # Canonical integration is part of machine readiness, not a separate manual step.
     # It is skipped only when this revision has no persisted knowledge at all.
     if not cp.get("integration_done", False):
@@ -313,4 +361,8 @@ def _stamp_provenance(model,source_document:str,page:int|None,chunk_id:str,sourc
     for collection,label in ((model.ports,"Port"),(model.quantities,"Quantity"),(model.states,"State"),(model.events,"Event"),(model.behaviors,"Behavior"),(model.constraints,"Constraint")):
         for item in collection:
             if not item.evidence: item.evidence.append(evidence(f"{label} {getattr(item,'name',getattr(item,'id','unknown'))}"))
+    for proc in model.procedures:
+        if not proc.evidence: proc.evidence.append(evidence(f"Procedure {proc.name}"))
+    for fm in model.failure_modes:
+        if not fm.evidence: fm.evidence.append(evidence(f"Failure mode {fm.name}"))
     if not model.evidence: model.evidence.append(evidence("Universal machine extraction"))
