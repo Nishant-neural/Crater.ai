@@ -36,7 +36,29 @@ def _heading(line: str) -> bool:
     # every step its own chunk, ignoring chunk_size_chars entirely.
     if _PROCEDURE.match(x):
         return False
-    return x.endswith(":") or _HEADING.match(x) is not None
+    # Strong headings only. The old _HEADING regex treated ANY all-caps /
+    # digit line as a heading, so signal codes (R10685, X18C8), document
+    # numbers (IB-1501804) and bit headers (F E D C B A 9 8 ...) became
+    # section boundaries. In a PLC signal manual those occur every few
+    # lines, so section changes fired constantly and chunks were capped
+    # at chunk_min_chars instead of reaching chunk_size_chars.
+    # A real heading must be one of:
+    # - a line ending in ":" (short, <=140 chars)
+    # - a numbered heading with words: "2 Input/Output Signals ..."
+    # - an ALL-CAPS heading with at least two words, at least one word >=3
+    #   letters: "DATA BOOK" qualifies, "R10685" / "IB-1501804" / single
+    #   characters do not.
+    if x.endswith(":") and 3 <= len(x) <= 140 and any(c.isalpha() for c in x):
+        return True
+    if re.match(r"^\d+(?:\.\d+)*[.)]\s+.*[A-Za-z]", x):
+        return True
+    if " " in x and x == x.upper():
+        # Alphabetic words only: signal rows like "R2552, 3 R2752, 3 ..."
+        # are all-caps + digits, but they are table rows, not headings.
+        words = [w.strip(",.:;") for w in x.split() if any(c.isalpha() for c in w)]
+        if len(words) >= 2 and all(w.isalpha() for w in words) and any(len(w) >= 3 for w in words):
+            return True
+    return False
 
 
 def _units(text: str) -> list[tuple[str, str]]:
@@ -119,13 +141,14 @@ def _document_text_chunks(pdf_path: str, pages: list[RawPage]) -> list[PendingCh
     chunks: list[PendingChunk] = []
     buffer = ""
     section = ""
+    sections_seen: list[str] = []
     page_numbers: list[int] = []
     page_kinds: list[str] = []
     target = settings.chunk_size_chars
     max_chars = settings.chunk_max_chars
 
     def flush(keep_overlap: bool = True) -> None:
-        nonlocal buffer, section, page_numbers, page_kinds
+        nonlocal buffer, section, page_numbers, page_kinds, sections_seen
         if not buffer.strip():
             return
         pages_seen = sorted(set(page_numbers))
@@ -136,6 +159,7 @@ def _document_text_chunks(pdf_path: str, pages: list[RawPage]) -> list[PendingCh
             buffer.strip(),
             {
                 "section": section or None,
+                "sections": list(dict.fromkeys(sections_seen)) or None,
                 "chunking": "structure_aware_cross_page",
                 "page_start": pages_seen[0] if pages_seen else None,
                 "page_end": pages_seen[-1] if pages_seen else None,
@@ -156,10 +180,12 @@ def _document_text_chunks(pdf_path: str, pages: list[RawPage]) -> list[PendingCh
             buffer = tail.strip()
             page_numbers = [pages_seen[-1]] if pages_seen else []
             page_kinds = [kinds_seen[-1]] if kinds_seen else []
+            sections_seen = [section] if section else []
         else:
             buffer = ""
             page_numbers = []
             page_kinds = []
+            sections_seen = []
 
     page_texts = [ocr_page_if_needed(pdf_path, p.page_number, p.text) for p in pages]
     boiler = _running_lines(page_texts)
@@ -170,12 +196,19 @@ def _document_text_chunks(pdf_path: str, pages: list[RawPage]) -> list[PendingCh
             if not unit:
                 continue
             # A new explicit section starts a new chunk only when the current
-            # chunk already has meaningful content. This avoids losing context
-            # while still preventing unrelated manual sections from blending.
-            if sec and section and sec != section and len(buffer) >= settings.chunk_min_chars:
+            # chunk is already at target size. The old threshold was
+            # chunk_min_chars (2500), so in a manual with a heading every
+            # page, chunks were capped at ~2500 chars and never reached the
+            # 12000-char target -- and with overlap retained, the next chunk
+            # hit that 2500 threshold after only ~1500 new chars, inflating
+            # the chunk count by ~40% (469 -> 672 text chunks on the PLC
+            # manual). Section purity is preserved in extra["sections"].
+            if sec and section and sec != section and len(buffer) >= settings.chunk_size_chars:
                 flush()
             if sec:
                 section = sec
+                if sec not in sections_seen:
+                    sections_seen.append(sec)
 
             candidate = (buffer + " " + unit).strip()
             if buffer and len(candidate) > max_chars:
@@ -219,6 +252,51 @@ def _table_to_markdown(table: list[list[str | None]]) -> str:
     return "\n".join(md)
 
 
+def _grouped_table_chunks(page: RawPage, text=None) -> list[PendingChunk]:
+    """Group a page's tables into chunks up to max_chars, not one chunk per table.
+
+    pdfplumber splits one logical signal table into many small tables
+    (header repeats, ruling lines, per-section fragments). Emitting each
+    fragment as its own chunk was the other half of the 2662-chunk blow-up:
+    an 852-page PLC manual yields thousands of tiny table chunks.
+    Grouping by page keeps each page's tables together as one evidence
+    unit (split only if the page's tables exceed max_chars), with the
+    section / page_kind context attached, so no table content is lost.
+    """
+    _sec = _page_section(page, text)
+    _kind = getattr(page, "page_kind", "other")
+    out: list[PendingChunk] = []
+    buf: list[str] = []
+    indices: list[int] = []
+    rows = 0
+    cols = 0
+    def _flush_buf():
+        nonlocal buf, indices, rows, cols
+        if not buf:
+            return
+        content = f"[Section: {_sec or _kind} | Page kind: {_kind}]\n" + "\n\n".join(buf)
+        out.append(PendingChunk(
+            ChunkType.table, page.page_number, content,
+            {"rows": rows, "cols": cols, "table_index": indices[0] if indices else 0,
+             "table_indices": list(indices), "tables_count": len(indices),
+             "chunking": "atomic_grouped", "section": _sec, "page_kind": _kind},
+        ))
+        buf, indices, rows, cols = [], [], 0, 0
+    for i, table in enumerate(page.tables):
+        md = _table_to_markdown(table)
+        if not md:
+            continue
+        # Flush before adding if this table alone would exceed max_chars.
+        if buf and len("\n\n".join(buf)) + len(md) + 2 > settings.chunk_max_chars:
+            _flush_buf()
+        buf.append(md)
+        indices.append(i)
+        rows += len(table)
+        cols = max(cols, len(table[0]) if table else 0)
+    _flush_buf()
+    return out
+
+
 def page_to_chunks(pdf_path: str, page: RawPage) -> list[PendingChunk]:
     """Backward-compatible single-page helper used by older callers/tests."""
     chunks: list[PendingChunk] = []
@@ -230,16 +308,9 @@ def page_to_chunks(pdf_path: str, page: RawPage) -> list[PendingChunk]:
             piece,
             {"section": section or None, "chunking": "structure_aware"},
         ))
+    chunks.extend(_grouped_table_chunks(page, text))
     _sec = _page_section(page, text)
     _kind = getattr(page, "page_kind", "other")
-    for i, table in enumerate(page.tables):
-        md = _table_to_markdown(table)
-        if md:
-            content = f"[Section: {_sec or _kind} | Page kind: {_kind}]\n{md}"
-            chunks.append(PendingChunk(
-                ChunkType.table, page.page_number, content,
-                {"rows": len(table), "cols": len(table[0]) if table else 0, "table_index": i, "chunking": "atomic", "section": _sec, "page_kind": _kind},
-            ))
     for i, image_path in enumerate(page.image_paths):
         chunks.append(PendingChunk(
             ChunkType.diagram,
@@ -254,16 +325,9 @@ def pages_to_chunks(pdf_path: str, pages: list[RawPage]) -> list[PendingChunk]:
     """Create document-level text chunks plus atomic tables/diagrams."""
     chunks = _document_text_chunks(pdf_path, pages)
     for page in pages:
+        chunks.extend(_grouped_table_chunks(page))
         _sec = _page_section(page)
         _kind = getattr(page, "page_kind", "other")
-        for i, table in enumerate(page.tables):
-            md = _table_to_markdown(table)
-            if md:
-                content = f"[Section: {_sec or _kind} | Page kind: {_kind}]\n{md}"
-                chunks.append(PendingChunk(
-                    ChunkType.table, page.page_number, content,
-                    {"rows": len(table), "cols": len(table[0]) if table else 0, "table_index": i, "chunking": "atomic", "section": _sec, "page_kind": _kind},
-                ))
         for i, image_path in enumerate(page.image_paths):
             chunks.append(PendingChunk(
                 ChunkType.diagram,

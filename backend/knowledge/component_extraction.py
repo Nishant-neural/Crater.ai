@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from backend.db.models import (
     Component,
     ComponentRelationship,
+    FailureMode,
     MachineKnowledgeBehavior,
     MachineKnowledgeEntity,
     MachineKnowledgeEvidence,
@@ -24,19 +25,20 @@ from backend.db.models import (
     ProcedureType,
 )
 from backend.knowledge.evidence import MachineEvidence
-from backend.knowledge.normalization import normalize_payload
+from backend.knowledge.normalization import normalize_payload, persist_unresolved_fact
 from backend.knowledge.machine_model import (
     MachineBehavior,
     MachineConstraint,
     MachineEntity,
     MachineEvent,
+    MachineFailureMode,
     MachineRelation,
     MachinePort,
     MachineQuantity,
     MachineState,
     UniversalMachineModel,
 )
-from backend.knowledge.schema import ExtractionResult, MachineKnowledgeExtractionResult
+from backend.knowledge.schema import ExtractionResult, MachineKnowledgeExtractionResult, UniversalEntity, UniversalRelation
 from backend.llm import gateway
 from backend.config import settings
 
@@ -78,8 +80,14 @@ or UNCERTAIN when a value is not explicit:
     "states": [{{"entity_id": "", "name": "", "value": "", "properties": {{}}, "evidence": []}}],
     "events": [{{"id": "event:e1", "entity_id": "", "name": "", "description": "", "evidence": []}}],
     "behaviors": [{{"id": "behavior:b1", "subject_id": "", "subject_name": "", "description": "", "evidence": []}}],
-    "constraints": [{{"id": "constraint:c1", "entity_id": "", "name": "", "description": "", "evidence": []}}]
-}}"""
+    "constraints": [{{"id": "constraint:c1", "entity_id": "", "name": "", "description": "", "evidence": []}}],
+    "failure_modes": [{{"id": "failure:overheating", "name": "", "symptoms": [""], "possible_causes": [""], "diagnostic_test": "", "expected_observation": "", "repair_procedure_name": "", "entity_ids": [], "evidence": []}}]
+}}
+
+Also extract failure modes explicitly whenever the text describes a fault, symptom,
+troubleshooting entry, or "if X happens, check Y" pattern. A failure mode must
+carry its symptoms, possible causes, diagnostic test and expected observation
+whenever the text states them; do not invent a cause or test that is not stated."""
 
 
 def _extract_result(content: str) -> MachineKnowledgeExtractionResult:
@@ -118,7 +126,7 @@ def _extract_result(content: str) -> MachineKnowledgeExtractionResult:
         if not isinstance(payload, dict):
             raise ValueError("extraction root must be an object")
         # Apply one shared alias contract to every typed fact collection before validation.
-        for key in ("components", "relationships", "procedures", "entities", "relations", "ports", "quantities", "states", "events", "behaviors", "constraints"):
+        for key in ("components", "relationships", "procedures", "entities", "relations", "ports", "quantities", "states", "events", "behaviors", "constraints", "failure_modes"):
             if isinstance(payload.get(key), list):
                 payload[key] = [normalize_payload(item, kind=key[:-1] if key.endswith("s") else key) if isinstance(item, dict) else item for item in payload[key]]
         return MachineKnowledgeExtractionResult.model_validate(payload)
@@ -140,7 +148,8 @@ Return ONLY JSON in this shape:
       "knowledge": {{
         "components": [], "relationships": [], "procedures": [],
         "entities": [], "relations": [], "evidence": [], "ports": [],
-        "states": [], "quantities": [], "events": [], "behaviors": [], "constraints": []
+        "states": [], "quantities": [], "events": [], "behaviors": [], "constraints": [],
+        "failure_modes": []
       }
     }
   ]
@@ -233,7 +242,7 @@ def extract_chunk_knowledge_batch(chunks: list[tuple[str, str]]) -> dict[str, tu
         if not isinstance(knowledge, dict):
             raise ExtractionError(f"LLM batch extraction missing knowledge object for {chunk_id}")
         try:
-            for key in ("components", "relationships", "procedures", "entities", "relations", "ports", "quantities", "states", "events", "behaviors", "constraints"):
+            for key in ("components", "relationships", "procedures", "entities", "relations", "ports", "quantities", "states", "events", "behaviors", "constraints", "failure_modes"):
                 if isinstance(knowledge.get(key), list):
                     knowledge[key] = [normalize_payload(item, kind=key[:-1] if key.endswith("s") else key) if isinstance(item, dict) else item for item in knowledge[key]]
             result = MachineKnowledgeExtractionResult.model_validate(knowledge)
@@ -271,6 +280,7 @@ def _has_universal_facts(result: MachineKnowledgeExtractionResult) -> bool:
     return any((
         result.entities, result.relations, result.ports, result.quantities,
         result.states, result.events, result.behaviors, result.constraints,
+        result.failure_modes,
     ))
 
 
@@ -304,14 +314,40 @@ def persist_extraction(
         from_id = name_to_id.get(rel.from_component)
         to_id = name_to_id.get(rel.to_component)
         if not (from_id and to_id):
-            # Referenced a component not extracted in this same chunk (common —
-            # relationships often span text extracted from other pages). Skip
-            # rather than guess; a later cross-chunk linking pass can resolve
-            # these by name within the same revision.
+            # FIX: do not silently drop cross-chunk relationships. Queue them
+            # as pending links; the pipeline resolves them after ALL chunks
+            # are extracted, against the revision-wide component index, and
+            # leaves genuinely unresolvable ones open (never guessed).
+            persist_unresolved_fact(
+                session, revision_id=revision_id,
+                source_id=f"pending-rel:{source_chunk_id}:{rel.from_component}->{rel.to_component}:{rel.relation_type}",
+                fact_type="pending_relationship",
+                payload={
+                    "from_component": rel.from_component,
+                    "to_component": rel.to_component,
+                    "relation_type": rel.relation_type,
+                    "description": rel.description,
+                    "source_chunk_id": source_chunk_id,
+                },
+                reason="cross_chunk_component_not_in_chunk",
+            )
             continue
         try:
             relation_type = RelationType(rel.relation_type)
         except ValueError:
+            persist_unresolved_fact(
+                session, revision_id=revision_id,
+                source_id=f"pending-rel:{source_chunk_id}:{rel.from_component}->{rel.to_component}:{rel.relation_type}",
+                fact_type="pending_relationship",
+                payload={
+                    "from_component": rel.from_component,
+                    "to_component": rel.to_component,
+                    "relation_type": rel.relation_type,
+                    "description": rel.description,
+                    "source_chunk_id": source_chunk_id,
+                },
+                reason="invalid_relation_type",
+            )
             continue
         session.add(
             ComponentRelationship(
@@ -423,6 +459,8 @@ def _universal_model_from_result(result: MachineKnowledgeExtractionResult) -> Un
         model.behaviors.append(MachineBehavior.model_validate(item))
     for item in result.constraints:
         model.constraints.append(MachineConstraint.model_validate(item))
+    for item in result.failure_modes:
+        model.failure_modes.append(MachineFailureMode.model_validate(item.model_dump()))
     model.evidence.extend(result.evidence)
     return model
 
@@ -469,6 +507,24 @@ def persist_machine_knowledge(session: Session, revision_id: str | None, source_
         session.add(db_behavior)
         session.flush()
         _persist_evidence(session, "behavior", db_behavior.id, behavior.evidence)
+
+    # Legacy FailureMode rows, for the diagnostic agent which queries that
+    # table (not just universal facts). Symptom text keeps the failure-mode
+    # name plus its symptoms, so neither is lost in the single text column.
+    for fm in model.failure_modes:
+        symptom_text = fm.name
+        if fm.symptoms:
+            symptom_text = fm.name + ": " + "; ".join(fm.symptoms)
+        session.add(FailureMode(
+            revision_id=revision_id,
+            symptom=symptom_text,
+            possible_causes=list(fm.possible_causes or []),
+            diagnostic_test=fm.diagnostic_test,
+            expected_observation=fm.expected_observation,
+            repair_procedure_id=None,
+            source_chunk_id=source_chunk_id,
+        ))
+        session.flush()
 
     for fact_type, fact_key, payload in model.all_facts():
         if fact_type == "behavior":
