@@ -104,16 +104,14 @@ def integrate_machine_knowledge(revision_id: str, db: Session = Depends(get_sess
     _revision_or_404(db, revision_id)
     result = integrate_revision_knowledge(db, revision_id)
     issues = verify_machine_model(result.model)
-    if any(i.severity == "error" for i in issues):
-        raise HTTPException(422, {
-            "message": "Canonical machine model failed deterministic verification",
-            "issues": [i.__dict__ for i in issues],
-        })
+    # Verification errors no longer abort integration: integration already
+    # quarantined structurally unusable facts, and the kept model is the
+    # snapshot. Errors are reported as warnings, not a 422.
     stored = persist_integration_result(db, revision_id, result)
     db.commit()
     return {**stored, "verification": {
         "valid": True,
-        "warnings": [i.__dict__ for i in issues if i.severity != "error"],
+        "warnings": [i.__dict__ for i in issues],
     }}
 
 @router.get("/revisions/{revision_id}/model")

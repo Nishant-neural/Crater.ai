@@ -36,6 +36,37 @@ def norm_name(value: str | None) -> str:
     return re.sub(r"[^a-z0-9]+", " ", str(value).lower()).strip()
 
 
+_GENERIC_WORDS = {
+    "mechanism", "assembly", "unit", "system", "device", "component", "part",
+    "relay", "motor", "sensor", "switch", "module", "equipment",
+}
+
+
+def _stripped_name(value: str | None) -> str:
+    """Name with generic identity words removed, for the fallback pass only."""
+    words = [w for w in norm_name(value).split() if w not in _GENERIC_WORDS]
+    return " ".join(words)
+
+
+def _unique_prefix_candidates(name: str, index: dict[str, list]) -> list:
+    """Exactly-one candidate whose key starts with, or is started by, `name`.
+
+    This is still a unique-match rule, not fuzzy guessing: if more than one
+    component could match, the caller leaves the link open. It only rescues
+    cases like "Wire Feed mechanism" -> "Wire Feed Motor" and "Relay K17" -> "K17",
+    where the generic word is the only difference and no other component shares
+    the remaining stem.
+    """
+    if not name:
+        return []
+    seen: dict[str, object] = {}
+    for key, cands in index.items():
+        if key == name or key.startswith(name + " ") or name.startswith(key + " "):
+            for c in cands:
+                seen[id(c)] = c
+    return list(seen.values())
+
+
 def resolve_pending_relationships(session: Session, revision_id: str) -> tuple[int, int]:
     components = session.query(Component).filter(Component.revision_id == revision_id).all()
     by_name: dict[str, list] = {}
@@ -54,7 +85,14 @@ def resolve_pending_relationships(session: Session, revision_id: str) -> tuple[i
         from_cands = by_name.get(norm_name(payload.get("from_component")), [])
         to_cands = by_name.get(norm_name(payload.get("to_component")), [])
         if len(from_cands) != 1 or len(to_cands) != 1:
-            continue
+            # Fallback, still unique-only: strip generic words, then allow a
+            # unique prefix match. Ambiguous or still-missing stays open.
+            if len(from_cands) != 1:
+                from_cands = _unique_prefix_candidates(_stripped_name(payload.get("from_component")), by_name)
+            if len(to_cands) != 1:
+                to_cands = _unique_prefix_candidates(_stripped_name(payload.get("to_component")), by_name)
+            if len(from_cands) != 1 or len(to_cands) != 1:
+                continue
         try:
             rel_type = RelationType(payload.get("relation_type"))
         except Exception:
@@ -101,8 +139,13 @@ def resolve_pending_schematic_edges(session: Session, document_id: str, revision
         from_cands = by_label.get(norm_name(payload.get("from_label")), [])
         to_cands = by_label.get(norm_name(payload.get("to_label")), [])
         if len(from_cands) != 1 or len(to_cands) != 1:
-            still_open += 1
-            continue
+            if len(from_cands) != 1:
+                from_cands = _unique_prefix_candidates(_stripped_name(payload.get("from_label")), by_label)
+            if len(to_cands) != 1:
+                to_cands = _unique_prefix_candidates(_stripped_name(payload.get("to_label")), by_label)
+            if len(from_cands) != 1 or len(to_cands) != 1:
+                still_open += 1
+                continue
         from_id, to_id = from_cands[0].id, to_cands[0].id
         try:
             wire_type = WireType(payload.get("wire_type"))
