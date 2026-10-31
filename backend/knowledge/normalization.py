@@ -102,3 +102,28 @@ def persist_unresolved_fact(session, *, revision_id: str | None, source_id: str 
         row.payload = record["payload"]
         row.reason = reason
         row.status = "open"
+
+
+def resolve_unresolved_fact(session, *, revision_id: str | None, source_id: str | None,
+                            fact_type: str | None = None) -> int:
+    """Mark open unresolved rows as resolved when their source later succeeds.
+
+    This is the fix for stale ledger rows: a batch failure recorded for every
+    chunk in a batch must not stay open forever after a split retry (or a
+    re-run) succeeds for that chunk. Callers pass the chunk/source that just
+    succeeded; only open rows for that source are closed, never rows for
+    other sources, and a later genuine failure reopens the row via
+    persist_unresolved_fact.
+    """
+    from backend.db.models import UnresolvedFact
+    query = session.query(UnresolvedFact).filter(
+        UnresolvedFact.revision_id == revision_id,
+        UnresolvedFact.source_id == source_id,
+        UnresolvedFact.status == "open",
+    )
+    if fact_type is not None:
+        query = query.filter(UnresolvedFact.fact_type == fact_type)
+    rows = query.all()
+    for row in rows:
+        row.status = "resolved"
+    return len(rows)

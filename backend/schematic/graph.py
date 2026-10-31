@@ -35,10 +35,17 @@ def persist_schematic(
     label_to_node_id: dict[str, str] = {}
     nodes: list[SchematicNode] = []
 
+    import re as _re
+    def _norm(v):
+        return _re.sub(r"[^a-z0-9]+", " ", str(v or "").lower()).strip()
     known_components: dict[str, str] = {}
+    by_part: dict[str, list[str]] = {}
     if revision_id:
         for c in db.query(Component).filter(Component.revision_id == revision_id).all():
-            known_components[c.name.strip().lower()] = c.id
+            known_components[_norm(c.name)] = c.id
+            pn = _norm(getattr(c, "part_number", None))
+            if pn:
+                by_part.setdefault(pn, []).append(c.id)
 
     for extracted in result.nodes:
         try:
@@ -49,7 +56,12 @@ def persist_schematic(
         node = SchematicNode(
             document_id=document_id,
             chunk_id=chunk_id,
-            component_id=known_components.get(extracted.label.strip().lower()),
+            component_id=(
+                known_components.get(_norm(extracted.label))
+                or (by_part[_norm(extracted.part_number)][0]
+                    if extracted.part_number and len(by_part.get(_norm(extracted.part_number), [])) == 1
+                    else None)
+            ),
             label=extracted.label,
             symbol_type=symbol_type,
             description=extracted.description,
@@ -119,12 +131,21 @@ def schematic_to_machine_model(result: SchematicExtractionResult, source_documen
         )
         model.entities.append(MachineEntity(
             id=entity_id, name=node.label, entity_type=node.symbol_type,
-            properties={"description": node.description, "bbox": node.bbox}, evidence=[evidence],
-        ))
-        model.ports.append(MachinePort(
-            id=f"{entity_id}:terminal", entity_id=entity_id, name="terminal",
+            properties={"description": node.description, "bbox": node.bbox,
+                        "link_label": node.label,
+                        "link_normalized_label": node.label.strip().lower(),
+                        "link_part_number": getattr(node, "part_number", None)},
             evidence=[evidence],
         ))
+        # Real pins only. The old code gave every node one synthetic port
+        # called "terminal", which made a netlist impossible to trust and
+        # hid the fact that no pins were actually extracted.
+        for port in (getattr(node, "ports", None) or []):
+            model.ports.append(MachinePort(
+                id=f"{entity_id}:{port.name}", entity_id=entity_id, name=port.name,
+                properties={"bbox": port.bbox} if port.bbox else {},
+                evidence=[evidence],
+            ))
     for edge in result.edges:
         subject_id = id_by_label.get(edge.from_label)
         object_id = id_by_label.get(edge.to_label)
@@ -138,7 +159,10 @@ def schematic_to_machine_model(result: SchematicExtractionResult, source_documen
         model.relations.append(MachineRelation(
             subject_id=subject_id, subject_name=edge.from_label,
             relation_type="connected_to", object_id=object_id, object_name=edge.to_label,
-            description=f"{edge.wire_type} connection" + (f" ({edge.label})" if edge.label else ""),
+            description=(f"{edge.wire_type} connection"
+                         + (f" ({edge.label})" if edge.label else "")
+                         + (f" [{edge.from_port} -> {edge.to_port}]"
+                            if getattr(edge, "from_port", None) or getattr(edge, "to_port", None) else "")),
             evidence=[evidence],
         ))
     return model
