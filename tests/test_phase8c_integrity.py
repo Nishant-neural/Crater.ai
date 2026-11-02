@@ -23,16 +23,17 @@ def test_completeness_retains_unaccounted_fact(monkeypatch):
     assert result.model.unresolved_facts[0].source_id == fact.id
 
 def test_revision_inheritance_is_effective(monkeypatch):
+    # Code-first redesign: canonical id is a slug derived from the name,
+    # not an LLM-invented entity:p1. Lineage and source_ids are preserved.
     s=db(); p=Product(manufacturer="A",family="F",model="M"); s.add(p); s.flush(); parent=Revision(product_id=p.id,label="B"); s.add(parent); s.flush(); child=Revision(product_id=p.id,label="C",parent_revision_id=parent.id); s.add(child); s.flush()
     e=MachineKnowledgeEntity(revision_id=parent.id,name="Pump P1",entity_type="pump"); s.add(e); s.commit()
-    payload={"entities":[{"id":"entity:p1","name":"Pump P1","entity_type":"pump","source_ids":[e.id],"evidence":[]}],"relations":[],"ports":[],"quantities":[],"states":[],"events":[],"behaviors":[],"constraints":[],"procedures":[],"failure_modes":[],"conflicts":[],"unresolved_facts":[]}
-    class P:
-        def complete(self, **kwargs): return json.dumps(payload)
-    monkeypatch.setattr("backend.knowledge.global_integration.gateway.complete",lambda *args, **kwargs:P().complete())
+    import backend.knowledge.code_first_integration as cf
+    monkeypatch.setattr(cf, "adjudicate_clusters", lambda clusters: [])
     result=integrate_revision_knowledge(s,child.id)
     assert result.payload["revision_lineage"] == [parent.id, child.id]
+    assert result.model.entities[0].name == "Pump P1"
+    assert result.model.entities[0].id == "entity:pump-p1"
     assert result.model.entities[0].source_ids == [e.id]
-
 def test_graph_expansion_retrieves_related_failure_and_procedure():
     s=db(); p=Product(manufacturer="A",family="F",model="M"); s.add(p); s.flush(); r=Revision(product_id=p.id,label="A"); s.add(r); s.flush()
     model={"entities":[{"id":"entity:p101","name":"P-101","entity_type":"pump"},{"id":"entity:m1","name":"Motor M1","entity_type":"motor"}],"relations":[{"id":"rel:1","subject_id":"entity:p101","subject_name":"P-101","relation_type":"driven_by","object_id":"entity:m1","object_name":"Motor M1"}],"failure_modes":[{"id":"failure:overheat","name":"Pump overheating","entity_ids":["entity:p101"]}],"procedures":[{"id":"procedure:cool","name":"Inspect cooling","entity_ids":["entity:p101"]}]}

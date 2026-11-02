@@ -29,22 +29,24 @@ def test_global_context_contains_all_persisted_fact_types():
 
 
 def test_global_integration_resolves_duplicate_entities(monkeypatch):
+    # Code-first redesign: exact duplicates merge in code, no LLM call.
+    # Synonym pairs (Pump P1 / Hydraulic Pump P1) are adjudication
+    # candidates, covered in test_integration_code_first.py.
     db = make_db()
     product = Product(manufacturer="A", family="F", model="M")
     db.add(product); db.flush()
     revision = Revision(product_id=product.id, label="A")
     db.add(revision); db.flush()
     a = MachineKnowledgeEntity(revision_id=revision.id, name="Pump P1", entity_type="pump")
-    b = MachineKnowledgeEntity(revision_id=revision.id, name="Hydraulic Pump P1", entity_type="pump")
+    b = MachineKnowledgeEntity(revision_id=revision.id, name="pump p1", entity_type="pump")
     db.add_all([a, b]); db.flush(); db.commit()
-
-    payload = {"entities": [{"id": "entity:p1", "name": "Pump P1", "entity_type": "pump", "source_ids": [a.id, b.id], "evidence": []}], "relations": [], "ports": [], "quantities": [], "states": [], "events": [], "behaviors": [], "constraints": [], "procedures": [], "failure_modes": []}
-    class Provider:
-        def complete(self, **_kwargs): return json.dumps(payload)
-    monkeypatch.setattr("backend.knowledge.global_integration.gateway.complete", lambda *args, **kwargs: Provider().complete())
+    import backend.knowledge.code_first_integration as cf
+    monkeypatch.setattr(cf, "adjudicate_clusters", lambda clusters: [])
     result = integrate_revision_knowledge(db, revision.id)
-    assert result.model.entities[0].id == "entity:p1"
+    assert len(result.model.entities) == 1
+    assert result.model.entities[0].id == "entity:pump-p1"
     assert result.model.entities[0].name == "Pump P1"
+    assert set(result.model.entities[0].source_ids) == {a.id, b.id}
 
 
 def test_global_integration_normalizes_evidence_reference_without_fact():
