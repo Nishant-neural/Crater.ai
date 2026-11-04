@@ -204,13 +204,21 @@ def main() -> int:
         extract_chunk_knowledge,
         extract_chunk_knowledge_batch,
     )
-    from backend.llm import gateway as gateway_mod
+    # NOTE (fixed 2026-11-04): `from backend.llm import gateway` returns
+    # the ModelGateway *instance* (backend/llm/__init__.py re-exports it),
+    # not the gateway module -- so there is no `.gateway` attribute on it.
+    # component_extraction.py imports the same instance, so patching the
+    # instance's `complete` is what the extraction calls actually go through.
+    # The getattr fallback keeps this working if a project version ever
+    # exposes the module instead of the instance.
+    from backend.llm import gateway as _gateway_obj
+    gateway_instance = getattr(_gateway_obj, "gateway", _gateway_obj)
 
     # Log every raw LLM response (including repair retries) so an empty
     # result can be audited instead of guessed at.
     raw_log = open(args.raw, "w", encoding="utf-8")
     current_arm = {"name": None}
-    original_complete = gateway_mod.gateway.complete
+    original_complete = gateway_instance.complete
 
     def logged_complete(task, messages, max_tokens=None):
         started = time.monotonic()
@@ -233,7 +241,7 @@ def main() -> int:
             raise RuntimeError(err)
         return result
 
-    gateway_mod.gateway.complete = logged_complete
+    gateway_instance.complete = logged_complete
 
     arms = [a.strip() for a in args.arms.split(",") if a.strip()]
     report = {"db": db_path, "gold": {}, "arms": {}}
@@ -318,7 +326,7 @@ def main() -> int:
                 c_ = report["arms"]["full_batch"][name]
                 print(f"full_batch {name}: total={c_['total']} error={c_['error']}")
     finally:
-        gateway_mod.gateway.complete = original_complete
+        gateway_instance.complete = original_complete
         raw_log.close()
 
     # Pre-registered interpretation, printed with the numbers.

@@ -222,6 +222,36 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
                         reason=f"extraction_failed_after_retries: {str(exc)[:1000]}")
                 session.commit()
                 raise
+            # Empty-batch retry (batch fix, Nov 2026): a batch that parses
+            # as empty used to be marked knowledge_done and never revisited,
+            # which is how 21 OMNIPRO chunks stayed empty while their
+            # single-chunk extractions succeeded (gold test: small batch
+            # all empty, singles non-zero, same token cap). So, once per
+            # batch and only for chunks whose batch result is empty, try
+            # the single-chunk extractor once and keep its result if it
+            # yields anything. Bounded cost: at most one extra call per
+            # empty chunk, never per non-empty chunk, and never when the
+            # batch was already a single chunk (that result IS the single
+            # result, so retrying would just repeat the same call). If
+            # the retry itself fails, the chunk keeps its previous empty
+            # outcome and the failure is recorded in its empty reason
+            # below; a retry must never turn a previously successful
+            # (empty) batch into a job failure.
+            empty_retry_errors: dict[str, str] = {}
+            if len(batch) > 1:
+                for _retry_chunk in batch:
+                    _r0, _m0 = results[_retry_chunk.id]
+                    _has0 = bool(_r0 and (_r0.components or _r0.relationships or _r0.procedures)) or bool(_m0.entities or _m0.relations or _m0.ports or _m0.quantities or _m0.states or _m0.events or _m0.behaviors or _m0.constraints or _m0.procedures or _m0.failure_modes)
+                    if _has0:
+                        continue
+                    try:
+                        _single_result, _single_model = extract_chunk_knowledge(_retry_chunk.content)
+                    except Exception as exc:  # noqa: BLE001 - see comment above
+                        empty_retry_errors[_retry_chunk.id] = str(exc)[:500]
+                        continue
+                    _has_single = bool(_single_result and (_single_result.components or _single_result.relationships or _single_result.procedures)) or bool(_single_model.entities or _single_model.relations or _single_model.ports or _single_model.quantities or _single_model.states or _single_model.events or _single_model.behaviors or _single_model.constraints or _single_model.procedures or _single_model.failure_modes)
+                    if _has_single:
+                        results[_retry_chunk.id] = (_single_result, _single_model)
             for chunk in batch:
                 result, machine_model = results[chunk.id]
                 # Stale-ledger fix: a chunk that succeeds now must not keep
@@ -235,10 +265,13 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
                     # Empty extraction is not a crash, but it must be visible:
                     # the OMNIPRO DB had 15 text chunks with zero facts and
                     # no trace of why. This record is that trace.
+                    _empty_reason = "llm_returned_no_facts_for_chunk"
+                    if chunk.id in empty_retry_errors:
+                        _empty_reason = f"llm_returned_no_facts_for_chunk; single_retry_failed: {empty_retry_errors[chunk.id]}"
                     persist_unresolved_fact(session, revision_id=revision_id, source_id=chunk.id,
                         fact_type="chunk_extraction_empty",
                         payload={"chunk_id": chunk.id, "content_excerpt": chunk.content[:2000]},
-                        reason="llm_returned_no_facts_for_chunk")
+                        reason=_empty_reason)
                 _stamp_provenance(machine_model, document.title, chunk.page_number, chunk.id, chunk.chunk_type.value)
                 if (machine_model.entities or machine_model.relations or machine_model.ports or machine_model.quantities or machine_model.states or machine_model.events or machine_model.behaviors or machine_model.constraints or machine_model.procedures or machine_model.failure_modes):
                     # Per-fact quarantine: keep every usable fact, quarantine
