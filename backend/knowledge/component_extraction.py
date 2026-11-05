@@ -230,7 +230,41 @@ or UNCERTAIN when a value is not explicit:
 Also extract failure modes explicitly whenever the text describes a fault, symptom,
 troubleshooting entry, or "if X happens, check Y" pattern. A failure mode must
 carry its symptoms, possible causes, diagnostic test and expected observation
-whenever the text states them; do not invent a cause or test that is not stated."""
+whenever the text states them; do not invent a cause or test that is not stated.
+
+Evidence shape differs by collection: components and relationships use a single
+evidence object, as shown above; entities, relations, ports, quantities, states,
+events, behaviors, constraints and failure_modes use a list of evidence objects.
+In particular, a failure mode's evidence must be a list, never a single object."""
+
+
+def _normalize_extraction_item(key: str, item):
+    """Normalize one extracted item before schema validation.
+
+    Only conversions that preserve exactly what the model gave are done here:
+    - A bare string in a name-only collection (components, entities,
+      failure_modes) is a name with no other fields, not a different fact.
+      Batch runs returned components as plain strings ("Chipping Hammer");
+      converting them to {"name": ...} keeps the component instead of
+      failing the whole chunk. Other collections are left untouched: a
+      string cannot safely supply a relation's endpoints or a procedure's
+      type, so those still fail visibly and split to singles.
+    - A quantity's "parameter" field is its name under another label
+      (batch runs used {"parameter": "Power Input (Mig)", "value": ...}).
+      Copying it to "name" is an alias, not an invented value. The
+      original "parameter" field is kept, so nothing is lost.
+    Deliberately NOT done here: inventing a procedure_type, an entity_id,
+    or a relation endpoint. A missing required field still fails validation
+    visibly and triggers the pipeline's split-to-single recovery, rather
+    than being silently filled with a guessed value.
+    """
+    if isinstance(item, str) and item.strip() and key in ("components", "entities", "failure_modes"):
+        return {"name": item.strip()}
+    if not isinstance(item, dict):
+        return item
+    if key == "quantities" and not item.get("name") and isinstance(item.get("parameter"), str) and item["parameter"].strip():
+        item = {**item, "name": item["parameter"]}
+    return normalize_payload(item, kind=key[:-1] if key.endswith("s") else key)
 
 
 def _extract_result(content: str) -> MachineKnowledgeExtractionResult:
@@ -255,7 +289,7 @@ def _extract_result(content: str) -> MachineKnowledgeExtractionResult:
         # Apply one shared alias contract to every typed fact collection before validation.
         for key in ("components", "relationships", "procedures", "entities", "relations", "ports", "quantities", "states", "events", "behaviors", "constraints", "failure_modes"):
             if isinstance(payload.get(key), list):
-                payload[key] = [normalize_payload(item, kind=key[:-1] if key.endswith("s") else key) if isinstance(item, dict) else item for item in payload[key]]
+                payload[key] = [_normalize_extraction_item(key, item) for item in payload[key]]
         return MachineKnowledgeExtractionResult.model_validate(payload)
     except ValueError as exc:
         raise ExtractionError(f"LLM extraction schema validation failed: {exc}") from exc
@@ -265,24 +299,41 @@ _BATCH_EXTRACTION_PROMPT = """You are extracting structured technical knowledge 
 
 Process every excerpt independently. Do not merge facts between excerpts and do not move a fact from one source_chunk_id to another.
 Only extract what is explicitly stated. Do not infer or invent components, connections, or procedures.
-If an excerpt contains no extractable technical knowledge, return empty lists for that excerpt.
+If an excerpt contains no extractable technical knowledge (e.g. it is a cover page, table of contents, or legal boilerplate), return empty lists for that excerpt. A specification table, a troubleshooting table, and a procedure are extractable knowledge: do not return empty lists for them merely because they are tables or because a procedure starts mid-way through its steps.
 
-Return ONLY JSON in this shape:
+Return ONLY JSON in this shape. Every supplied source_chunk_id must appear exactly once, with its own knowledge object. The knowledge object uses exactly the field shapes below, which are the same shapes as the single-excerpt extraction contract. Do not invent other field names, and do not shorten an item to a bare string:
+
 {{
   "chunks": [
     {
       "source_chunk_id": "the exact supplied id",
       "knowledge": {{
-        "components": [], "relationships": [], "procedures": [],
-        "entities": [], "relations": [], "evidence": [], "ports": [],
-        "states": [], "quantities": [], "events": [], "behaviors": [], "constraints": [],
-        "failure_modes": []
-      }
+        "components": [{{"name": "", "function": "", "location_description": "", "part_number": "", "evidence": {{"fact": "", "source_type": "text", "confidence": 0.0, "extraction_method": "llm"}}}}],
+        "relationships": [{{"from_component": "", "to_component": "", "relation_type": "electrical|mechanical|fluid|signal|contains", "description": "", "evidence": {{"fact": "", "source_type": "text", "confidence": 0.0, "extraction_method": "llm"}}}}],
+        "procedures": [{{"name": "", "procedure_type": "installation|removal|calibration|maintenance|troubleshooting|replacement|verification", "steps": [""]}}],
+        "entities": [{{"id": "entity:p1", "name": "", "entity_type": "", "properties": {{}}, "ports": [], "states": [], "evidence": []}}],
+        "relations": [{{"subject_id": "", "subject_name": "", "relation_type": "", "object_id": "", "object_name": "", "description": "", "evidence": []}}],
+        "evidence": [],
+        "ports": [{{"id": "port:p1", "entity_id": "", "name": "", "direction": "", "properties": {{}}, "evidence": []}}],
+        "states": [{{"entity_id": "", "name": "", "value": "", "properties": {{}}, "evidence": []}}],
+        "quantities": [{{"id": "quantity:q1", "entity_id": "", "name": "", "value": "", "unit": "", "properties": {{}}, "evidence": []}}],
+        "events": [{{"id": "event:e1", "entity_id": "", "name": "", "description": "", "evidence": []}}],
+        "behaviors": [{{"id": "behavior:b1", "subject_id": "", "subject_name": "", "description": "", "evidence": []}}],
+        "constraints": [{{"id": "constraint:c1", "entity_id": "", "name": "", "description": "", "evidence": []}}],
+        "failure_modes": [{{"id": "failure:overheating", "name": "", "symptoms": [""], "possible_causes": [""], "diagnostic_test": "", "expected_observation": "", "repair_procedure_name": "", "entity_ids": [], "evidence": []}}]
+      }}
     }
   ]
 }}
 
-The knowledge object for each excerpt must use exactly the same field shapes as the single-excerpt extraction contract. Every supplied source_chunk_id must appear exactly once.
+Rules that the shape alone does not convey, and that previous batch runs got wrong:
+- A component is an object with a "name" field, never a bare string such as "Chipping Hammer". A bare string cannot be validated and loses the whole chunk.
+- A procedure always has both "name" and "procedure_type" (from the enum above). Do not use a "procedure_name" field and do not omit "procedure_type".
+- A quantity always has "name", "value" and "unit", plus "entity_id" (which may be "" when no entity is named). Do not use a "parameter" field in place of "name".
+- Evidence shape differs by collection: components and relationships use a single evidence object, as shown above; entities, relations, ports, quantities, states, events, behaviors, constraints and failure_modes use a list of evidence objects. In particular, a failure mode's evidence must be a list, never a single object, even though a component's evidence is a single object.
+- Also extract failure modes explicitly whenever an excerpt describes a fault, symptom, troubleshooting entry, or "if X happens, check Y" pattern. A failure mode must carry its symptoms, possible causes, diagnostic test and expected observation whenever the text states them; do not invent a cause or test that is not stated.
+- For a specification table, emit one quantity per numeric specification row (power input, current, duty cycle, OCV, wire speed, capacity, and so on), with the mode or component in the quantity name when the table is split by mode. Do not bury specification values only inside an entity's properties.
+- Use empty lists only where nothing was found for that collection in that excerpt, not as the default for a whole excerpt.
 
 EXCERPTS:
 __EXCERPTS__
@@ -355,12 +406,23 @@ def extract_chunk_knowledge_batch(chunks: list[tuple[str, str]]) -> dict[str, tu
         try:
             for key in ("components", "relationships", "procedures", "entities", "relations", "ports", "quantities", "states", "events", "behaviors", "constraints", "failure_modes"):
                 if isinstance(knowledge.get(key), list):
-                    knowledge[key] = [normalize_payload(item, kind=key[:-1] if key.endswith("s") else key) if isinstance(item, dict) else item for item in knowledge[key]]
+                    knowledge[key] = [_normalize_extraction_item(key, item) for item in knowledge[key]]
             result = MachineKnowledgeExtractionResult.model_validate(knowledge)
         except ValueError as exc:
             raise ExtractionError(f"LLM batch extraction schema validation failed for {chunk_id}: {exc}") from exc
         legacy = _legacy_result(result)
-        model = _universal_model_from_result(result) if _has_universal_facts(result) else _legacy_model(result)
+        try:
+            # Dict collections (ports, quantities, states, events, behaviors,
+            # constraints) are list[dict] at extraction stage, so they are
+            # not validated until _universal_model_from_result, where a
+            # malformed quantity used to raise an uncaught ValidationError
+            # that bypassed the pipeline's split recovery entirely. Wrap it
+            # as an ExtractionError so a batch splits to singles instead of
+            # failing the job, and a single chunk fails visibly as an
+            # ExtractionError rather than an unhandled validation error.
+            model = _universal_model_from_result(result) if _has_universal_facts(result) else _legacy_model(result)
+        except ValueError as exc:
+            raise ExtractionError(f"LLM batch extraction produced an unusable universal fact for {chunk_id}: {exc}") from exc
         out[chunk_id] = (legacy, model)
         seen.add(chunk_id)
 
@@ -383,7 +445,14 @@ def extract_chunk_knowledge(content: str) -> tuple[ExtractionResult, UniversalMa
     result = _extract_result(content)
     legacy = _legacy_result(result)
     if _has_universal_facts(result):
-        return legacy, _universal_model_from_result(result)
+        try:
+            return legacy, _universal_model_from_result(result)
+        except ValueError as exc:
+            # Same dict-collection validation gap as the batch path: turn
+            # an uncaught validation error into a handled ExtractionError
+            # so the pipeline records it for this chunk instead of failing
+            # with an unhandled exception.
+            raise ExtractionError(f"LLM extraction produced an unusable universal fact: {exc}") from exc
     return legacy, _legacy_model(result)
 
 

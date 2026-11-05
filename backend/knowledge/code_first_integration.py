@@ -40,8 +40,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 _GENERIC_WORDS = {
     "mechanism", "assembly", "unit", "system", "device", "component",
@@ -66,6 +69,18 @@ def _slug(value: object) -> str:
 
 def _tokens(value: object) -> set[str]:
     return {t for t in norm_name(value).split() if t not in _STOP_TOKENS}
+
+
+def _chunk_ids_of(entity: dict[str, Any]) -> set[str]:
+    """Chunk ids a canonical entity's source rows came from.
+
+    Used only for same-chunk relation disambiguation: a canonical
+    entity may have sources from several chunks, in which case its
+    chunk set has several entries and it cannot be picked by chunk
+    alone.
+    """
+    return {str(s.get("source_chunk_id")) for s in entity.get("sources") or []
+            if isinstance(s, dict) and s.get("source_chunk_id")}
 
 
 def _is_empty(value: Any) -> bool:
@@ -395,21 +410,32 @@ def build_code_first_payload(context: dict[str, Any]) -> dict[str, Any]:
         if isinstance(row, dict) and row.get("source_id"):
             node_label_by_id[str(row["source_id"])] = str(row.get("label", ""))
 
-    def resolve_name_to_canonical(name: str) -> tuple[str | None, list[dict[str, Any]]]:
+    def resolve_name_to_canonical(name: str, preferred_chunk_id: str = "") -> tuple[str | None, list[dict[str, Any]]]:
         candidates = canonical_by_name.get(norm_name(name), [])
         if len(candidates) == 1:
             return candidates[0]["id"], candidates
+        if preferred_chunk_id:
+            # Same-chunk disambiguation: the relation and its endpoints
+            # were extracted from one chunk, in one extraction output,
+            # so the names in that output co-refer to the entities in
+            # that same output. Keep only the candidates whose source
+            # rows came from the relation's own chunk. Exactly one
+            # remaining means the chunk itself disambiguates; zero or
+            # two-plus means it does not, and the link stays open.
+            in_chunk = [c for c in candidates if preferred_chunk_id in _chunk_ids_of(c)]
+            if len(in_chunk) == 1:
+                return in_chunk[0]["id"], candidates
         return None, candidates
 
-    def resolve_entity_id(entity_id: str, fallback_name: str = "") -> tuple[str | None, list[dict[str, Any]]]:
+    def resolve_entity_id(entity_id: str, fallback_name: str = "", preferred_chunk_id: str = "") -> tuple[str | None, list[dict[str, Any]]]:
         if entity_id in canonical_by_id:
             return entity_id, [canonical_by_id[entity_id]]
         # Extraction entity ids are usually entity:<slug-of-name>.
         slug = str(entity_id or "").removeprefix("entity:").replace("-", " ")
         if slug:
-            return resolve_name_to_canonical(slug)
+            return resolve_name_to_canonical(slug, preferred_chunk_id)
         if fallback_name:
-            return resolve_name_to_canonical(fallback_name)
+            return resolve_name_to_canonical(fallback_name, preferred_chunk_id)
         return None, []
 
     # --- Relations (universal + legacy + schematic edges) ---
@@ -425,8 +451,9 @@ def build_code_first_payload(context: dict[str, Any]) -> dict[str, Any]:
     clusters: list[dict[str, Any]] = []
     for source_id, subject_name, subject_id, object_name, object_id, row in relation_rows:
         relation_type = str(row.get("relation_type") or "unspecified")
-        subject_canonical, subject_candidates = resolve_entity_id(subject_id, subject_name)
-        object_canonical, object_candidates = resolve_entity_id(object_id, object_name)
+        preferred_chunk = str(row.get("source_chunk_id") or "")
+        subject_canonical, subject_candidates = resolve_entity_id(subject_id, subject_name, preferred_chunk)
+        object_canonical, object_candidates = resolve_entity_id(object_id, object_name, preferred_chunk)
         if subject_canonical and object_canonical:
             payload["relations"].append({
                 "subject_id": subject_canonical, "subject_name": subject_name,
@@ -451,8 +478,9 @@ def build_code_first_payload(context: dict[str, Any]) -> dict[str, Any]:
         from_name = component_name_by_id.get(str(row.get("from_component_id", "")), "")
         to_name = component_name_by_id.get(str(row.get("to_component_id", "")), "")
         relation_type = str(row.get("relation_type") or "unspecified")
-        subject_canonical, subject_candidates = resolve_name_to_canonical(from_name)
-        object_canonical, object_candidates = resolve_name_to_canonical(to_name)
+        preferred_chunk = str(row.get("source_chunk_id") or "")
+        subject_canonical, subject_candidates = resolve_name_to_canonical(from_name, preferred_chunk)
+        object_canonical, object_candidates = resolve_name_to_canonical(to_name, preferred_chunk)
         if subject_canonical and object_canonical:
             payload["relations"].append({
                 "subject_id": subject_canonical, "subject_name": from_name,
@@ -488,6 +516,28 @@ def build_code_first_payload(context: dict[str, Any]) -> dict[str, Any]:
             })
         else:
             add_unresolved(source_id, "schematic_edge", row, "schematic_edge_endpoint_not_uniquely_resolvable")
+
+    # --- Dedupe relations: a universal row and its legacy copy are the
+    # same logical relation (same endpoints, same type); keep one and
+    # union the source ids and evidence, as failure modes and
+    # procedures already do. Without this, resolving both copies
+    # would put the same relation in the snapshot twice.
+    _seen_relations: dict[tuple[str, str, str], dict[str, Any]] = {}
+    _deduped_relations: list[dict[str, Any]] = []
+    for _rel in payload["relations"]:
+        _key = (str(_rel.get("subject_id", "")), str(_rel.get("relation_type", "")),
+                str(_rel.get("object_id", "")))
+        _existing = _seen_relations.get(_key)
+        if _existing is None:
+            _seen_relations[_key] = _rel
+            _deduped_relations.append(_rel)
+        else:
+            _existing["source_ids"] = sorted(set(_existing.get("source_ids", [])) | set(_rel.get("source_ids", [])))
+            _existing["evidence"] = list(_existing.get("evidence", [])) + [
+                item for item in _rel.get("evidence", []) if item not in _existing.get("evidence", [])]
+            if not _existing.get("description") and _rel.get("description"):
+                _existing["description"] = _rel["description"]
+    payload["relations"] = _deduped_relations
 
     # --- Ports / quantities / states / events / constraints from universal facts ---
     for row in context.get("universal_facts", []) or []:
@@ -780,22 +830,34 @@ def adjudicate_clusters(clusters: list[dict[str, Any]]) -> list[dict[str, Any]]:
             + json.dumps(clusters, ensure_ascii=False, separators=(",", ":"))[:60000]
         )
         raw = gateway.complete("integration", messages=[{"role": "user", "content": prompt}], max_tokens=2000)
-    except Exception:
+    except Exception as exc:
+        # Log, don't swallow silently: a failed adjudication call is
+        # the difference between "the model declined to link" and
+        # "the call never completed", and the snapshot alone cannot
+        # tell them apart.
+        logger.warning("Adjudication call failed for %d clusters: %s", len(clusters), exc)
         return []
     if not raw:
+        logger.warning("Adjudication returned an empty response for %d clusters", len(clusters))
         return []
     try:
         parsed = json.loads(raw)
     except Exception:
         start, end = raw.find("{"), raw.rfind("}")
         if start < 0 or end <= start:
+            logger.warning("Adjudication response was unparseable for %d clusters", len(clusters))
             return []
         try:
             parsed = json.loads(raw[start:end + 1])
         except Exception:
+            logger.warning("Adjudication response was unparseable for %d clusters", len(clusters))
             return []
     decisions = parsed.get("decisions") if isinstance(parsed, dict) else None
-    return decisions if isinstance(decisions, list) else []
+    if not isinstance(decisions, list):
+        logger.warning("Adjudication response had no decisions list for %d clusters", len(clusters))
+        return []
+    logger.info("Adjudication returned %d decisions for %d clusters", len(decisions), len(clusters))
+    return decisions
 
 
 def apply_adjudication(state: dict[str, Any], decisions: list[dict[str, Any]]) -> None:
@@ -884,9 +946,22 @@ def apply_adjudication(state: dict[str, Any], decisions: list[dict[str, Any]]) -
                 subject_id, object_id = linked_id, object_candidates[0]
             else:
                 continue
+            relation_type = cluster.get("relation_type", "unspecified")
+            # Do not create a second copy of a relation code already
+            # resolved (e.g. by same-chunk disambiguation): fold this
+            # source into the existing relation and drop the unresolved
+            # record, so completeness stays honest.
+            existing = next((r for r in payload["relations"]
+                             if r.get("subject_id") == subject_id
+                             and r.get("relation_type") == relation_type
+                             and r.get("object_id") == object_id), None)
+            if existing is not None:
+                existing["source_ids"] = sorted(set(existing.get("source_ids", [])) | {source_id})
+                payload["unresolved_facts"] = [u for u in unresolved if str(u.get("source_id")) != source_id]
+                continue
             payload["relations"].append({
                 "subject_id": subject_id, "subject_name": cluster.get("subject_name", ""),
-                "relation_type": cluster.get("relation_type", "unspecified"),
+                "relation_type": relation_type,
                 "object_id": object_id, "object_name": cluster.get("object_name", ""),
                 "description": original.get("description") if isinstance(original, dict) else None,
                 "source_ids": [source_id], "evidence": [],
