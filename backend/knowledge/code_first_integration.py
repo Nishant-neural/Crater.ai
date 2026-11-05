@@ -504,6 +504,34 @@ def build_code_first_payload(context: dict[str, Any]) -> dict[str, Any]:
             entity_name = str(payload_dict.get("entity_name") or payload_dict.get("subject_name") or "")
             canonical_id, _ = resolve_entity_id(entity_id, entity_name)
             if not canonical_id:
+                # Quantities are the exception, mirroring validation.py:
+                # a specification quantity with a real name and a non-empty
+                # value is a fact about a mode / the whole machine even
+                # when no canonical entity resolves ("Mig Power Input",
+                # 120 VAC, entity_id "unresolved:entity"). Keep it with
+                # that placeholder untouched and its subject_name
+                # preserved, so it reaches the snapshot instead of being
+                # dropped twice (once by quarantine, once here). A
+                # quantity with an empty value or a placeholder name is
+                # not a measurement (a unit glossary) and stays
+                # unresolved, as before. Ports/states/events/constraints
+                # keep the old behaviour: unresolvable means unresolved.
+                if fact_type == "quantity":
+                    q_name = str(payload_dict.get("name") or entity_name or "").strip()
+                    q_value = payload_dict.get("value")
+                    q_value_text = "" if q_value is None else str(q_value).strip()
+                    if q_name and q_name != "Unresolved item" and q_value_text:
+                        item = dict(payload_dict)
+                        item["entity_id"] = entity_id or "unresolved:entity"
+                        item["subject_name"] = entity_name or q_name
+                        item["source_ids"] = [str(row.get("source_id", ""))]
+                        item.setdefault("evidence", _evidence_for_row(payload_dict))
+                        if not item.get("id"):
+                            item["id"] = f"quantity:{row.get('fact_key') or row.get('source_id')}"
+                        if not item.get("name"):
+                            item["name"] = q_name
+                        payload["quantities"].append(item)
+                        continue
                 add_unresolved(str(row.get("source_id", "")), fact_type, row, "fact_entity_not_uniquely_resolvable")
                 continue
             item = dict(payload_dict)

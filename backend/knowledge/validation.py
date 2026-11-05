@@ -101,7 +101,10 @@ def quarantine_machine_model(model: UniversalMachineModel) -> tuple[UniversalMac
     Quarantined (removed from the kept model, preserved as a ledger record):
     - duplicate entity ids (second occurrence)
     - relations whose subject or object entity is not in the kept set
-    - ports / quantities / states / events whose entity is not in the kept set
+    - ports / states / events whose entity is not in the kept set
+    - quantities whose entity is not in the kept set AND which carry no
+      usable measurement (empty value, or a placeholder name). See the
+      quantity rule below.
     - a second, conflicting value for the same (entity, state name)
     - facts with no id / name at all
 
@@ -112,6 +115,22 @@ def quarantine_machine_model(model: UniversalMachineModel) -> tuple[UniversalMac
       yet known -- the description itself is a fact, independent of the
       chunk it came from. Their missing link is recorded in the ledger
       for the pending-link pass, but the fact is kept.
+    - quantities with a real name and a non-empty value whose entity is
+      not in the kept set. A specification-table quantity is usually
+      about a welding mode or the whole machine ("Mig Power Input",
+      120 VAC), not about a named component extracted in the same
+      chunk, so its entity_id is the explicit placeholder
+      "unresolved:entity". Quarantining it discards a real, evidenced
+      measurement for a link that was never going to be in the chunk.
+      The quantity is kept with its entity_id left as the placeholder
+      (never guessed into an entity) and its subject_name preserved,
+      so the link stays visibly open. A quantity with a specific,
+      non-placeholder entity id that is not in the kept set is kept
+      the same way and gets a missing_link_note, since a later
+      revision-wide pass can still resolve it. Quantities with an
+      empty value or a placeholder name ("Unresolved item") are still
+      quarantined: a unit-abbreviation glossary (Vac, a, OcV, ...) is
+      not a measurement.
     - entities with an invalid bbox -- the bbox is stripped, the entity kept.
 
     No deterministic entity register is used here, and no fact is guessed
@@ -174,6 +193,34 @@ def quarantine_machine_model(model: UniversalMachineModel) -> tuple[UniversalMac
         else:
             kept_relations.append(rel)
 
+    def _keep_quantities(quantities, kept_ids, quarantined):
+        """Keep a quantity that is a real measurement, even unlinked."""
+        kept = []
+        for item in quantities:
+            eid = getattr(item, "entity_id", None)
+            if not eid or eid in kept_ids:
+                kept.append(item)
+                continue
+            name = str(getattr(item, "name", "") or "").strip()
+            value = getattr(item, "value", None)
+            value_text = "" if value is None else str(value).strip()
+            if name and name != "Unresolved item" and value_text:
+                # A real measurement about a mode / the whole machine:
+                # keep it with the placeholder entity_id untouched.
+                # Only a specific (non-placeholder) entity id gets a
+                # missing-link note, since that one could still resolve.
+                if not str(eid).startswith("unresolved:"):
+                    quarantined.append(unresolved_record(
+                        item.model_dump(mode="json") if hasattr(item, "model_dump") else dict(item),
+                        source_id=item.model_dump(mode="json").get("id") if hasattr(item, "model_dump") else None,
+                        fact_type="missing_link_note",
+                        reason=f"quantity_subject_not_in_kept_entities:{eid} (fact kept)",
+                    ))
+                kept.append(item)
+                continue
+            _quarantine("quantity", item, f"unresolved_entity_reference:{eid}")
+        return kept
+
     def _keep_linked(collection, kind):
         kept = []
         for item in collection:
@@ -185,7 +232,7 @@ def quarantine_machine_model(model: UniversalMachineModel) -> tuple[UniversalMac
         return kept
 
     kept_ports = _keep_linked(model.ports, "port")
-    kept_quantities = _keep_linked(model.quantities, "quantity")
+    kept_quantities = _keep_quantities(model.quantities, kept_ids, quarantined)
     kept_events = _keep_linked(model.events, "event")
 
     kept_states = []
