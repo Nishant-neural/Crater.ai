@@ -8,9 +8,12 @@ one canonical UniversalMachineModel.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy.orm import Session
 
@@ -147,12 +150,14 @@ def build_revision_knowledge_context(session: Session, revision_id: str) -> tupl
         "universal_entities": [
             {"source_id": r.id, "name": r.name, "entity_type": r.entity_type,
              "properties": r.properties or {}, "ports": r.ports or [], "states": r.states or [],
-             "evidence": _evidence_for(session, "entity", r.id)} for r in entities
+             "evidence": _evidence_for(session, "entity", r.id),
+             "source_chunk_id": r.source_chunk_id} for r in entities
         ],
         "universal_relations": [
             {"source_id": r.id, "subject_id": r.subject_id, "subject_name": r.subject_name,
              "relation_type": r.relation_type, "object_id": r.object_id, "object_name": r.object_name,
-             "description": r.description, "evidence": _evidence_for(session, "relation", r.id)} for r in relations
+             "description": r.description, "evidence": _evidence_for(session, "relation", r.id),
+             "source_chunk_id": r.source_chunk_id} for r in relations
         ],
         "universal_facts": [
             {"source_id": r.id, "fact_type": r.fact_type, "fact_key": r.fact_key,
@@ -888,6 +893,7 @@ def integrate_revision_knowledge(session: Session, revision_id: str, *, method: 
     if clusters:
         _progress(95, f"Adjudicating {len(clusters)} ambiguous clusters")
         decisions = adjudicate_clusters(clusters)
+        logger.info("Adjudication: %d clusters sent, %d decisions returned", len(clusters), len(decisions))
         if decisions:
             apply_adjudication(state, decisions)
             payload = state["payload"]

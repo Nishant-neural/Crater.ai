@@ -62,7 +62,25 @@ def normalize_payload(payload: Any, *, kind: str = "fact",
         if key in data and data[key] is None:
             data[key] = []
             warnings.append(f"null_list_normalized:{key}")
-        elif key in data and isinstance(data[key], str) and key != "evidence":
+        elif key == "evidence" and isinstance(data.get(key), dict):
+            # Batch/single prompt asymmetry: components show evidence as a
+            # single object, but failure modes (and all universal items)
+            # require evidence as a list. The model copies the component
+            # shape onto failure modes, which used to fail the whole chunk
+            # (OMNIPRO p10: 17 components, 4 relationships, 7 procedures
+            # and 2 failure modes lost to one dict-evidence field).
+            # Wrapping the dict preserves its text; it invents nothing.
+            data[key] = [data[key]]
+            warnings.append("dict_evidence_normalized:list")
+        elif key == "evidence" and isinstance(data.get(key), str):
+            data[key] = [{"fact": data[key]}]
+            warnings.append("scalar_evidence_normalized:list")
+        elif key == "evidence" and isinstance(data.get(key), list):
+            converted = [{"fact": el} if isinstance(el, str) else el for el in data[key]]
+            if converted != data[key]:
+                data[key] = converted
+                warnings.append("scalar_evidence_normalized:list")
+        elif key in data and isinstance(data[key], str):
             data[key] = [data[key]]
             warnings.append(f"scalar_list_normalized:{key}")
     if "id" not in data or data["id"] in (None, ""):
