@@ -44,6 +44,11 @@ def test_merge_failure_modes_same_name_merges():
 
 
 def test_integration_quarantine_keeps_good_entities():
+    # Updated Nov 2026 (relation endpoint recovery, crater-6): a relation
+    # whose endpoint was never listed as an entity is no longer dropped.
+    # The good Fan->Motor relation is kept, and so is Fan->Missing, with
+    # a minimal endpoint-derived stub entity for "Missing" -- the name
+    # comes verbatim from the relation, nothing else is invented.
     model = UniversalMachineModel(
         entities=[_entity("entity:fan", "Fan"), _entity("entity:motor", "Motor")],
         relations=[
@@ -52,9 +57,15 @@ def test_integration_quarantine_keeps_good_entities():
         ],
     )
     kept, quarantined = quarantine_machine_model(model)
-    assert [e.id for e in kept.entities] == ["entity:fan", "entity:motor"]
-    assert len(kept.relations) == 1
-    assert any(q["reason"].startswith("unresolved_entity_reference") for q in quarantined)
+    assert [e.id for e in kept.entities] == ["entity:fan", "entity:motor", "entity:missing"]
+    stub = next(e for e in kept.entities if e.id == "entity:missing")
+    assert stub.name == "Missing"
+    assert stub.properties == {"endpoint_derived": True}
+    assert len(kept.relations) == 2
+    assert any(q["fact_type"] == "missing_link_note"
+               and q["reason"].startswith("relation_endpoint_entity_derived_from_relation")
+               for q in quarantined)
+    assert not any(q["fact_type"] == "relation" for q in quarantined)
 
 
 def test_schematic_model_uses_real_ports_not_synthetic_terminal():

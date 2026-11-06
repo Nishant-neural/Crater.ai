@@ -1,9 +1,10 @@
 """Validation helpers for Phase 8A universal machine knowledge."""
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 
-from backend.knowledge.machine_model import UniversalMachineModel
+from backend.knowledge.machine_model import MachineEntity, UniversalMachineModel
 from backend.knowledge.normalization import unresolved_record
 
 
@@ -90,6 +91,21 @@ def _evidence_issues(label: str, evidence) -> list[str]:
 validate_model = validate_machine_model
 
 
+def _stub_id_for(endpoint_id: str, endpoint_name: str) -> str:
+    """Id for an endpoint-derived stub entity.
+
+    The endpoint id the relation already carries, unless it is empty
+    or an unresolved placeholder, in which case the slug of the
+    endpoint name. An empty name yields no id, so the caller keeps
+    the relation quarantined instead of inventing an entity.
+    """
+    eid = (endpoint_id or "").strip()
+    if eid and not eid.startswith("unresolved:"):
+        return eid
+    slug = re.sub(r"[^a-z0-9]+", "-", (endpoint_name or "").strip().lower()).strip("-")
+    return f"entity:{slug}" if slug else ""
+
+
 def quarantine_machine_model(model: UniversalMachineModel) -> tuple[UniversalMachineModel, list[dict]]:
     """Per-fact quarantine: keep every usable fact, quarantine only the unusable.
 
@@ -100,7 +116,10 @@ def quarantine_machine_model(model: UniversalMachineModel) -> tuple[UniversalMac
 
     Quarantined (removed from the kept model, preserved as a ledger record):
     - duplicate entity ids (second occurrence)
-    - relations whose subject or object entity is not in the kept set
+    - relations whose subject or object has no usable name at all, so
+      no endpoint entity can be recorded for it (see the endpoint
+      rule below: a relation with a named but unlisted endpoint is
+      kept, with a stub entity, not quarantined)
     - ports / states / events whose entity is not in the kept set
     - quantities whose entity is not in the kept set AND which carry no
       usable measurement (empty value, or a placeholder name). See the
@@ -131,6 +150,25 @@ def quarantine_machine_model(model: UniversalMachineModel) -> tuple[UniversalMac
       empty value or a placeholder name ("Unresolved item") are still
       quarantined: a unit-abbreviation glossary (Vac, a, OcV, ...) is
       not a measurement.
+    - relations whose endpoint entity was never listed in the chunk,
+      even though the relation itself was extracted with a name and
+      evidence for both endpoints. Dropping the relation loses a real,
+      stated connection (crater-6 lost all 11 of its relations this
+      way: cables and sockets named only inside a "plug X into Y"
+      step, the machine itself, the workpiece). Instead the relation
+      is kept and a minimal stub entity is recorded for each missing
+      endpoint: its id and name are taken verbatim from the relation,
+      no function, location or property is invented, it is marked
+      endpoint_derived in properties, and a missing_link_note records
+      that it was derived from the relation rather than directly
+      extracted. The stub is per chunk, like every other entity here;
+      integration groups it with same-name entities from other chunks
+      only under its usual no-conflict rules, so a stub for the whole
+      machine stays separate from the parts-list Welder when their
+      part numbers differ, exactly as prose Fan stays separate from
+      Fan 44. A relation is still quarantined when an endpoint has no
+      usable name, or its id belongs to an entity already quarantined
+      as a duplicate.
     - entities with an invalid bbox -- the bbox is stripped, the entity kept.
 
     No deterministic entity register is used here, and no fact is guessed
@@ -182,16 +220,73 @@ def quarantine_machine_model(model: UniversalMachineModel) -> tuple[UniversalMac
     kept_ids = {e.id for e in kept_entities}
 
     kept_relations = []
+    stub_ids: set[str] = set()
     for rel in model.relations:
-        if rel.subject_id not in kept_ids or rel.object_id not in kept_ids:
+        missing_sides = []
+        if rel.subject_id not in kept_ids:
+            missing_sides.append(("subject", rel.subject_id, rel.subject_name))
+        if rel.object_id not in kept_ids:
+            missing_sides.append(("object", rel.object_id, rel.object_name))
+        if not missing_sides:
+            kept_relations.append(rel)
+            continue
+        # Endpoint recovery: keep the relation and record a minimal
+        # stub entity for each missing endpoint (see docstring). The
+        # stub id is the endpoint id the relation already carries,
+        # unless it is empty or a placeholder, in which case it is
+        # the slug of the endpoint name; the relation is rewritten
+        # to that id only in that case, never otherwise.
+        rewritten = {"subject_id": rel.subject_id, "object_id": rel.object_id}
+        can_keep = True
+        for side, eid, name in missing_sides:
+            # A missing or placeholder name is not a thing: the model
+            # normalizer fills empty names with "Unresolved subject" /
+            # "Unresolved object", and a stub for that would invent an
+            # entity out of nothing. Only a real stated name may seed
+            # a stub.
+            if not (name or "").strip() or name.strip() in {
+                "Unresolved subject", "Unresolved object", "Unresolved item",
+            }:
+                can_keep = False
+                break
+            new_id = _stub_id_for(eid, name)
+            if not new_id:
+                can_keep = False
+                break
+            if new_id in kept_ids or new_id in stub_ids:
+                rewritten["subject_id" if side == "subject" else "object_id"] = new_id
+                continue
+            if new_id in seen_ids:
+                # The id belongs to an entity already quarantined as
+                # a duplicate: do not resurrect it as a stub.
+                can_keep = False
+                break
+            stub = MachineEntity(
+                id=new_id, name=name.strip(), entity_type="component",
+                properties={"endpoint_derived": True},
+                evidence=list(rel.evidence),
+            )
+            kept_entities.append(stub)
+            kept_ids.add(new_id)
+            stub_ids.add(new_id)
+            seen_ids.add(new_id)
+            quarantined.append(unresolved_record(
+                stub.model_dump(mode="json"), source_id=new_id,
+                fact_type="missing_link_note",
+                reason=f"relation_endpoint_entity_derived_from_relation:{rel.subject_name} {rel.relation_type} {rel.object_name} (fact kept)",
+            ))
+            rewritten["subject_id" if side == "subject" else "object_id"] = new_id
+        if not can_keep:
             missing = []
             if rel.subject_id not in kept_ids:
                 missing.append(f"subject:{rel.subject_id}")
             if rel.object_id not in kept_ids:
                 missing.append(f"object:{rel.object_id}")
             _quarantine("relation", rel, "unresolved_entity_reference:" + ",".join(missing))
-        else:
-            kept_relations.append(rel)
+            continue
+        if rewritten["subject_id"] != rel.subject_id or rewritten["object_id"] != rel.object_id:
+            rel = rel.model_copy(update=rewritten)
+        kept_relations.append(rel)
 
     def _keep_quantities(quantities, kept_ids, quarantined):
         """Keep a quantity that is a real measurement, even unlinked."""
