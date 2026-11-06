@@ -232,6 +232,15 @@ troubleshooting entry, or "if X happens, check Y" pattern. A failure mode must
 carry its symptoms, possible causes, diagnostic test and expected observation
 whenever the text states them; do not invent a cause or test that is not stated.
 
+Relation endpoints must exist as entities in the same output: every name you use as a
+relationship from_component/to_component or a relation subject_name/object_name
+must also appear as a component/entity in that same excerpt. Cables, sockets, connectors,
+torches and holders that a setup step plugs, connects or inserts are components --
+list them even when the text only names them inside that step. When a step connects
+something to the machine itself or to the workpiece, list the machine and the
+workpiece as entities too. Do not use a name in a relationship that you have not
+also listed as a component/entity.
+
 Evidence shape differs by collection: components and relationships use a single
 evidence object, as shown above; entities, relations, ports, quantities, states,
 events, behaviors, constraints and failure_modes use a list of evidence objects.
@@ -332,6 +341,7 @@ Rules that the shape alone does not convey, and that previous batch runs got wro
 - A quantity always has "name", "value" and "unit", plus "entity_id" (which may be "" when no entity is named). Do not use a "parameter" field in place of "name".
 - Evidence shape differs by collection: components and relationships use a single evidence object, as shown above; entities, relations, ports, quantities, states, events, behaviors, constraints and failure_modes use a list of evidence objects. In particular, a failure mode's evidence must be a list, never a single object, even though a component's evidence is a single object.
 - Also extract failure modes explicitly whenever an excerpt describes a fault, symptom, troubleshooting entry, or "if X happens, check Y" pattern. A failure mode must carry its symptoms, possible causes, diagnostic test and expected observation whenever the text states them; do not invent a cause or test that is not stated.
+- Relation endpoints must exist as entities in the same output: every name used as a relationship from_component/to_component or a relation subject_name/object_name must also appear as a component/entity in that same excerpt. Cables, sockets, connectors, torches and holders that a setup step plugs, connects or inserts are components -- list them even when the text only names them inside that step. When a step connects something to the machine itself or to the workpiece, list the machine and the workpiece as entities too. Do not use a name in a relationship that you have not also listed as a component/entity.
 - For a specification table, emit one quantity per numeric specification row (power input, current, duty cycle, OCV, wire speed, capacity, and so on), with the mode or component in the quantity name when the table is split by mode. Do not bury specification values only inside an entity's properties.
 - Use empty lists only where nothing was found for that collection in that excerpt, not as the default for a whole excerpt.
 
@@ -468,6 +478,34 @@ def extract_from_chunk_text(content: str) -> ExtractionResult:
     return extract_chunk_knowledge(content)[0]
 
 
+def _stub_component(session: Session, revision_id: str, source_chunk_id: str,
+                    name_to_id: dict[str, str], name: str | None) -> str | None:
+    """Persist a minimal component for a relation endpoint that was named
+    in a relationship but never listed as a component in this chunk.
+
+    Only the name is taken from the extraction output, verbatim; the
+    function, location and part number are left empty rather than
+    invented. The stub is registered in name_to_id, so a second
+    relationship in the same chunk reuses it instead of creating
+    another one. Returns None when there is no usable name, in which
+    case the caller queues the relationship as pending as before.
+    """
+    if not (name or "").strip():
+        return None
+    row = Component(
+        revision_id=revision_id,
+        name=name.strip(),
+        function="",
+        location_description="",
+        part_number="",
+        source_chunk_id=source_chunk_id,
+    )
+    session.add(row)
+    session.flush()  # get row.id without committing
+    name_to_id[name] = row.id
+    return row.id
+
+
 def persist_extraction(
     session: Session,
     revision_id: str,
@@ -491,8 +529,44 @@ def persist_extraction(
         name_to_id[comp.name] = row.id
 
     for rel in result.relationships:
+        try:
+            relation_type = RelationType(rel.relation_type)
+        except ValueError:
+            persist_unresolved_fact(
+                session, revision_id=revision_id,
+                source_id=f"pending-rel:{source_chunk_id}:{rel.from_component}->{rel.to_component}:{rel.relation_type}",
+                fact_type="pending_relationship",
+                payload={
+                    "from_component": rel.from_component,
+                    "to_component": rel.to_component,
+                    "relation_type": rel.relation_type,
+                    "description": rel.description,
+                    "source_chunk_id": source_chunk_id,
+                },
+                reason="invalid_relation_type",
+            )
+            continue
         from_id = name_to_id.get(rel.from_component)
         to_id = name_to_id.get(rel.to_component)
+        if not from_id:
+            # Endpoint recovery (Nov 2026, crater-6): the LLM named
+            # this endpoint in a relationship but never listed it as a
+            # component in this chunk (cables and sockets are the usual
+            # case: named only inside a "plug X into Y" step). Queuing
+            # it as pending loses the relation whenever the endpoint
+            # was never extracted as a component anywhere, which is
+            # exactly what happened to all 11 crater-6 relations. So
+            # record a minimal stub component for the missing endpoint
+            # instead: name verbatim from the relationship, nothing
+            # else invented (function/location/part_number empty), and
+            # persist the relationship against it. The universal model
+            # gets the matching endpoint-derived entity from validation,
+            # and code-first groups the two by name and chunk.
+            from_id = _stub_component(session, revision_id, source_chunk_id,
+                                      name_to_id, rel.from_component)
+        if not to_id:
+            to_id = _stub_component(session, revision_id, source_chunk_id,
+                                    name_to_id, rel.to_component)
         if not (from_id and to_id):
             # FIX: do not silently drop cross-chunk relationships. Queue them
             # as pending links; the pipeline resolves them after ALL chunks
@@ -510,23 +584,6 @@ def persist_extraction(
                     "source_chunk_id": source_chunk_id,
                 },
                 reason="cross_chunk_component_not_in_chunk",
-            )
-            continue
-        try:
-            relation_type = RelationType(rel.relation_type)
-        except ValueError:
-            persist_unresolved_fact(
-                session, revision_id=revision_id,
-                source_id=f"pending-rel:{source_chunk_id}:{rel.from_component}->{rel.to_component}:{rel.relation_type}",
-                fact_type="pending_relationship",
-                payload={
-                    "from_component": rel.from_component,
-                    "to_component": rel.to_component,
-                    "relation_type": rel.relation_type,
-                    "description": rel.description,
-                    "source_chunk_id": source_chunk_id,
-                },
-                reason="invalid_relation_type",
             )
             continue
         session.add(

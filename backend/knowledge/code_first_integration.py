@@ -433,7 +433,14 @@ def build_code_first_payload(context: dict[str, Any]) -> dict[str, Any]:
         # Extraction entity ids are usually entity:<slug-of-name>.
         slug = str(entity_id or "").removeprefix("entity:").replace("-", " ")
         if slug:
-            return resolve_name_to_canonical(slug, preferred_chunk_id)
+            canonical, candidates = resolve_name_to_canonical(slug, preferred_chunk_id)
+            if canonical:
+                return canonical, candidates
+        # The slug did not resolve (e.g. the extractor used an
+        # invented id such as entity:p3 for a named endpoint). Fall
+        # back to the endpoint name, which is the grounded part of
+        # the row. This only changes outcomes for relations that
+        # currently fail to resolve at all.
         if fallback_name:
             return resolve_name_to_canonical(fallback_name, preferred_chunk_id)
         return None, []
