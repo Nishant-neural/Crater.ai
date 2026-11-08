@@ -1,4 +1,4 @@
 export {
   startDiagnostic, getDiagnostic, getDiagnosticContext, respondDiagnostic,
-  recordDiagnosticOutcome, getMostInformativeTest, getGuidedPhysicalChecks
+  recordDiagnosticOutcome, getMostInformativeTest, getGuidedPhysicalChecks, verifyRepair
 } from "./client";

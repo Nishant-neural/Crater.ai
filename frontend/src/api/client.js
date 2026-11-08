@@ -37,12 +37,14 @@ export async function runSimulationHypotheses(twinId, payload) { return postJson
 export async function compileSimulationRevision(revisionId) { return postRequest(`/simulation/revisions/${revisionId}/compile`, "compile simulation"); }
 export async function getRevisionSimulation(revisionId) { return getJson(`/simulation/revisions/${revisionId}/twin`); }
 export async function getSimulationContext(twinId) { return getJson(`/simulation/twins/${twinId}/context`); }
+export async function getTwinVisual(twinId) { return getJson(`/simulation/twins/${twinId}/visual`); }
 
 export async function startDiagnostic(payload) { return postJson("/diagnose/start", payload, "start diagnostic"); }
 export async function getDiagnostic(sessionId) { return getJson(`/diagnose/${sessionId}`); }
 export async function getDiagnosticContext(sessionId) { return getJson(`/diagnose/${sessionId}/context`); }
 export async function respondDiagnostic(sessionId, payload) { return postJson(`/diagnose/${sessionId}/respond`, payload, "diagnostic response"); }
 export async function recordDiagnosticOutcome(sessionId, payload) { return postJson(`/diagnose/${sessionId}/outcome`, payload, "record repair outcome"); }
+export async function verifyRepair(sessionId, payload) { return postJson(`/diagnose/${sessionId}/verify-repair`, payload, "verify repair in twin"); }
 export async function getMostInformativeTest(sessionId) { return getJson(`/diagnose/${sessionId}/next-test`); }
 export async function getGuidedPhysicalChecks(sessionId) { return getJson(`/diagnose/${sessionId}/guided-checks`); }
 
