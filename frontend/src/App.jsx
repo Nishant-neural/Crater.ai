@@ -5,11 +5,12 @@ import DiagramViewer from "./technical-viewer/DiagramViewer";
 import ExpertKnowledge from "./components/ExpertKnowledge";
 import DigitalTwin from "./components/DigitalTwin";
 import SimulationAgent from "./components/SimulationAgent";
+import VisualTwin from "./components/VisualTwin";
 import MachineModelViewer from "./components/MachineModelViewer";
 import DiagnosticWorkspace from "./components/DiagnosticWorkspace";
 import "./App.css";
 
-const TABS = { DIAGNOSTIC: "diagnostic", MODEL: "model", EXPLORER: "explorer", PROCEDURE: "procedure", EXPERT: "expert", TWIN: "twin", SIMULATION: "simulation" };
+const TABS = { DIAGNOSTIC: "diagnostic", MODEL: "model", EXPLORER: "explorer", PROCEDURE: "procedure", EXPERT: "expert", TWIN: "twin", SIMULATION: "simulation", VISUAL: "visual" };
 
 /**
  * Crater.ai technician workstation. Phase 9 adds the end-to-end machine
@@ -23,6 +24,7 @@ export default function App() {
   const [activeChunkId, setActiveChunkId] = useState("");
   const [highlightLabels, setHighlightLabels] = useState([]);
   const [simulationContext, setSimulationContext] = useState(null);
+  const [visualContext, setVisualContext] = useState(null);
 
   useEffect(() => {
     const handler = (event) => {
@@ -33,6 +35,16 @@ export default function App() {
     window.addEventListener("crater-open-simulation", handler);
     return () => window.removeEventListener("crater-open-simulation", handler);
   }, [revisionId]);
+
+  useEffect(() => {
+    const openVisual = (event) => {
+      setVisualContext(event.detail || null);
+      if (event.detail?.revisionId) setRevisionId(event.detail.revisionId);
+      setTab(TABS.VISUAL);
+    };
+    window.addEventListener("crater-open-visual-twin", openVisual);
+    return () => window.removeEventListener("crater-open-visual-twin", openVisual);
+  }, []);
 
   function openAppearance(appearance) {
     setActiveChunkId(appearance.chunk_id);
@@ -74,6 +86,9 @@ export default function App() {
           <button className={tab === TABS.SIMULATION ? "active" : ""} onClick={() => setTab(TABS.SIMULATION)}>
             Simulation Agent
           </button>
+          <button className={tab === TABS.VISUAL ? "active" : ""} onClick={() => setTab(TABS.VISUAL)}>
+            Visual Twin
+          </button>
         </nav>
       </header>
 
@@ -104,7 +119,7 @@ export default function App() {
         </aside>
 
         <main className="app__main">
-          {tab === TABS.DIAGNOSTIC ? <DiagnosticWorkspace onMachineReady={({revisionId}) => { setRevisionId(revisionId); setTab(TABS.MODEL); }} /> : tab === TABS.MODEL ? <MachineModelViewer initialRevisionId={revisionId} /> : tab === TABS.EXPERT ? <ExpertKnowledge /> : tab === TABS.TWIN ? <DigitalTwin /> : tab === TABS.SIMULATION ? <SimulationAgent initialRevisionId={revisionId} diagnosticContext={simulationContext} /> : <DiagramViewer chunkId={activeChunkId} highlightLabels={highlightLabels} />}
+          {tab === TABS.DIAGNOSTIC ? <DiagnosticWorkspace onMachineReady={({revisionId}) => { setRevisionId(revisionId); setTab(TABS.MODEL); }} /> : tab === TABS.MODEL ? <MachineModelViewer initialRevisionId={revisionId} /> : tab === TABS.EXPERT ? <ExpertKnowledge /> : tab === TABS.TWIN ? <DigitalTwin /> : tab === TABS.SIMULATION ? <SimulationAgent initialRevisionId={revisionId} diagnosticContext={simulationContext} /> : tab === TABS.VISUAL ? <VisualTwin initialRevisionId={revisionId} visualContext={visualContext} /> : <DiagramViewer chunkId={activeChunkId} highlightLabels={highlightLabels} />}
         </main>
       </div>
     </div>

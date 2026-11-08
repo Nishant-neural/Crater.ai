@@ -3,7 +3,7 @@ import { listMachines } from "../api/machines";
 import { listRevisions } from "../api/revisions";
 import { getRevisionIngestionStatus } from "../api/client";
 import { startDiagnostic, getDiagnostic, getDiagnosticContext, respondDiagnostic,
-  recordDiagnosticOutcome, getMostInformativeTest, getGuidedPhysicalChecks } from "../api/diagnostics";
+  recordDiagnosticOutcome, getMostInformativeTest, getGuidedPhysicalChecks, verifyRepair } from "../api/diagnostics";
 import MachineOnboarding from "./MachineOnboarding";
 
 function Card({title, children, className=""}) {
@@ -51,6 +51,8 @@ export default function DiagnosticWorkspace({ onMachineReady }) {
   const [nextTest,setNextTest]=useState(null);
   const [guidedChecks,setGuidedChecks]=useState(null);
   const [feedbackBusy,setFeedbackBusy]=useState(false);
+  const [verification,setVerification]=useState(null);
+  const [verifyBusy,setVerifyBusy]=useState(false);
 
   async function loadMachines(selectProductId = null, selectRevisionId = null) {
     try {
@@ -138,6 +140,12 @@ export default function DiagnosticWorkspace({ onMachineReady }) {
     setFeedbackBusy(true); setError("");
     try { setOutcomeResult(await recordDiagnosticOutcome(session.session_id, outcomeForm)); }
     catch(e){setError(e.message)} finally{setFeedbackBusy(false)}
+  }
+  async function verifyRepairInTwin(){
+    if(!session) return;
+    setVerifyBusy(true); setError("");
+    try { setVerification(await verifyRepair(session.session_id, {cause: leading?.cause || "", repair_name: step?.content || ""})); }
+    catch(e){setError(e.message)} finally{setVerifyBusy(false)}
   }
 
   const state=session?.state;
@@ -308,7 +316,19 @@ export default function DiagnosticWorkspace({ onMachineReady }) {
           </>}
         </Card>
         <Card title="VERIFICATION">
-          <div className="verification-unavailable"><b>Simulation contract</b><p>Verification is only marked PASS/FAIL when a real digital-twin experiment is executed. No simulated success is shown here.</p><button onClick={()=>window.dispatchEvent(new CustomEvent("crater-open-simulation", {detail:{revisionId, sessionId:session?.session_id, hypothesis:leading?.cause || ""}}))}>Open simulation workspace</button></div>
+          {!isConclusion && <div className="verification-unavailable"><b>Simulation contract</b><p>Verification is only marked PASS/FAIL when a real digital-twin experiment is executed. No simulated success is shown here. Reach a grounded conclusion first, then verify its repair in the twin.</p></div>}
+          {isConclusion && !verification && <div className="verification-unavailable"><b>Simulation contract</b><p>Verification is only marked PASS/FAIL when a real digital-twin experiment is executed. No simulated success is shown here.</p><button onClick={verifyRepairInTwin} disabled={verifyBusy}>{verifyBusy ? "Running twin experiment…" : "Verify this repair in the twin"}</button></div>}
+          {isConclusion && verification && !verification.available && <div className="verification-unavailable"><b>Cannot verify yet</b><p>{verification.reason}</p><button onClick={()=>window.dispatchEvent(new CustomEvent("crater-open-simulation", {detail:{revisionId, sessionId:session?.session_id, hypothesis:leading?.cause || ""}}))}>Open simulation workspace</button></div>}
+          {isConclusion && verification?.available && <div className="verification-result">
+            <StatusPill tone={verification.verdict==="validated"?"ok":"warn"}>{verification.verdict==="validated"?"VALIDATED":"REJECTED"}</StatusPill>
+            <p>{verification.explanation}</p>
+            {verification.checks?.map((c,i)=><div className="verification-check" key={i}><b>{c.path}</b><span>expected {String(c.expected)} · actual {String(c.actual)}</span><i>{c.passed?"✓":"✗"}</i></div>)}
+            {verification.rules_used?.length>0 && <div className="verification-rules"><b>Rules used</b>{verification.rules_used.map(r=><div key={r.id}>{r.name}{r.description?` — ${r.description}`:""}</div>)}</div>}
+            {verification.procedure?.steps?.length>0 && <div className="verification-procedure"><b>Procedure: {verification.procedure.name}</b>{verification.procedure.steps.map((x,i)=><p key={i}>{i+1}. {x}</p>)}</div>}
+            {verification.intervention_trace?.length>0 && <details><summary>Intervention trace</summary>{verification.intervention_trace.map((t,i)=><p key={i}>{t}</p>)}</details>}
+            <button onClick={()=>window.dispatchEvent(new CustomEvent("crater-open-visual-twin", {detail:{revisionId, playback:{baseline_state:verification.baseline_state, fault_state:verification.fault_state, final_state:verification.final_state, fault_trace:verification.fault_trace, intervention_trace:verification.intervention_trace, fault_component_id:verification.fault_component_id, symptom_path:verification.symptom_path, verdict:verification.verdict}}}))}>Open visual twin</button>
+            <button onClick={verifyRepairInTwin} disabled={verifyBusy}>{verifyBusy ? "Re-running…" : "Re-run verification"}</button>
+          </div>}
         </Card>
       </aside>
     </div>
