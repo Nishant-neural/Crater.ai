@@ -161,7 +161,7 @@ def build_revision_knowledge_context(session: Session, revision_id: str) -> tupl
         ],
         "universal_facts": [
             {"source_id": r.id, "fact_type": r.fact_type, "fact_key": r.fact_key,
-             "payload": r.payload} for r in facts
+             "payload": r.payload, "source_chunk_id": r.source_chunk_id} for r in facts
         ],
         "behaviors": [
             {"source_id": r.id, "subject_id": r.subject_id, "subject_name": r.subject_name,
@@ -331,7 +331,8 @@ def _model_from_payload(payload: dict[str, Any]) -> UniversalMachineModel:
     failures = [MachineFailureMode(
         id=x["id"], source_ids=x.get("source_ids", []), name=x["name"], symptoms=x.get("symptoms", []), possible_causes=x.get("possible_causes", []),
         diagnostic_test=x.get("diagnostic_test"), expected_observation=x.get("expected_observation"),
-        repair_procedure_id=x.get("repair_procedure_id"), entity_ids=x.get("entity_ids", []), evidence=_ev(x.get("evidence")),
+        repair_procedure_id=x.get("repair_procedure_id"), entity_ids=x.get("entity_ids", []),
+        entity_names=x.get("entity_names", []), evidence=_ev(x.get("evidence")),
     ) for x in payload.get("failure_modes", []) if x.get("id") and x.get("name")]
     from backend.knowledge.machine_model import MachineConflict
     conflicts = [MachineConflict(id=x["id"], source_ids=x.get("source_ids", []), subject=x.get("subject", ""), property=x.get("property", ""), values=x.get("values", []), resolution=x.get("resolution"), status=x.get("status", "unresolved"), evidence=_ev(x.get("evidence"))) for x in payload.get("conflicts", []) if x.get("id")]

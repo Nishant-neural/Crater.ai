@@ -224,13 +224,36 @@ or UNCERTAIN when a value is not explicit:
     "events": [{{"id": "event:e1", "entity_id": "", "name": "", "description": "", "evidence": []}}],
     "behaviors": [{{"id": "behavior:b1", "subject_id": "", "subject_name": "", "description": "", "evidence": []}}],
     "constraints": [{{"id": "constraint:c1", "entity_id": "", "name": "", "description": "", "evidence": []}}],
-    "failure_modes": [{{"id": "failure:overheating", "name": "", "symptoms": [""], "possible_causes": [""], "diagnostic_test": "", "expected_observation": "", "repair_procedure_name": "", "entity_ids": [], "evidence": []}}]
+    "failure_modes": [{{"id": "failure:overheating", "name": "", "symptoms": [""], "possible_causes": [""], "diagnostic_test": "", "expected_observation": "", "repair_procedure_name": "", "entity_ids": [], "evidence": []}}],
+    "simulation_rules": [{{"id": "rule:feed-tension-fault", "name": "", "conditions": {{"Feed Tensioner.tension_ok": false}}, "effects": {{"Welding Wire.feeding": false}}, "description": "", "safety_notes": [], "evidence": []}}]
 }}
 
 Also extract failure modes explicitly whenever the text describes a fault, symptom,
 troubleshooting entry, or "if X happens, check Y" pattern. A failure mode must
 carry its symptoms, possible causes, diagnostic test and expected observation
 whenever the text states them; do not invent a cause or test that is not stated.
+A failure mode's entity_ids lists the ids of the entities from this same output
+that are named in its symptoms or possible causes (the component that fails),
+only when the text names them.
+
+Also extract states: the named operating states of each entity when the text
+states them -- a switch ON or OFF, a motor running or stopped, a valve open or
+closed, a connector inserted or not, a knob tightened or loose. A state's name
+is a short snake_case identifier (for example running, tension_ok, inserted),
+and its value is the value as stated, as a JSON boolean, number, or string.
+
+Also extract simulation rules, but ONLY when the text explicitly defines a
+machine-state transition -- an interlock, a sequence step, a protection trip,
+or a cause-and-effect statement such as "if X, then Y". Never infer a rule
+from a component type or a vague behaviour description, and never write a rule
+that only restates a procedure step without a state change. A rule's
+conditions and effects are mappings from "<Entity Name>.<state name>" to a
+JSON value, using the exact entity names and state names from this same
+output: the entity must also appear as an entity, and the state must also
+appear in states, with the same name. When the text states both directions --
+a fault and its recovery, for example "if tension is wrong the wire will not
+feed" and "tighten the tension knob until the wire feeds" -- emit both rules,
+one for each direction.
 
 Relation endpoints must exist as entities in the same output: every name you use as a
 relationship from_component/to_component or a relation subject_name/object_name
@@ -296,7 +319,7 @@ def _extract_result(content: str) -> MachineKnowledgeExtractionResult:
         if not isinstance(payload, dict):
             raise ValueError("extraction root must be an object")
         # Apply one shared alias contract to every typed fact collection before validation.
-        for key in ("components", "relationships", "procedures", "entities", "relations", "ports", "quantities", "states", "events", "behaviors", "constraints", "failure_modes"):
+        for key in ("components", "relationships", "procedures", "entities", "relations", "ports", "quantities", "states", "events", "behaviors", "constraints", "failure_modes", "simulation_rules"):
             if isinstance(payload.get(key), list):
                 payload[key] = [_normalize_extraction_item(key, item) for item in payload[key]]
         return MachineKnowledgeExtractionResult.model_validate(payload)
@@ -329,7 +352,8 @@ Return ONLY JSON in this shape. Every supplied source_chunk_id must appear exact
         "events": [{{"id": "event:e1", "entity_id": "", "name": "", "description": "", "evidence": []}}],
         "behaviors": [{{"id": "behavior:b1", "subject_id": "", "subject_name": "", "description": "", "evidence": []}}],
         "constraints": [{{"id": "constraint:c1", "entity_id": "", "name": "", "description": "", "evidence": []}}],
-        "failure_modes": [{{"id": "failure:overheating", "name": "", "symptoms": [""], "possible_causes": [""], "diagnostic_test": "", "expected_observation": "", "repair_procedure_name": "", "entity_ids": [], "evidence": []}}]
+        "failure_modes": [{{"id": "failure:overheating", "name": "", "symptoms": [""], "possible_causes": [""], "diagnostic_test": "", "expected_observation": "", "repair_procedure_name": "", "entity_ids": [], "evidence": []}}],
+        "simulation_rules": [{{"id": "rule:feed-tension-fault", "name": "", "conditions": {{"Feed Tensioner.tension_ok": false}}, "effects": {{"Welding Wire.feeding": false}}, "description": "", "safety_notes": [], "evidence": []}}]
       }}
     }
   ]
@@ -340,7 +364,9 @@ Rules that the shape alone does not convey, and that previous batch runs got wro
 - A procedure always has both "name" and "procedure_type" (from the enum above). Do not use a "procedure_name" field and do not omit "procedure_type".
 - A quantity always has "name", "value" and "unit", plus "entity_id" (which may be "" when no entity is named). Do not use a "parameter" field in place of "name".
 - Evidence shape differs by collection: components and relationships use a single evidence object, as shown above; entities, relations, ports, quantities, states, events, behaviors, constraints and failure_modes use a list of evidence objects. In particular, a failure mode's evidence must be a list, never a single object, even though a component's evidence is a single object.
-- Also extract failure modes explicitly whenever an excerpt describes a fault, symptom, troubleshooting entry, or "if X happens, check Y" pattern. A failure mode must carry its symptoms, possible causes, diagnostic test and expected observation whenever the text states them; do not invent a cause or test that is not stated.
+- Also extract failure modes explicitly whenever an excerpt describes a fault, symptom, troubleshooting entry, or "if X happens, check Y" pattern. A failure mode must carry its symptoms, possible causes, diagnostic test and expected observation whenever the text states them; do not invent a cause or test that is not stated. A failure mode's entity_ids lists the ids of the entities from the same excerpt that are named in its symptoms or possible causes, only when the text names them.
+- Also extract states: the named operating states of each entity when the text states them -- a switch ON or OFF, a motor running or stopped, a valve open or closed, a connector inserted or not. A state's name is a short snake_case identifier (for example running, tension_ok, inserted), and its value is the value as stated, as a JSON boolean, number, or string.
+- Also extract simulation rules, but ONLY when the text explicitly defines a machine-state transition -- an interlock, a sequence step, a protection trip, or a cause-and-effect statement such as "if X, then Y". Never infer a rule from a component type or a vague behaviour description, and never write a rule that only restates a procedure step without a state change. A rule's conditions and effects are mappings from "<Entity Name>.<state name>" to a JSON value, using the exact entity names and state names from the same excerpt: the entity must also appear as an entity, and the state must also appear in states, with the same name. When the text states both directions -- a fault and its recovery -- emit both rules, one for each direction.
 - Relation endpoints must exist as entities in the same output: every name used as a relationship from_component/to_component or a relation subject_name/object_name must also appear as a component/entity in that same excerpt. Cables, sockets, connectors, torches and holders that a setup step plugs, connects or inserts are components -- list them even when the text only names them inside that step. When a step connects something to the machine itself or to the workpiece, list the machine and the workpiece as entities too. Do not use a name in a relationship that you have not also listed as a component/entity.
 - For a specification table, emit one quantity per numeric specification row (power input, current, duty cycle, OCV, wire speed, capacity, and so on), with the mode or component in the quantity name when the table is split by mode. Do not bury specification values only inside an entity's properties.
 - Use empty lists only where nothing was found for that collection in that excerpt, not as the default for a whole excerpt.
@@ -414,7 +440,7 @@ def extract_chunk_knowledge_batch(chunks: list[tuple[str, str]]) -> dict[str, tu
         if not isinstance(knowledge, dict):
             raise ExtractionError(f"LLM batch extraction missing knowledge object for {chunk_id}")
         try:
-            for key in ("components", "relationships", "procedures", "entities", "relations", "ports", "quantities", "states", "events", "behaviors", "constraints", "failure_modes"):
+            for key in ("components", "relationships", "procedures", "entities", "relations", "ports", "quantities", "states", "events", "behaviors", "constraints", "failure_modes", "simulation_rules"):
                 if isinstance(knowledge.get(key), list):
                     knowledge[key] = [_normalize_extraction_item(key, item) for item in knowledge[key]]
             result = MachineKnowledgeExtractionResult.model_validate(knowledge)
@@ -470,7 +496,7 @@ def _has_universal_facts(result: MachineKnowledgeExtractionResult) -> bool:
     return any((
         result.entities, result.relations, result.ports, result.quantities,
         result.states, result.events, result.behaviors, result.constraints,
-        result.failure_modes,
+        result.failure_modes, result.simulation_rules,
     ))
 
 
@@ -707,6 +733,38 @@ def _universal_model_from_result(result: MachineKnowledgeExtractionResult) -> Un
         model.constraints.append(MachineConstraint.model_validate(item))
     for item in result.failure_modes:
         model.failure_modes.append(MachineFailureMode.model_validate(item.model_dump()))
+    # Simulation rules are plain dicts (conditions/effects keyed by
+    # "<Entity Name>.<state>"); they are validated for shape here and
+    # rewritten to canonical ids at integration, never at extraction.
+    for item in result.simulation_rules:
+        if not isinstance(item, dict):
+            raise ValueError("simulation rule must be an object")
+        model.simulation_rules.append(dict(item))
+    # Failure-mode entity links: the LLM references entities by their
+    # chunk-local ids ("entity:p1"). Translate those to entity NAMES here,
+    # while the id->name map is still in hand; integration resolves the
+    # names to canonical ids (unique match only, never guessed).
+    _local_names = {e.id: e.name for e in result.entities if e.id}
+    _name_by_norm = {e.name.strip().lower(): e.name for e in result.entities if e.name}
+    for fm in model.failure_modes:
+        names: list[str] = []
+        for ref in list(fm.entity_ids or []):
+            target = _local_names.get(str(ref)) or _name_by_norm.get(str(ref).strip().lower())
+            if target and target not in names:
+                names.append(target)
+        fm.entity_names = names
+    # Entity links for attached facts: a port/state/quantity/event/constraint
+    # references its entity by chunk-local id ("entity:p1"), which does not
+    # slug-resolve at integration when the LLM invented the id (the same
+    # "entity:p3" class of failure the v7 relation fallback fixed). Record
+    # the entity NAME alongside, while the id->name map is still in hand;
+    # integration uses it only as a fallback name, unique match only.
+    for _item in (list(model.ports) + list(model.quantities) + list(model.states)
+                  + list(model.events) + list(model.constraints)):
+        _target = _local_names.get(str(getattr(_item, "entity_id", "") or ""))
+        if _target and not (_item.properties or {}).get("entity_name"):
+            _item.properties = dict(_item.properties or {})
+            _item.properties["entity_name"] = _target
     # Merge legacy items that universal extraction did not already cover.
     legacy_model = _legacy_model(result)
     existing_entity_names = {e.name.strip().lower() for e in model.entities}

@@ -158,6 +158,7 @@ class MachineEvent(MachineModelBase):
     entity_id: str
     name: str
     description: str | None = None
+    properties: dict[str, Any] = Field(default_factory=dict)
     evidence: list[MachineEvidence] = Field(default_factory=list)
 
 
@@ -176,6 +177,7 @@ class MachineConstraint(MachineModelBase):
     entity_id: str | None = None
     name: str
     description: str
+    properties: dict[str, Any] = Field(default_factory=dict)
     evidence: list[MachineEvidence] = Field(default_factory=list)
 
 
@@ -199,6 +201,9 @@ class MachineFailureMode(MachineModelBase):
     expected_observation: str | None = None
     repair_procedure_id: str | None = None
     entity_ids: list[str] = Field(default_factory=list)
+    # Entity names the failure mode concerns (extraction-time basis for
+    # entity_ids); integration resolves these to canonical ids.
+    entity_names: list[str] = Field(default_factory=list)
     evidence: list[MachineEvidence] = Field(default_factory=list)
 
 
@@ -258,6 +263,9 @@ class UniversalMachineModel(MachineModelBase):
             ("procedure", item.id, item.model_dump(mode="json")) for item in self.procedures
         ] + [
             ("failure_mode", item.id, item.model_dump(mode="json")) for item in self.failure_modes
+        ] + [
+            ("simulation_rule", str(rule.get("id") or f"sim-rule:{i + 1}"), rule)
+            for i, rule in enumerate(self.simulation_rules) if isinstance(rule, dict)
         ]
 
     def entity_map(self) -> dict[str, MachineEntity]:
