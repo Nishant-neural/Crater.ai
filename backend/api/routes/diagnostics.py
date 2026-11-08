@@ -10,12 +10,14 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session as DBSession
 
 from backend.db.models import (
-    DiagnosticSession, Product, Revision, Document, Component, ComponentRelationship,
+    DiagnosticSession, DigitalTwin, Product, Revision, Document, Component, ComponentRelationship,
     MachineKnowledgeModelSnapshot, DiagnosticOutcome, Expert, ExpertInterview, ExpertInterviewTurn,
-    KnowledgeVersion, ExpertKnowledge, KnowledgeStatus, KnowledgeType, InterviewStatus,
+    KnowledgeVersion, ExpertKnowledge, KnowledgeStatus, KnowledgeType, InterviewStatus, TwinStatus,
 )
 from backend.db.session import get_session
 from backend.diagnostics.agent import run_turn, start_session
+from backend.simulation.schema import DigitalTwinDefinition
+from backend.simulation.verification import run_verified_repair
 from backend.diagnostics.schema import DiagnosticSessionView, DiagnosticState
 
 router = APIRouter(prefix="/diagnose", tags=["diagnostics"])
@@ -290,3 +292,142 @@ def guided_physical_checks(session_id: str, db: DBSession = Depends(get_session)
         })
     return {"session_id": session_id, "checks": checks[:10],
             "message": "Instructions are limited to stored documented tests; schematic label matches are candidates, not verified pin-level wiring."}
+
+
+class VerifyRepairRequest(BaseModel):
+    cause: str | None = None
+    repair_name: str | None = None
+
+
+def _norm_text(value: str | None) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
+@router.post("/{session_id}/verify-repair")
+def verify_repair(session_id: str, payload: VerifyRepairRequest, db: DBSession = Depends(get_session)):
+    """Prove the leading repair in the approved twin before anyone touches the machine.
+
+    Always returns HTTP 200 with ``available`` false when the twin cannot
+    evaluate the repair (no approved twin, cause does not resolve to one twin
+    component, no fault/recovery rule) -- unavailable is an answer, not an
+    error. A verdict is only reported when the twin actually ran the loop.
+    """
+    session = db.get(DiagnosticSession, session_id)
+    if not session:
+        raise HTTPException(404, "Diagnostic session not found")
+    state = DiagnosticState.model_validate(session.state)
+
+    cause = (payload.cause or "").strip() or (state.hypotheses[0].cause if state.hypotheses else "")
+    if not cause:
+        raise HTTPException(409, "No hypothesis to verify: this session has no leading cause yet")
+    repair_name = (payload.repair_name or "").strip() or (
+        state.current_step.content if state.current_step else cause)
+
+    def _unavailable(reason: str, fault_component_id: str | None = None) -> dict:
+        state.timeline.append({
+            "turn": state.turns_taken, "kind": "verify_repair", "input": repair_name,
+            "cause": cause, "available": False, "verdict": None, "reason": reason,
+            "fault_component_id": fault_component_id, "step_type": "verify_repair",
+            "step": f"Repair verification unavailable: {reason}",
+        })
+        session.state = state.model_dump(mode="json")
+        db.commit()
+        return {"session_id": session.id, "available": False, "verdict": None,
+                "reason": reason, "cause": cause, "repair_name": repair_name,
+                "fault_component_id": fault_component_id}
+
+    if not session.revision_id:
+        return _unavailable("This session has no revision, so there is no twin to verify against")
+    twin = (db.query(DigitalTwin)
+            .filter_by(revision_id=session.revision_id, status=TwinStatus.active)
+            .order_by(DigitalTwin.created_at.desc()).first())
+    if not twin:
+        return _unavailable("No approved twin exists for this revision yet; compile and approve one first")
+    definition = DigitalTwinDefinition.model_validate(twin.definition)
+
+    # The matched snapshot failure mode is the first source for the fault
+    # component; the snapshot also supplies the procedure citation.
+    snapshot_row = (db.query(MachineKnowledgeModelSnapshot)
+                    .filter_by(revision_id=session.revision_id)
+                    .order_by(MachineKnowledgeModelSnapshot.version.desc()).first())
+    snapshot_model = dict(snapshot_row.model or {}) if snapshot_row else {}
+    failure_mode: dict | None = None
+    norm_cause = _norm_text(cause)
+    for fm in snapshot_model.get("failure_modes") or []:
+        haystacks = [_norm_text(fm.get("name"))] + [_norm_text(s) for s in fm.get("symptoms") or []]
+        if any(h and (h in norm_cause or norm_cause in h) for h in haystacks):
+            failure_mode = fm
+            break
+
+    # Resolve the cause to ONE twin component: failure-mode entity_ids first,
+    # then a unique name match against twin components. Ambiguity stays open.
+    fault_component_id: str | None = None
+    component_ids = {c.id for c in definition.components}
+    for entity_id in (failure_mode or {}).get("entity_ids") or []:
+        if entity_id in component_ids:
+            fault_component_id = str(entity_id)
+            break
+    if fault_component_id is None:
+        matches = [c for c in definition.components
+                   if _norm_text(c.name) and _norm_text(c.name) in norm_cause]
+        if len(matches) == 1:
+            fault_component_id = matches[0].id
+        elif len(matches) == 0:
+            return _unavailable(
+                f"Could not match the cause {cause!r} to a component in this twin; "
+                "the twin cannot express this failure")
+        else:
+            return _unavailable(
+                f"The cause {cause!r} matches {len(matches)} twin components "
+                f"({', '.join(c.name for c in matches[:5])}); ambiguous, so no guess was made")
+
+    outcome = run_verified_repair(
+        definition, twin.state or {},
+        fault_component_id=fault_component_id,
+        repair_name=repair_name,
+        hypothesis=f"Repairing {cause} restores the machine to its healthy state.",
+    )
+
+    procedure: dict | None = None
+    for proc in snapshot_model.get("procedures") or []:
+        if _norm_text(proc.get("name")) and _norm_text(proc.get("name")) in _norm_text(repair_name):
+            procedure = proc
+            break
+    if procedure is None and state.current_step and state.current_step.procedure_steps:
+        procedure = {"name": repair_name, "steps": list(state.current_step.procedure_steps)}
+
+    rules_used = list(outcome.fault_rules) + list(outcome.recovery_rules)
+    summary = (
+        f"Repair verification: {outcome.verdict}" if outcome.available
+        else f"Repair verification unavailable: {outcome.reason}")
+    state.timeline.append({
+        "turn": state.turns_taken, "kind": "verify_repair", "input": repair_name,
+        "cause": cause, "available": outcome.available, "verdict": outcome.verdict,
+        "reason": outcome.reason, "fault_component_id": fault_component_id,
+        "symptom_path": outcome.symptom_path, "rules_used": rules_used,
+        "step_type": "verify_repair", "step": summary,
+    })
+    session.state = state.model_dump(mode="json")
+    db.commit()
+
+    result = outcome.result
+    return {
+        "session_id": session.id, "available": outcome.available,
+        "verdict": outcome.verdict, "reason": outcome.reason,
+        "cause": cause, "repair_name": repair_name,
+        "fault_component_id": fault_component_id,
+        "symptom_path": outcome.symptom_path,
+        "symptom_expected": outcome.symptom_expected,
+        "failure_mode": (failure_mode or {}).get("name"),
+        "procedure": procedure,
+        "rules_used": rules_used,
+        "checks": result.checks if result else [],
+        "fault_trace": result.fault_trace if result else [],
+        "intervention_trace": result.intervention_trace if result else [],
+        "baseline_state": result.baseline_state if result else None,
+        "fault_state": result.fault_state if result else None,
+        "final_state": result.final_state if result else None,
+        "explanation": result.explanation if result else None,
+        "warnings": (result.warnings if result else [])
+            + ["Verification runs in an isolated twin copy; it is not proof of physical safety."],
+    }

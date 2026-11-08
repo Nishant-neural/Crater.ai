@@ -11,6 +11,8 @@ from backend.simulation.schema import DigitalTwinDefinition
 from backend.simulation.simulation_schema import ExperimentRequest, ExperimentResult, HypothesisBatchRequest, HypothesisBatchResult
 from backend.simulation.agent import run_experiment, run_hypotheses
 from backend.simulation.compiler import compile_machine_model
+from backend.simulation.expert_rules import apply_expert_seed, load_seed_for_product
+from backend.simulation.visual import layout_twin
 from backend.knowledge.global_integration import _model_from_payload
 from backend.simulation.service import create_twin, snapshot
 
@@ -31,11 +33,24 @@ def compile_revision(revision_id: str, db: Session = Depends(get_session)):
     if not row:
         raise HTTPException(409, "No canonical machine model has been integrated for this revision")
     model = _model_from_payload(row.model)
+    # Expert seed: hand-checked rules for this machine family, resolved by
+    # entity name into a copy of the model before compiling. Unique match
+    # only -- an ambiguous name is skipped and named in the warnings, never
+    # guessed. The twin records which seed rules applied, in its metadata.
+    seed = load_seed_for_product(product.manufacturer if product else None, product.model if product else None)
+    seed_applied = None
+    seed_warnings: list[str] = []
+    if seed is not None:
+        model, seed_warnings, seed_applied = apply_expert_seed(model, seed)
     definition, warnings = compile_machine_model(
         model,
         name=f"{product.manufacturer} {product.model} — {revision.label} Simulation" if product else f"Revision {revision.label} Simulation",
         description="Functional simulation compiled from Crater.ai's canonical machine model.",
     )
+    warnings = list(warnings) + seed_warnings
+    definition.metadata["compiler_warnings"] = list(warnings)
+    if seed_applied is not None:
+        definition.metadata["expert_seed"] = seed_applied
     # Replace the latest compiled twin for this revision; historical event logs remain attached to older twins.
     twin = DigitalTwin(
         product_id=revision.product_id,
@@ -85,6 +100,18 @@ def twin_context(twin_id: str, db: Session = Depends(get_session)):
         raise HTTPException(404, "Digital twin not found")
     definition = _definition(twin)
     return {"twin_id": twin.id, "revision_id": twin.revision_id, "definition": definition.model_dump(mode="json"), "snapshot": snapshot(twin)}
+
+
+@router.get("/twins/{twin_id}/visual")
+def twin_visual(twin_id: str, db: Session = Depends(get_session)):
+    """Render-ready layout of a compiled twin: components as nodes, canonical relations as edges."""
+    twin = db.get(DigitalTwin, twin_id)
+    if not twin:
+        raise HTTPException(404, "Digital twin not found")
+    definition = _definition(twin)
+    return {"twin_id": twin.id, "revision_id": twin.revision_id, "name": twin.name,
+            "status": twin.status.value, "model_version": twin.model_version,
+            **layout_twin(definition, twin.state or {})}
 
 
 @router.post("/twins/{twin_id}/experiment", response_model=ExperimentResult)

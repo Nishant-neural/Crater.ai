@@ -106,6 +106,31 @@ def _conflicting_keys(a: dict, b: dict) -> list[str]:
     return keys
 
 
+# Hard identity signals: the properties that identify a physical component.
+# Descriptive prose (notably `function`, which is LLM-paraphrased and the
+# usual reason two subgroups of one part split) is NOT an identity signal.
+_HARD_IDENTITY_KEYS = ("part_number", "location_description", "voltage")
+
+
+def _hard_identity_conflict(a: dict, b: dict) -> bool:
+    """True when a hard identity signal differs between two property sets.
+
+    Part number, location and voltage identify a physical component; a
+    differing `function` string does not -- it is usually two paraphrases
+    of the same job ("Applies tension to the feed roller/wire" vs
+    "Applies pressure to wire feed"). Vetoing a merge on prose made an
+    LLM merge decision unenforceable for exactly the clusters that need
+    adjudication most, so the veto checks only these keys.
+    """
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        return False
+    for key in _HARD_IDENTITY_KEYS:
+        va, vb = a.get(key), b.get(key)
+        if not _is_empty(va) and not _is_empty(vb) and str(va) != str(vb):
+            return True
+    return False
+
+
 def source_fingerprint(context: dict[str, Any]) -> str:
     """Stable hash of the source rows, for the pre-LLM idempotency check."""
     parts: list[str] = []
@@ -348,6 +373,8 @@ def _failure_mode_sources(context: dict[str, Any]) -> list[dict[str, Any]]:
             "diagnostic_test": row.get("diagnostic_test") or "",
             "expected_observation": row.get("expected_observation") or "",
             "evidence": _evidence_for_row(row),
+            "entity_links": [],
+            "source_chunk_id": str(row.get("source_chunk_id", "")),
         })
     for row in context.get("universal_facts", []) or []:
         if not isinstance(row, dict) or row.get("fact_type") != "failure_mode":
@@ -363,6 +390,13 @@ def _failure_mode_sources(context: dict[str, Any]) -> list[dict[str, Any]]:
             "diagnostic_test": payload.get("diagnostic_test") or "",
             "expected_observation": payload.get("expected_observation") or "",
             "evidence": _evidence_for_row(payload),
+            # Entity names from extraction (local ids translated to names
+            # while the id->name map was still in hand). Resolved to
+            # canonical ids in the payload builder, unique match only.
+            "entity_links": [{"name": n, "chunk": str(row.get("source_chunk_id", ""))}
+                             for n in (payload.get("entity_names") or [])
+                             if isinstance(n, str) and n.strip()],
+            "source_chunk_id": str(row.get("source_chunk_id", "")),
         })
     return sources
 
@@ -556,10 +590,20 @@ def build_code_first_payload(context: dict[str, Any]) -> dict[str, Any]:
             continue
         if fact_type == "failure_mode":
             continue  # handled with legacy failure modes below
+        if fact_type == "simulation_rule":
+            continue  # handled in the simulation-rules pass below (needs states first)
         if fact_type in ("port", "quantity", "state", "event", "constraint"):
             entity_id = str(payload_dict.get("entity_id") or "")
-            entity_name = str(payload_dict.get("entity_name") or payload_dict.get("subject_name") or "")
-            canonical_id, _ = resolve_entity_id(entity_id, entity_name)
+            # Fallback name order matters: properties.entity_name is the
+            # entity name stamped at extraction; subject_name is NOT the
+            # entity name for states (the normalizer maps a state's own
+            # "name" there), so it comes last. Same-chunk preference, as
+            # for relations: the fact and its entity came from one output.
+            entity_name = str(payload_dict.get("entity_name")
+                              or (payload_dict.get("properties") or {}).get("entity_name")
+                              or payload_dict.get("subject_name") or "")
+            canonical_id, _ = resolve_entity_id(entity_id, entity_name,
+                                                str(row.get("source_chunk_id") or ""))
             if not canonical_id:
                 # Quantities are the exception, mirroring validation.py:
                 # a specification quantity with a real name and a non-empty
@@ -630,6 +674,82 @@ def build_code_first_payload(context: dict[str, Any]) -> dict[str, Any]:
                 item["source_ids"] = [str(row.get("source_id", ""))]
                 payload["states"].append(item)
 
+    # --- Simulation rules (after states: the veto needs known fields) ---
+    # A rule's paths are "<Entity Name>.<state>" at extraction time (or a
+    # canonical id, if the extractor wrote one). Each path is rewritten to
+    # a canonical id, unique-only with same-chunk preference, and the field
+    # must be a state the resolved entity actually has (from payload states
+    # or its initial_state). Anything else stays unresolved -- a rule is
+    # never guessed into an identity, and a bad rule never blocks the rest.
+    _known_fields: dict[str, set[str]] = {}
+    for _st in payload["states"]:
+        if isinstance(_st, dict) and _st.get("entity_id") and _st.get("name"):
+            _known_fields.setdefault(str(_st["entity_id"]), set()).add(
+                str(_st["name"]).strip().lower().replace(" ", "_"))
+    for _ent in payload["entities"]:
+        _init = (_ent.get("properties") or {}).get("initial_state")
+        if isinstance(_init, dict):
+            _known_fields.setdefault(_ent["id"], set()).update(
+                str(k).strip().lower().replace(" ", "_") for k in _init)
+    _rule_groups: dict[str, dict[str, Any]] = {}
+    for _row in context.get("universal_facts", []) or []:
+        if not isinstance(_row, dict) or _row.get("fact_type") != "simulation_rule":
+            continue
+        _rule = _row.get("payload") or {}
+        if not isinstance(_rule, dict):
+            add_unresolved(str(_row.get("source_id", "")), "simulation_rule", _row,
+                           "simulation_rule_not_object")
+            continue
+        _conds, _effs = _rule.get("conditions"), _rule.get("effects")
+        if not isinstance(_conds, dict) or not _conds or not isinstance(_effs, dict) or not _effs:
+            add_unresolved(str(_row.get("source_id", "")), "simulation_rule", _row,
+                           "simulation_rule_missing_conditions_or_effects")
+            continue
+        _chunk = str(_row.get("source_chunk_id") or "")
+        _new_conds: dict[str, Any] = {}
+        _new_effs: dict[str, Any] = {}
+        _bad: str | None = None
+        for _mapping, _out in ((_conds, _new_conds), (_effs, _new_effs)):
+            for _path, _value in _mapping.items():
+                if not isinstance(_path, str) or "." not in _path:
+                    _bad = f"simulation_rule_bad_path:{_path}"
+                    break
+                _head, _field = _path.split(".", 1)
+                _cid, _ = resolve_entity_id(_head, _head, _chunk)
+                if not _cid:
+                    _bad = f"simulation_rule_path_not_uniquely_resolvable:{_path}"
+                    break
+                _key = _field.strip().lower().replace(" ", "_")
+                if _key not in _known_fields.get(_cid, set()):
+                    _bad = f"simulation_rule_unknown_state:{_path}"
+                    break
+                _out[f"{_cid}.{_key}"] = _value
+            if _bad:
+                break
+        if _bad:
+            add_unresolved(str(_row.get("source_id", "")), "simulation_rule", _row, _bad)
+            continue
+        _dedup = json.dumps({"c": _new_conds, "e": _new_effs}, sort_keys=True, default=str)
+        _group = _rule_groups.get(_dedup)
+        if _group is None:
+            _rule_groups[_dedup] = {
+                "id": str(_rule.get("id") or ""),
+                "name": str(_rule.get("name") or ""),
+                "conditions": _new_conds, "effects": _new_effs,
+                "description": str(_rule.get("description") or ""),
+                "safety_notes": list(_rule.get("safety_notes") or []),
+                "source_ids": [str(_row.get("source_id", ""))],
+                "evidence": _evidence_for_row(_rule),
+            }
+        else:
+            _group["source_ids"].append(str(_row.get("source_id", "")))
+            _group["evidence"].extend(x for x in _evidence_for_row(_rule) if x not in _group["evidence"])
+    for _i, _group in enumerate(_rule_groups.values()):
+        if not _group["id"]:
+            _group["id"] = f"sim-rule:{_i + 1}"
+        _group["source_ids"] = sorted(set(s for s in _group["source_ids"] if s))
+        payload["simulation_rules"].append(_group)
+
     # --- Behaviors ---
     for row in context.get("behaviors", []) or []:
         if not isinstance(row, dict):
@@ -697,9 +817,14 @@ def build_code_first_payload(context: dict[str, Any]) -> dict[str, Any]:
                                    "possible_causes": list(fm["possible_causes"]),
                                    "diagnostic_test": fm["diagnostic_test"],
                                    "expected_observation": fm["expected_observation"],
-                                   "source_ids": [fm["source_id"]], "evidence": list(fm["evidence"])}
+                                   "source_ids": [fm["source_id"]], "evidence": list(fm["evidence"]),
+                                   "entity_links": list(fm.get("entity_links") or [])}
         else:
             existing["source_ids"].append(fm["source_id"])
+            _seen_link_names = {str(l.get("name", "")).strip().lower() for l in existing["entity_links"]}
+            for _link in fm.get("entity_links") or []:
+                if str(_link.get("name", "")).strip().lower() not in _seen_link_names:
+                    existing["entity_links"].append(_link)
             existing["symptoms"] = list(dict.fromkeys(existing["symptoms"] + fm["symptoms"]))
             existing["possible_causes"] = list(dict.fromkeys(existing["possible_causes"] + fm["possible_causes"]))
             if not existing["diagnostic_test"] and fm["diagnostic_test"]:
@@ -708,11 +833,20 @@ def build_code_first_payload(context: dict[str, Any]) -> dict[str, Any]:
                 existing["expected_observation"] = fm["expected_observation"]
             existing["evidence"].extend(item for item in fm["evidence"] if item not in existing["evidence"])
     for key, fm in failure_groups.items():
+        _fm_entity_ids: list[str] = []
+        for _link in fm.get("entity_links") or []:
+            _lname = str(_link.get("name") or "").strip()
+            if not _lname:
+                continue
+            _cid, _ = resolve_name_to_canonical(_lname, str(_link.get("chunk") or ""))
+            if _cid and _cid not in _fm_entity_ids:
+                _fm_entity_ids.append(_cid)
         payload["failure_modes"].append({
             "id": f"failure:{_slug(fm['name'])}", "name": fm["name"],
             "symptoms": fm["symptoms"], "possible_causes": fm["possible_causes"],
             "diagnostic_test": fm["diagnostic_test"], "expected_observation": fm["expected_observation"],
-            "repair_procedure_id": None, "entity_ids": [],
+            "repair_procedure_id": None, "entity_ids": _fm_entity_ids,
+            "entity_names": sorted({str(l.get("name")) for l in fm.get("entity_links") or [] if l.get("name")}),
             "source_ids": sorted(set(fm["source_ids"])), "evidence": fm["evidence"],
         })
 
@@ -780,6 +914,7 @@ def build_code_first_payload(context: dict[str, Any]) -> dict[str, Any]:
 
     payload["unresolved_facts"] = unresolved
     return {"payload": payload, "clusters": clusters,
+            "canonical": canonical,
             "canonical_by_id": canonical_by_id, "canonical_by_name": canonical_by_name}
 
 
@@ -871,6 +1006,9 @@ def apply_adjudication(state: dict[str, Any], decisions: list[dict[str, Any]]) -
     """Apply adjudication decisions to a code-first payload, with code vetoes."""
     payload = state["payload"]
     canonical_by_id = state["canonical_by_id"]
+    # Canonical entities already merged away by an earlier decision in this
+    # run: they must not be resolved (and merged) a second time.
+    merged_away: set[int] = set()
     for decision in decisions:
         if not isinstance(decision, dict):
             continue
@@ -886,14 +1024,59 @@ def apply_adjudication(state: dict[str, Any], decisions: list[dict[str, Any]]) -
             candidate_ids = [str(c.get("id")) for c in cluster.get("candidates", []) if isinstance(c, dict)]
             if kept_id not in candidate_ids:
                 continue
-            kept = canonical_by_id.get(kept_id)
-            others = [canonical_by_id[cid] for cid in candidate_ids if cid != kept_id and cid in canonical_by_id]
-            # Veto: merging candidates with different non-empty part numbers,
-            # locations or other distinguishing properties is never allowed,
-            # even if the LLM proposes it.
+            # Resolve candidates to canonical entities by id AND source
+            # rows: two distinct entities can share a canonical id (the
+            # known Welder collision -- universal and legacy groupings
+            # assign the same suffix independently), so id alone cannot
+            # tell them apart. Each cluster candidate carries its own
+            # source_ids, and that is the identity that disambiguates.
+            # If any candidate cannot be resolved to exactly one entity,
+            # the merge is skipped: ambiguity stays open, never guessed,
+            # never dropped.
+            canonical_list = state.get("canonical") or list(canonical_by_id.values())
+
+            def _resolve(candidate):
+                cid = str(candidate.get("id"))
+                want = set(candidate.get("source_ids") or [])
+                matches = [e for e in canonical_list if e.get("id") == cid]
+                if len(matches) == 1:
+                    return matches[0] if id(matches[0]) not in merged_away else None
+                for e in matches:
+                    if id(e) in merged_away:
+                        continue
+                    if set(e.get("source_ids") or []) == want:
+                        return e
+                return None
+
+            kept_candidate = next((c for c in cluster.get("candidates", [])
+                                   if isinstance(c, dict) and str(c.get("id")) == kept_id), None)
+            if kept_candidate is None:
+                continue
+            kept = _resolve(kept_candidate)
+            others = []
+            unresolvable = kept is None
+            for candidate in cluster.get("candidates", []):
+                if not isinstance(candidate, dict) or str(candidate.get("id")) == kept_id:
+                    continue
+                resolved = _resolve(candidate)
+                if resolved is None or resolved is kept:
+                    unresolvable = True
+                    break
+                others.append(resolved)
+            if unresolvable:
+                logger.warning(
+                    "Skipping adjudication merge for %s: candidate could not be resolved by id and source rows",
+                    cluster_id)
+                continue
+            # Veto: merging candidates with different non-empty hard identity
+            # signals (part number, location, voltage) is never allowed, even
+            # if the LLM proposes it. This matches the adjudication prompt,
+            # which tells the LLM the same three signals. Descriptive prose
+            # (notably `function`) never vetoes: it is paraphrased, and it is
+            # the usual reason two subgroups of one part split at all.
             veto = False
             for other in others:
-                if _props_conflict(kept["properties"], other["properties"]):
+                if _hard_identity_conflict(kept["properties"], other["properties"]):
                     veto = True
                     break
                 if any(_same_list_distinct(existing, other_row) for existing in kept["sources"] for other_row in other["sources"]):
@@ -901,19 +1084,40 @@ def apply_adjudication(state: dict[str, Any], decisions: list[dict[str, Any]]) -
                     break
             if veto or not others:
                 continue
-            # Merge others into kept, in code.
+            # Merge others into kept, in code. Resolve the payload entities
+            # the same way (by id + source rows) so removal takes exactly
+            # the merged entities, never an unrelated entity that happens
+            # to share a canonical id.
+            def _resolve_payload(entity):
+                want = set(entity.get("source_ids") or [])
+                matches = [e for e in payload.get("entities", []) if e.get("id") == entity.get("id")]
+                if len(matches) == 1:
+                    return matches[0]
+                for e in matches:
+                    if set(e.get("source_ids") or []) == want:
+                        return e
+                return None
+
+            kept_payload = _resolve_payload(kept)
+            others_payload = [_resolve_payload(o) for o in others]
+            if kept_payload is None or any(o is None for o in others_payload):
+                logger.warning(
+                    "Skipping adjudication merge for %s: payload entity could not be resolved by id and source rows",
+                    cluster_id)
+                continue
             for other in others:
                 kept["source_ids"] = sorted(set(kept["source_ids"]) | set(other["source_ids"]))
                 for key, value in other["properties"].items():
                     kept["properties"].setdefault(key, value)
                 kept["evidence"].extend(item for item in other["evidence"] if item not in kept["evidence"])
-            # Rewrite payload entities and relations.
-            payload["entities"] = [e for e in payload["entities"] if e["id"] not in [o["id"] for o in others]]
-            for entity in payload["entities"]:
-                if entity["id"] == kept_id:
-                    entity["source_ids"] = kept["source_ids"]
-                    entity["properties"] = kept["properties"]
-                    entity["evidence"] = kept["evidence"]
+            # Rewrite the kept payload entity from the merged canonical one,
+            # and remove exactly the merged payload entities (by identity).
+            kept_payload["source_ids"] = kept["source_ids"]
+            kept_payload["properties"] = kept["properties"]
+            kept_payload["evidence"] = kept["evidence"]
+            removed = {id(o) for o in others_payload}
+            payload["entities"] = [e for e in payload["entities"] if id(e) not in removed]
+            merged_away.update(id(o) for o in others)
             removed_ids = {o["id"] for o in others}
             for relation in payload["relations"]:
                 if relation.get("subject_id") in removed_ids:
@@ -921,7 +1125,11 @@ def apply_adjudication(state: dict[str, Any], decisions: list[dict[str, Any]]) -
                 if relation.get("object_id") in removed_ids:
                     relation["object_id"] = kept_id
             for other in others:
-                canonical_by_id.pop(other["id"], None)
+                # Only drop the id lookup when it actually points at the
+                # merged entity; a different entity sharing the id stays
+                # addressable.
+                if canonical_by_id.get(other["id"]) is other:
+                    canonical_by_id.pop(other["id"], None)
         elif action == "link" and cluster.get("kind") == "relation_endpoint":
             linked_id = str(decision.get("linked_id", ""))
             source_id = str(cluster.get("source_id", ""))
