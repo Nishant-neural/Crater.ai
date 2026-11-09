@@ -89,13 +89,41 @@ class MachineModelBase(BaseModel):
         return data
 
 
+class EntityState(BaseModel):
+    """A state attached to an entity, as the LLM actually emits it.
+
+    The extraction prompts ask for states as name/value objects
+    ({'name': 'tightness', 'value': 'loose'}) with the value 'a JSON
+    boolean, number, or string', and the LLM follows that shape. The
+    previous declaration (list[str]) rejected the whole chunk at parse
+    time, before per-fact quarantine could run. A bare string is still
+    accepted and becomes a state with that name and no value, so
+    pre-v8 payloads keep parsing. Anything else is kept as a name
+    rather than failing the chunk: a state without a usable name is
+    ignored downstream (validation, integration and the compiler all
+    skip nameless states).
+    """
+
+    model_config = {"extra": "allow"}
+    name: str = ""
+    value: str | bool | int | float | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_scalar(cls, data):
+        if isinstance(data, str):
+            return {"name": data, "value": None}
+        if isinstance(data, dict):
+            return data
+        return {"name": str(data), "value": None}
+
 class MachineEntity(MachineModelBase):
     id: str
     name: str
     entity_type: str
     properties: dict[str, Any] = Field(default_factory=dict)
     ports: list[str] = Field(default_factory=list)
-    states: list[str] = Field(default_factory=list)
+    states: list[EntityState] = Field(default_factory=list)
     source_ids: list[str] = Field(default_factory=list)
     evidence: list[MachineEvidence] = Field(default_factory=list)
 
@@ -147,7 +175,7 @@ class MachineState(MachineModelBase):
     source_ids: list[str] = Field(default_factory=list)
     entity_id: str
     name: str
-    value: str | None = None
+    value: str | bool | int | float | None = None
     properties: dict[str, Any] = Field(default_factory=dict)
     evidence: list[MachineEvidence] = Field(default_factory=list)
 
