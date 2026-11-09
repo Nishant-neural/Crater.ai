@@ -388,3 +388,160 @@ button { font: inherit; }
 .guided-check small { display: block; line-height: 1.45; color: var(--muted, #667085); }
 .feedback-checkbox { display: flex; align-items: flex-start; gap: 8px; margin: 10px 0; }
 .feedback-checkbox input { width: auto; margin-top: 3px; }
+
+/* v11 — four-destination navigation, machine context, Machines + Twin workspace */
+.app__tabs { flex-wrap: wrap; }
+.app__tabs button:disabled { opacity: .4; cursor: not-allowed; }
+
+.machine-context-bar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 8px 20px; border-bottom: 1px solid var(--border);
+  background: #101216; font-size: 12px;
+}
+.machine-context-bar__machine { font-weight: 600; }
+.machine-context-bar__pill {
+  display: inline-flex; align-items: center; border: 1px solid var(--border);
+  border-radius: 999px; padding: 3px 8px; font-size: 10px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.machine-context-bar__switch {
+  background: none; border: none; color: var(--accent); cursor: pointer;
+  padding: 0; font-size: 12px;
+}
+
+/* Shared page header: one primary action, top-right, always in the same place. */
+.view-header {
+  max-width: 1250px; margin: 0 auto 18px; display: flex;
+  justify-content: space-between; align-items: flex-end; gap: 20px;
+}
+.view-header h2 { margin: 0 0 6px; font-size: 28px; letter-spacing: -.03em; }
+.view-header__actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; align-items: center; }
+.quiet-button {
+  background: none; border: none; color: var(--accent); cursor: pointer;
+  padding: 9px 6px; font-size: 12px;
+}
+.quiet-button:disabled { color: var(--muted); cursor: not-allowed; }
+
+/* Machines home */
+.machines { flex: 1; min-width: 0; overflow: auto; padding: 24px 28px 48px; background: radial-gradient(circle at 85% 5%, rgba(77,163,255,.08), transparent 28%), var(--bg); }
+.machine-product { max-width: 1250px; margin: 0 auto 12px; display: flex; flex-direction: column; gap: 12px; }
+.machine-card { background: rgba(28,31,38,.9); border: 1px solid var(--border); border-radius: 11px; padding: 16px; }
+.machine-card__head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+.machine-card__head h3 { margin: 0 0 4px; font-size: 16px; }
+.machine-card__actions { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.machine-card__stats { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; font-size: 12px; color: var(--muted); margin-top: 12px; }
+.machine-card__stats b { color: var(--text); }
+.pipeline { list-style: none; margin: 14px 0 0; padding: 0; display: flex; gap: 6px; }
+.pipeline__step {
+  flex: 1; display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: 8px; font-size: 11px; color: var(--muted);
+}
+.pipeline__step span {
+  width: 18px; height: 18px; line-height: 18px; text-align: center; flex: none;
+  border-radius: 50%; border: 1px solid var(--border); font-size: 10px;
+}
+.pipeline__step.live { color: var(--text); border-color: rgba(77,163,255,.5); }
+.pipeline__step.live span { background: var(--accent); color: #08111c; border-color: var(--accent); }
+.pipeline__step.done { color: #72e0a0; }
+.pipeline__step.done span { background: rgba(114,224,160,.15); border-color: rgba(114,224,160,.35); }
+
+/* Twin workspace */
+.twin-workspace { flex: 1; min-width: 0; overflow: auto; padding: 24px 28px 48px; background: radial-gradient(circle at 85% 5%, rgba(77,163,255,.08), transparent 28%), var(--bg); }
+.twin-subnav {
+  max-width: 1250px; margin: 0 auto 16px; display: flex; gap: 5px;
+  overflow-x: auto; border-bottom: 1px solid var(--border);
+}
+.twin-subnav button {
+  border: 0; background: transparent; color: var(--muted); padding: 9px 11px;
+  cursor: pointer; white-space: nowrap; border-bottom: 2px solid transparent;
+}
+.twin-subnav button.active { color: var(--text); border-bottom-color: var(--accent); }
+.twin-stats {
+  max-width: 1250px; margin: 0 auto 12px; display: grid;
+  grid-template-columns: repeat(5, 1fr); gap: 8px;
+}
+.twin-stats > div {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 9px;
+  padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; gap: 8px;
+}
+.twin-stats span { color: var(--muted); font-size: 9px; letter-spacing: .1em; }
+.twin-stats b { font-size: 12px; }
+.twin-workspace .model-panel { max-width: 1250px; margin: 0 auto 12px; }
+.twin-workspace .twin { max-width: 1250px; margin: 0 auto; padding: 0; }
+.safety-note {
+  max-width: 1250px; margin: 0 auto 12px; display: flex; flex-direction: column; gap: 5px;
+  border: 1px solid #6c5130; background: #251d14; color: #f0c58c;
+  border-radius: 8px; padding: 10px 12px; font-size: 11px; line-height: 1.5;
+}
+.twin-rules { max-width: 1250px; margin: 0 auto; display: flex; flex-direction: column; gap: 9px; }
+.twin-rules .model-panel { margin: 0; max-width: none; }
+.visual-twin-svg { width: 100%; height: auto; }
+.simulation-batch-list { list-style: none; margin: 10px 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.simulation-batch-list button { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; }
+.simulation-batch-row { padding: 8px 0; border-top: 1px solid var(--border); font-size: 12px; }
+.simulation-batch-row p { color: var(--muted); margin: 4px 0 0; }
+
+/* Machine Model: explorer + procedure panels (Component Explorer and
+   Procedure Viewer live here now, driven by clicks, never by pasted ids). */
+.model-explorer-grid { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 12px; align-items: start; }
+.model-explorer-panel {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px; max-height: 70vh; overflow: auto;
+}
+.model-procedure-panel { margin-bottom: 12px; }
+.model-procedure-panel__head {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  max-width: 1250px; margin: 0 auto 10px;
+}
+.model-procedure-panel .model-explorer-grid { max-width: 1250px; margin: 0 auto; }
+
+/* Expert capture as an overlay from Diagnose, not a top-level tab. */
+.expert-overlay {
+  position: fixed; inset: 0; z-index: 100; display: grid; place-items: center;
+  padding: 20px; background: rgba(5,7,10,.78); backdrop-filter: blur(8px);
+}
+.expert-overlay__card {
+  width: min(720px, 100%); max-height: 90vh; overflow: auto;
+  background: #15181e; border: 1px solid var(--border); border-radius: 14px;
+  padding: 24px; box-shadow: 0 24px 80px rgba(0,0,0,.4);
+}
+.expert-overlay__head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+.expert-overlay .expert { display: flex; flex-direction: column; gap: 10px; }
+.expert-overlay .expert h2 { margin: 0; font-size: 20px; }
+.expert-overlay .expert select, .expert-overlay .expert input, .expert-overlay .expert textarea {
+  width: 100%; background: #111319; color: var(--text); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 11px; font: inherit;
+}
+.expert-overlay .expert button {
+  background: var(--accent); color: #07111c; border: 0; border-radius: 8px;
+  padding: 9px 13px; font-weight: 700; cursor: pointer; align-self: flex-start;
+}
+.expert-overlay .expert button:disabled { opacity: .45; cursor: not-allowed; }
+
+/* v11 — adaptive layout */
+@media (max-width: 1200px) {
+  .app__header { flex-wrap: wrap; gap: 12px; }
+  .twin-stats { grid-template-columns: repeat(3, 1fr); }
+  .model-explorer-grid { grid-template-columns: 300px minmax(0, 1fr); }
+}
+@media (max-width: 900px) {
+  .model-explorer-grid { grid-template-columns: 1fr; }
+  .model-explorer-panel { max-height: none; }
+  .view-header { flex-direction: column; align-items: stretch; }
+  .view-header__actions { justify-content: flex-start; }
+  .machine-card__head { flex-direction: column; }
+  .machine-card__actions { justify-content: flex-start; }
+  .twin-stats { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 768px) {
+  .app__header { padding: 10px 12px; }
+  .app__tabs { flex-wrap: nowrap; overflow-x: auto; max-width: 100%; padding-bottom: 4px; }
+  .app__tabs button { min-height: 44px; white-space: nowrap; }
+  .machine-context-bar { padding: 8px 12px; }
+  .machines, .twin-workspace, .machine-model { padding: 14px; }
+  .view-header h2 { font-size: 23px; }
+  .primary-button, .secondary-button, .quiet-button { min-height: 44px; }
+  .pipeline { flex-direction: column; }
+  .twin-stats { grid-template-columns: 1fr 1fr; }
+  .diagnostic-header { flex-direction: column; align-items: flex-start; gap: 10px; }
+}
