@@ -45,6 +45,7 @@ export async function getDiagnosticContext(sessionId) { return getJson(`/diagnos
 export async function respondDiagnostic(sessionId, payload) { return postJson(`/diagnose/${sessionId}/respond`, payload, "diagnostic response"); }
 export async function recordDiagnosticOutcome(sessionId, payload) { return postJson(`/diagnose/${sessionId}/outcome`, payload, "record repair outcome"); }
 export async function verifyRepair(sessionId, payload) { return postJson(`/diagnose/${sessionId}/verify-repair`, payload, "verify repair in twin"); }
+export async function verifyHypotheses(sessionId) { return postRequest(`/diagnose/${sessionId}/verify-hypotheses`, "verify hypotheses in twin"); }
 export async function getMostInformativeTest(sessionId) { return getJson(`/diagnose/${sessionId}/next-test`); }
 export async function getGuidedPhysicalChecks(sessionId) { return getJson(`/diagnose/${sessionId}/guided-checks`); }
 

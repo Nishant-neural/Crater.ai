@@ -3,7 +3,7 @@ import { listMachines } from "../api/machines";
 import { listRevisions } from "../api/revisions";
 import { getRevisionIngestionStatus } from "../api/client";
 import { startDiagnostic, getDiagnostic, getDiagnosticContext, respondDiagnostic,
-  recordDiagnosticOutcome, getMostInformativeTest, getGuidedPhysicalChecks, verifyRepair } from "../api/diagnostics";
+  recordDiagnosticOutcome, getMostInformativeTest, getGuidedPhysicalChecks, verifyRepair, verifyHypotheses } from "../api/diagnostics";
 import MachineOnboarding from "./MachineOnboarding";
 
 function Card({title, children, className=""}) {
@@ -53,6 +53,8 @@ export default function DiagnosticWorkspace({ onMachineReady }) {
   const [feedbackBusy,setFeedbackBusy]=useState(false);
   const [verification,setVerification]=useState(null);
   const [verifyBusy,setVerifyBusy]=useState(false);
+  const [tournament,setTournament]=useState(null);
+  const [tournamentBusy,setTournamentBusy]=useState(false);
 
   async function loadMachines(selectProductId = null, selectRevisionId = null) {
     try {
@@ -146,6 +148,15 @@ export default function DiagnosticWorkspace({ onMachineReady }) {
     setVerifyBusy(true); setError("");
     try { setVerification(await verifyRepair(session.session_id, {cause: leading?.cause || "", repair_name: step?.content || ""})); }
     catch(e){setError(e.message)} finally{setVerifyBusy(false)}
+  }
+  async function runTournament(){
+    if(!session) return;
+    setTournamentBusy(true); setError("");
+    try { setTournament(await verifyHypotheses(session.session_id)); }
+    catch(e){setError(e.message)} finally{setTournamentBusy(false)}
+  }
+  function openTournamentPlayback(row){
+    window.dispatchEvent(new CustomEvent("crater-open-visual-twin", {detail:{revisionId, playback:{baseline_state:row.baseline_state, fault_state:row.fault_state, final_state:row.final_state, fault_trace:row.fault_trace, intervention_trace:row.intervention_trace, fault_component_id:row.fault_component_id, symptom_path:row.symptom_path, verdict:row.verdict}}}));
   }
 
   const state=session?.state;
@@ -317,7 +328,7 @@ export default function DiagnosticWorkspace({ onMachineReady }) {
         </Card>
         <Card title="VERIFICATION">
           {!isConclusion && <div className="verification-unavailable"><b>Simulation contract</b><p>Verification is only marked PASS/FAIL when a real digital-twin experiment is executed. No simulated success is shown here. Reach a grounded conclusion first, then verify its repair in the twin.</p></div>}
-          {isConclusion && !verification && <div className="verification-unavailable"><b>Simulation contract</b><p>Verification is only marked PASS/FAIL when a real digital-twin experiment is executed. No simulated success is shown here.</p><button onClick={verifyRepairInTwin} disabled={verifyBusy}>{verifyBusy ? "Running twin experiment…" : "Verify this repair in the twin"}</button></div>}
+          {isConclusion && !verification && <div className="verification-unavailable"><b>Simulation contract</b><p>Verification is only marked PASS/FAIL when a real digital-twin experiment is executed. No simulated success is shown here.</p><button onClick={verifyRepairInTwin} disabled={verifyBusy}>{verifyBusy ? "Running twin experiment…" : "Verify this repair in the twin"}</button><button onClick={runTournament} disabled={tournamentBusy || !state?.hypotheses?.length}>{tournamentBusy ? "Running tournament…" : "Run hypothesis tournament"}</button></div>}
           {isConclusion && verification && !verification.available && <div className="verification-unavailable"><b>Cannot verify yet</b><p>{verification.reason}</p><button onClick={()=>window.dispatchEvent(new CustomEvent("crater-open-simulation", {detail:{revisionId, sessionId:session?.session_id, hypothesis:leading?.cause || ""}}))}>Open simulation workspace</button></div>}
           {isConclusion && verification?.available && <div className="verification-result">
             <StatusPill tone={verification.verdict==="validated"?"ok":"warn"}>{verification.verdict==="validated"?"VALIDATED":"REJECTED"}</StatusPill>
@@ -328,8 +339,29 @@ export default function DiagnosticWorkspace({ onMachineReady }) {
             {verification.intervention_trace?.length>0 && <details><summary>Intervention trace</summary>{verification.intervention_trace.map((t,i)=><p key={i}>{t}</p>)}</details>}
             <button onClick={()=>window.dispatchEvent(new CustomEvent("crater-open-visual-twin", {detail:{revisionId, playback:{baseline_state:verification.baseline_state, fault_state:verification.fault_state, final_state:verification.final_state, fault_trace:verification.fault_trace, intervention_trace:verification.intervention_trace, fault_component_id:verification.fault_component_id, symptom_path:verification.symptom_path, verdict:verification.verdict}}}))}>Open visual twin</button>
             <button onClick={verifyRepairInTwin} disabled={verifyBusy}>{verifyBusy ? "Re-running…" : "Re-run verification"}</button>
+            <button onClick={runTournament} disabled={tournamentBusy || !state?.hypotheses?.length}>{tournamentBusy ? "Running tournament…" : "Run hypothesis tournament"}</button>
           </div>}
         </Card>
+        {tournament && <Card title="HYPOTHESIS TOURNAMENT">
+          {!tournament.available && <div className="verification-unavailable"><b>Cannot run tournament yet</b><p>{tournament.reason}</p><button onClick={()=>window.dispatchEvent(new CustomEvent("crater-open-simulation", {detail:{revisionId, sessionId:session?.session_id, hypothesis:leading?.cause || ""}}))}>Open simulation workspace</button></div>}
+          {tournament.available && <div className="tournament">
+            <p className="muted">{tournament.counts.validated} validated · {tournament.counts.rejected} rejected · {tournament.counts.unavailable} unavailable</p>
+            {tournament.results.map((row,i)=><article className="tournament-row" key={`${row.cause}-${i}`}>
+              <div className="hypothesis-top"><div><span className="rank">{String(i+1).padStart(2,"0")}</span><b>{row.cause}</b></div><StatusPill tone={row.status==="validated"?"ok":row.status==="rejected"?"warn":""}>{row.status==="validated"?"VALIDATED":row.status==="rejected"?"REJECTED":"UNAVAILABLE"}</StatusPill></div>
+              {row.status==="unavailable" && <p className="muted">{tournament.unavailable_label} — {row.reason}</p>}
+              {row.fault_component_name && <p className="muted">Fault component: {row.fault_component_name}</p>}
+              {row.symptom_path && <p className="muted">Symptom: {row.symptom_path}{row.symptom_expected !== undefined && row.symptom_expected !== null ? ` → ${String(row.symptom_expected)}` : ""}</p>}
+              {row.checks?.map((c,j)=><div className="verification-check" key={j}><b>{c.path}</b><span>expected {String(c.expected)} · actual {String(c.actual)}</span><i>{c.passed?"✓":"✗"}</i></div>)}
+              {row.rules_used?.length>0 && <div className="verification-rules"><b>Rules used</b>{row.rules_used.map(r=><div key={r.id}>{r.name}{r.description?` — ${r.description}`:""}
+                {r.evidence?.map((ev,k)=><p key={k} className="muted">↳ {typeof ev === "string" ? ev : ev.fact}{ev?.page ? ` · p.${ev.page}` : ""}</p>)}
+                {r.source_ids?.length>0 && <p className="muted">Sources: {r.source_ids.join(", ")}</p>}
+              </div>)}</div>}
+              {row.procedure?.steps?.length>0 && <div className="verification-procedure"><b>Procedure: {row.procedure.name}</b>{row.procedure.steps.map((x,k)=><p key={k}>{k+1}. {x}</p>)}</div>}
+              {row.baseline_state && <button onClick={()=>openTournamentPlayback(row)}>Open visual twin</button>}
+            </article>)}
+            <p className="muted">A rejected row is evidence, not an elimination — no hypothesis was changed by this run. Unavailable means the twin cannot evaluate that cause.</p>
+          </div>}
+        </Card>}
       </aside>
     </div>
   </div>;
