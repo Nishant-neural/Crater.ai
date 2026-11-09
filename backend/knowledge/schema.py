@@ -9,6 +9,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from backend.knowledge.machine_model import EntityState
+
 
 class ExtractedComponent(BaseModel):
     name: str
@@ -42,7 +44,7 @@ class UniversalEntity(BaseModel):
     entity_type: str | None = None
     properties: dict[str, Any] = Field(default_factory=dict)
     ports: list[str] = Field(default_factory=list)
-    states: list[str] = Field(default_factory=list)
+    states: list[EntityState] = Field(default_factory=list)
     evidence: list[dict[str, Any]] = Field(default_factory=list)
 
 

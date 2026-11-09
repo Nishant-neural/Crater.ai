@@ -28,7 +28,8 @@ def _component_type(entity_type: str) -> str:
 
 def _coerce_state_value(value: Any) -> Any:
     """Coerce a state value to the JSON type a rule condition uses.
-    MachineState.value is a string ("true", "120"); rule conditions carry
+    MachineState.value may be a string ("true", "120"), a boolean, or a
+    number; rule conditions carry
     JSON values (true, 120). Without coercion the engine's _matches would
     never see them as equal and no transition could fire. Non-numeric,
     non-boolean strings pass through unchanged.

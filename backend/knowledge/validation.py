@@ -354,11 +354,21 @@ def quarantine_machine_model(model: UniversalMachineModel) -> tuple[UniversalMac
     kept_rules: list[dict] = []
     _kept_names = {e.name.strip().lower(): e for e in kept_entities if e.name}
     _known_fields: dict[str, set[str]] = {}
-    for _st in list(model.states) + [s for e in kept_entities for s in (e.states or [])]:
+    for _st in list(model.states):
         _eid = _st.entity_id if hasattr(_st, "entity_id") else (dict(_st).get("entity_id") if isinstance(_st, dict) else None)
         _nm = _st.name if hasattr(_st, "name") else (dict(_st).get("name") if isinstance(_st, dict) else None)
         if _eid and _nm:
             _known_fields.setdefault(str(_eid), set()).add(str(_nm).strip().lower())
+    # States embedded in an entity carry no entity_id of their own; the
+    # enclosing entity is their owner. (v10.1: entity states are name/value
+    # objects, so they are visible here at all -- as plain strings they
+    # contributed nothing, and a rule naming only an embedded state was
+    # quarantined even though the chunk extracted that state.)
+    for _ent in kept_entities:
+        for _st in (_ent.states or []):
+            _nm = _st.name if hasattr(_st, "name") else (dict(_st).get("name") if isinstance(_st, dict) else None)
+            if _nm:
+                _known_fields.setdefault(str(_ent.id), set()).add(str(_nm).strip().lower())
     for _ent in kept_entities:
         _init = (_ent.properties or {}).get("initial_state")
         if isinstance(_init, dict):
