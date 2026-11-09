@@ -80,6 +80,10 @@ class UniversalFailureMode(BaseModel):
     repair_procedure_id: str | None = None
     repair_procedure_name: str | None = None
     entity_ids: list[str] = Field(default_factory=list)
+    # Names of entities this failure mode concerns, resolved from
+    # entity_ids against the same extraction output. Integration
+    # rewrites these to canonical ids (unique match only).
+    entity_names: list[str] = Field(default_factory=list)
     evidence: list[dict[str, Any]] = Field(default_factory=list)
 
 
@@ -98,3 +102,9 @@ class MachineKnowledgeExtractionResult(BaseModel):
     behaviors: list[dict[str, Any]] = Field(default_factory=list)
     constraints: list[dict[str, Any]] = Field(default_factory=list)
     failure_modes: list[UniversalFailureMode] = Field(default_factory=list)
+    # Explicit machine-state transitions, grounded in the excerpt.
+    # Each rule: {"id", "name", "conditions": {"<Entity Name>.<state>": value},
+    # "effects": {"<Entity Name>.<state>": value}, "description", "safety_notes",
+    # "evidence"}. Paths use entity NAMES from the same output; integration
+    # rewrites them to canonical ids (unique match only, never guessed).
+    simulation_rules: list[dict[str, Any]] = Field(default_factory=list)

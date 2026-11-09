@@ -26,18 +26,42 @@ def _component_type(entity_type: str) -> str:
     return "other"
 
 
+def _coerce_state_value(value: Any) -> Any:
+    """Coerce a state value to the JSON type a rule condition uses.
+    MachineState.value is a string ("true", "120"); rule conditions carry
+    JSON values (true, 120). Without coercion the engine's _matches would
+    never see them as equal and no transition could fire. Non-numeric,
+    non-boolean strings pass through unchanged.
+    """
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+        try:
+            return int(value.strip())
+        except (TypeError, ValueError):
+            pass
+        try:
+            return float(value.strip())
+        except (TypeError, ValueError):
+            pass
+    return value
+
+
 def _safe_initial_state(entity_id: str, model: UniversalMachineModel) -> dict[str, Any]:
     state: dict[str, Any] = {}
     entity = next((e for e in model.entities if e.id == entity_id), None)
     if entity and isinstance(entity.properties.get("initial_state"), dict):
-        state.update(entity.properties["initial_state"])
+        state.update({k: _coerce_state_value(v) for k, v in entity.properties["initial_state"].items()})
     for item in model.states:
         if item.entity_id != entity_id or item.value is None:
             continue
         # State names are evidence-derived labels; use them as stable state fields.
         key = item.name.strip().lower().replace(" ", "_")
         if key and key not in state:
-            state[key] = item.value
+            state[key] = _coerce_state_value(item.value)
     return state
 
 
@@ -74,6 +98,8 @@ def compile_machine_model(model: UniversalMachineModel, *, name: str, descriptio
                 "effects": rule.get("effects") or {},
                 "description": rule.get("description") or "Explicit rule from canonical machine model.",
                 "safety_notes": rule.get("safety_notes") or [],
+                "source_ids": rule.get("source_ids") or [],
+                "evidence": rule.get("evidence") or [],
             }))
         except Exception:
             warnings.append(f"Ignored invalid simulation rule #{index + 1}; canonical knowledge remains unchanged.")

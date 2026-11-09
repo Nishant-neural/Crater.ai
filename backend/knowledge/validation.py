@@ -125,6 +125,9 @@ def quarantine_machine_model(model: UniversalMachineModel) -> tuple[UniversalMac
       usable measurement (empty value, or a placeholder name). See the
       quantity rule below.
     - a second, conflicting value for the same (entity, state name)
+    - simulation rules with no conditions/effects, or whose paths name
+      an entity or state field that is not in this chunk (a rule may only
+      condition on a state the chunk actually extracted for that entity)
     - facts with no id / name at all
 
     Deliberately NOT quarantined, because they are still facts:
@@ -343,6 +346,55 @@ def quarantine_machine_model(model: UniversalMachineModel) -> tuple[UniversalMac
         seen_states[key] = str(state.value)
         kept_states.append(state)
 
+    # Simulation rules: kept only when every condition/effect path names
+    # an entity and a state field that this chunk actually extracted. A rule
+    # is one fact; a bad path quarantines that rule, never the chunk. Paths
+    # are "<Entity Name>.<state name>" at extraction time (integration rewrites
+    # the name part to a canonical id); values are never second-guessed here.
+    kept_rules: list[dict] = []
+    _kept_names = {e.name.strip().lower(): e for e in kept_entities if e.name}
+    _known_fields: dict[str, set[str]] = {}
+    for _st in list(model.states) + [s for e in kept_entities for s in (e.states or [])]:
+        _eid = _st.entity_id if hasattr(_st, "entity_id") else (dict(_st).get("entity_id") if isinstance(_st, dict) else None)
+        _nm = _st.name if hasattr(_st, "name") else (dict(_st).get("name") if isinstance(_st, dict) else None)
+        if _eid and _nm:
+            _known_fields.setdefault(str(_eid), set()).add(str(_nm).strip().lower())
+    for _ent in kept_entities:
+        _init = (_ent.properties or {}).get("initial_state")
+        if isinstance(_init, dict):
+            _known_fields.setdefault(_ent.id, set()).update(str(k).strip().lower() for k in _init)
+    for _rule in list(model.simulation_rules or []):
+        if not isinstance(_rule, dict):
+            _quarantine("simulation_rule", {"value": _rule}, "simulation_rule_not_object")
+            continue
+        _conds, _effs = _rule.get("conditions"), _rule.get("effects")
+        if not isinstance(_conds, dict) or not _conds or not isinstance(_effs, dict) or not _effs:
+            _quarantine("simulation_rule", _rule, "simulation_rule_missing_conditions_or_effects")
+            continue
+        _bad: str | None = None
+        for _path in list(_conds) + list(_effs):
+            if not isinstance(_path, str) or "." not in _path:
+                _bad = f"simulation_rule_bad_path:{_path}"
+                break
+            _ename, _field = _path.split(".", 1)
+            # Paths arrive as "<Entity Name>.<state>" from extraction,
+            # but as "<canonical id>.<state>" after integration rewrites
+            # them -- integrate_revision_knowledge re-runs this veto
+            # on the integrated model, so both forms must resolve.
+            _ent = _kept_names.get(_ename.strip().lower())
+            if _ent is None:
+                _ent = next((e for e in kept_entities if e.id == _ename.strip()), None)
+            if _ent is None:
+                _bad = f"simulation_rule_unknown_entity:{_ename}"
+                break
+            if _field.strip().lower() not in _known_fields.get(_ent.id, set()):
+                _bad = f"simulation_rule_unknown_state:{_ename}.{_field}"
+                break
+        if _bad:
+            _quarantine("simulation_rule", _rule, _bad)
+            continue
+        kept_rules.append(_rule)
+
     # Behaviors, constraints, procedures and failure modes are kept even
     # when their subject is not yet in the kept set: the fact itself is
     # independent of the chunk that produced it. A missing link is noted
@@ -370,7 +422,7 @@ def quarantine_machine_model(model: UniversalMachineModel) -> tuple[UniversalMac
         failure_modes=list(model.failure_modes),
         conflicts=list(model.conflicts),
         unresolved_facts=list(model.unresolved_facts),
-        simulation_rules=list(model.simulation_rules),
+        simulation_rules=kept_rules,
         evidence=list(model.evidence),
     )
     # De-duplicate quarantine records deterministically.
