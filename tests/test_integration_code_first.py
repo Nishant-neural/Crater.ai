@@ -179,3 +179,125 @@ def test_legacy_components_survive_when_failure_modes_present():
     model = _universal_model_from_result(result)
     assert any(e.name == "MIG Gun" for e in model.entities)
     assert any(fm.name == "Weak Arc" for fm in model.failure_modes)
+
+
+def _tensioner_context():
+    # The crater-8 shape: 5 subgroups of one part, split solely by two
+    # paraphrased function wordings, no part numbers anywhere, one location.
+    return {
+        "universal_entities": [
+            {"source_id": "t1", "name": "Feed Tensioner", "entity_type": "component",
+             "properties": {"function": "Applies tension to the feed roller/wire", "location_description": "Interior Controls"},
+             "ports": [], "states": [], "evidence": [], "source_chunk_id": "chunk-a"},
+            {"source_id": "t2", "name": "Feed Tensioner", "entity_type": "component",
+             "properties": {"function": "Applies pressure to wire feed"},
+             "ports": [], "states": [], "evidence": [], "source_chunk_id": "chunk-b"},
+            {"source_id": "t3", "name": "Feed Tensioner", "entity_type": "component",
+             "properties": {"function": "Applies tension to the feed roller/wire"},
+             "ports": [], "states": [], "evidence": [], "source_chunk_id": "chunk-c"},
+            {"source_id": "t4", "name": "Feed Tensioner", "entity_type": "component",
+             "properties": {"function": "Applies pressure to wire feed"},
+             "ports": [], "states": [], "evidence": [], "source_chunk_id": "chunk-d"},
+            {"source_id": "t5", "name": "Feed Tensioner", "entity_type": "component",
+             "properties": {"function": "Applies pressure to wire feed"},
+             "ports": [], "states": [], "evidence": [], "source_chunk_id": "chunk-e"},
+        ],
+        "universal_relations": [], "universal_facts": [], "behaviors": [],
+        "legacy_components": [], "legacy_relationships": [], "procedures": [],
+        "failure_modes": [], "schematic_nodes": [], "schematic_edges": [],
+        "expert_knowledge": [],
+    }
+
+
+def test_adjudication_merge_allowed_when_only_function_differs():
+    # v9 narrow veto: a differing `function` string is descriptive prose,
+    # not an identity signal. When the LLM says merge, the crater-8
+    # Feed Tensioner subgroups -- one per function wording -- become one
+    # entity; the kept function wins via setdefault and the other wording
+    # stays in source rows/evidence. (Live crater-8 has 5 canonical
+    # tensioners because legacy rows split further; the mechanism is the
+    # same: the cluster's candidates differ only in `function`.)
+    from backend.knowledge.code_first_integration import apply_adjudication, build_code_first_payload
+    state = build_code_first_payload(_tensioner_context())
+    clusters = state["clusters"]
+    conflict = next(c for c in clusters if c["kind"] == "conflicting_same_name")
+    assert len(conflict["candidates"]) == 2
+    kept_id = conflict["candidates"][0]["id"]
+    apply_adjudication(state, [{"cluster_id": conflict["cluster_id"], "action": "merge", "kept_id": kept_id}])
+    tensioners = [e for e in state["payload"]["entities"] if e["name"] == "Feed Tensioner"]
+    assert len(tensioners) == 1
+    assert sorted(tensioners[0]["source_ids"]) == ["t1", "t2", "t3", "t4", "t5"]
+    assert tensioners[0]["properties"]["function"] == "Applies tension to the feed roller/wire"
+
+
+def test_adjudication_merge_still_vetoed_on_location_or_voltage():
+    # The veto still fires on hard identity signals, even if the LLM says merge.
+    from backend.knowledge.code_first_integration import apply_adjudication, build_code_first_payload
+    for props_a, props_b in (
+        ({"location_description": "Interior Controls"}, {"location_description": "Front Panel"}),
+        ({"voltage": "120"}, {"voltage": "240"}),
+    ):
+        context = {
+            "universal_entities": [
+                {"source_id": "x1", "name": "Valve", "entity_type": "component",
+                 "properties": dict(props_a), "ports": [], "states": [], "evidence": [], "source_chunk_id": "chunk-a"},
+                {"source_id": "x2", "name": "Valve", "entity_type": "component",
+                 "properties": dict(props_b), "ports": [], "states": [], "evidence": [], "source_chunk_id": "chunk-b"},
+            ],
+            "universal_relations": [], "universal_facts": [], "behaviors": [],
+            "legacy_components": [], "legacy_relationships": [], "procedures": [],
+            "failure_modes": [], "schematic_nodes": [], "schematic_edges": [],
+            "expert_knowledge": [],
+        }
+        state = build_code_first_payload(context)
+        conflict = next(c for c in state["clusters"] if c["kind"] == "conflicting_same_name")
+        kept_id = conflict["candidates"][0]["id"]
+        apply_adjudication(state, [{"cluster_id": conflict["cluster_id"], "action": "merge", "kept_id": kept_id}])
+        valves = [e for e in state["payload"]["entities"] if e["name"] == "Valve"]
+        assert len(valves) == 2, props_a
+
+
+def test_adjudication_merge_skipped_when_canonical_ids_collide():
+    # v9 guard: universal and legacy groupings can assign the same
+    # canonical id to two distinct entities (the known Welder collision:
+    # entity:welder-57812 twice). A merge resolves its candidates by id
+    # AND source rows, so the universal cluster merges while the legacy
+    # entity sharing the kept id is left untouched -- no source row is
+    # ever removed without being unioned into the kept entity.
+    from backend.knowledge.code_first_integration import apply_adjudication, build_code_first_payload
+    context = {
+        "universal_entities": [
+            {"source_id": "w-univ-1", "name": "Welder", "entity_type": "equipment",
+             "properties": {"part_number": "57812", "product_name": "OMNIPRO 220"},
+             "ports": [], "states": [], "evidence": [], "source_chunk_id": "chunk-a"},
+            {"source_id": "w-univ-2", "name": "Welder", "entity_type": "equipment",
+             "properties": {"function": "Perform welding operations", "part_number": ""},
+             "ports": [], "states": [], "evidence": [], "source_chunk_id": "chunk-c"},
+        ],
+        "universal_relations": [], "universal_facts": [], "behaviors": [],
+        "legacy_components": [
+            # Same name, same part number, different type group: assigns the
+            # same canonical ids as the universal rows (entity:welder-57812
+            # and entity:welder-2) -- the collision itself.
+            {"source_id": "w-leg-1", "name": "Welder", "function": "Perform welding operations",
+             "location_description": "", "part_number": "57812", "source_chunk_id": "chunk-b"},
+            {"source_id": "w-leg-2", "name": "Welder", "function": "Performs welding operations",
+             "location_description": "", "part_number": "", "source_chunk_id": "chunk-d"},
+        ],
+        "legacy_relationships": [], "procedures": [],
+        "failure_modes": [], "schematic_nodes": [], "schematic_edges": [],
+        "expert_knowledge": [],
+    }
+    state = build_code_first_payload(context)
+    welders = [e for e in state["payload"]["entities"] if e["name"] == "Welder"]
+    assert len(welders) == 4
+    assert [e["id"] for e in welders].count("entity:welder-57812") == 2  # the collision itself
+    assert [e["id"] for e in welders].count("entity:welder-2") == 2
+    conflict = next(c for c in state["clusters"] if c["kind"] == "conflicting_same_name")
+    kept_id = conflict["candidates"][0]["id"]
+    apply_adjudication(state, [{"cluster_id": conflict["cluster_id"], "action": "merge", "kept_id": kept_id}])
+    welders = [e for e in state["payload"]["entities"] if e["name"] == "Welder"]
+    assert len(welders) == 3
+    assert sorted(s for e in welders for s in e["source_ids"]) == ["w-leg-1", "w-leg-2", "w-univ-1", "w-univ-2"]
+    legacy = [e for e in welders if e["source_ids"] == ["w-leg-1"] or e["source_ids"] == ["w-leg-2"]]
+    assert len(legacy) == 2  # both legacy entities untouched by the merge

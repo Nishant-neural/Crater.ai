@@ -19,6 +19,8 @@ class TwinTransition(BaseModel):
     effects: dict[str, Any] = Field(default_factory=dict)
     description: str = ""
     safety_notes: list[str] = Field(default_factory=list)
+    source_ids: list[str] = Field(default_factory=list)
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class DigitalTwinDefinition(BaseModel):
