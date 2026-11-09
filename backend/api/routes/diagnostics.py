@@ -17,7 +17,9 @@ from backend.db.models import (
 from backend.db.session import get_session
 from backend.diagnostics.agent import run_turn, start_session
 from backend.simulation.schema import DigitalTwinDefinition
-from backend.simulation.verification import run_verified_repair
+from backend.simulation.tournament import (
+    ISOLATED_TWIN_WARNING, UNAVAILABLE_LABEL, run_tournament, verify_single_cause,
+)
 from backend.diagnostics.schema import DiagnosticSessionView, DiagnosticState
 
 router = APIRouter(prefix="/diagnose", tags=["diagnostics"])
@@ -299,10 +301,6 @@ class VerifyRepairRequest(BaseModel):
     repair_name: str | None = None
 
 
-def _norm_text(value: str | None) -> str:
-    return " ".join(str(value or "").strip().lower().split())
-
-
 @router.post("/{session_id}/verify-repair")
 def verify_repair(session_id: str, payload: VerifyRepairRequest, db: DBSession = Depends(get_session)):
     """Prove the leading repair in the approved twin before anyone touches the machine.
@@ -345,89 +343,108 @@ def verify_repair(session_id: str, payload: VerifyRepairRequest, db: DBSession =
         return _unavailable("No approved twin exists for this revision yet; compile and approve one first")
     definition = DigitalTwinDefinition.model_validate(twin.definition)
 
-    # The matched snapshot failure mode is the first source for the fault
-    # component; the snapshot also supplies the procedure citation.
     snapshot_row = (db.query(MachineKnowledgeModelSnapshot)
                     .filter_by(revision_id=session.revision_id)
                     .order_by(MachineKnowledgeModelSnapshot.version.desc()).first())
     snapshot_model = dict(snapshot_row.model or {}) if snapshot_row else {}
-    failure_mode: dict | None = None
-    norm_cause = _norm_text(cause)
-    for fm in snapshot_model.get("failure_modes") or []:
-        haystacks = [_norm_text(fm.get("name"))] + [_norm_text(s) for s in fm.get("symptoms") or []]
-        if any(h and (h in norm_cause or norm_cause in h) for h in haystacks):
-            failure_mode = fm
-            break
 
-    # Resolve the cause to ONE twin component: failure-mode entity_ids first,
-    # then a unique name match against twin components. Ambiguity stays open.
-    fault_component_id: str | None = None
-    component_ids = {c.id for c in definition.components}
-    for entity_id in (failure_mode or {}).get("entity_ids") or []:
-        if entity_id in component_ids:
-            fault_component_id = str(entity_id)
-            break
-    if fault_component_id is None:
-        matches = [c for c in definition.components
-                   if _norm_text(c.name) and _norm_text(c.name) in norm_cause]
-        if len(matches) == 1:
-            fault_component_id = matches[0].id
-        elif len(matches) == 0:
-            return _unavailable(
-                f"Could not match the cause {cause!r} to a component in this twin; "
-                "the twin cannot express this failure")
-        else:
-            return _unavailable(
-                f"The cause {cause!r} matches {len(matches)} twin components "
-                f"({', '.join(c.name for c in matches[:5])}); ambiguous, so no guess was made")
+    result = verify_single_cause(
+        definition, twin.state or {}, snapshot_model, state, cause, repair_name)
 
-    outcome = run_verified_repair(
-        definition, twin.state or {},
-        fault_component_id=fault_component_id,
-        repair_name=repair_name,
-        hypothesis=f"Repairing {cause} restores the machine to its healthy state.",
-    )
-
-    procedure: dict | None = None
-    for proc in snapshot_model.get("procedures") or []:
-        if _norm_text(proc.get("name")) and _norm_text(proc.get("name")) in _norm_text(repair_name):
-            procedure = proc
-            break
-    if procedure is None and state.current_step and state.current_step.procedure_steps:
-        procedure = {"name": repair_name, "steps": list(state.current_step.procedure_steps)}
-
-    rules_used = list(outcome.fault_rules) + list(outcome.recovery_rules)
     summary = (
-        f"Repair verification: {outcome.verdict}" if outcome.available
-        else f"Repair verification unavailable: {outcome.reason}")
-    state.timeline.append({
+        f"Repair verification: {result['verdict']}" if result["available"]
+        else f"Repair verification unavailable: {result['reason']}")
+    entry = {
         "turn": state.turns_taken, "kind": "verify_repair", "input": repair_name,
-        "cause": cause, "available": outcome.available, "verdict": outcome.verdict,
-        "reason": outcome.reason, "fault_component_id": fault_component_id,
-        "symptom_path": outcome.symptom_path, "rules_used": rules_used,
+        "cause": cause, "available": result["available"], "verdict": result["verdict"],
+        "reason": result["reason"], "fault_component_id": result["fault_component_id"],
         "step_type": "verify_repair", "step": summary,
+    }
+    if "symptom_path" in result:
+        entry["symptom_path"] = result["symptom_path"]
+    if "rules_used" in result:
+        entry["rules_used"] = result["rules_used"]
+    state.timeline.append(entry)
+    session.state = state.model_dump(mode="json")
+    db.commit()
+
+    return {"session_id": session.id, **result}
+
+
+@router.post("/{session_id}/verify-hypotheses")
+def verify_hypotheses(session_id: str, db: DBSession = Depends(get_session)):
+    """Rank the session's hypotheses by running each one through the
+    verified-repair loop in the approved twin.
+
+    Returns a ranked leaderboard (VALIDATED first, REJECTED second,
+    unavailable last). An unavailable row means the twin cannot evaluate
+    that cause -- it is not a rejection, and no hypothesis is eliminated
+    or changed: the tournament only appends one timeline entry.
+    """
+    session = db.get(DiagnosticSession, session_id)
+    if not session:
+        raise HTTPException(404, "Diagnostic session not found")
+    state = DiagnosticState.model_validate(session.state)
+    if not state.hypotheses:
+        raise HTTPException(409, "No hypotheses to verify: this session has none yet")
+
+    repair_name = (state.current_step.content if state.current_step else "") or ""
+
+    def _unavailable(reason: str) -> dict:
+        state.timeline.append({
+            "turn": state.turns_taken, "kind": "verify_hypotheses",
+            "input": repair_name or "hypothesis tournament",
+            "available": False, "verdict": None, "reason": reason,
+            "step_type": "verify_hypotheses",
+            "step": f"Hypothesis tournament unavailable: {reason}",
+        })
+        session.state = state.model_dump(mode="json")
+        db.commit()
+        return {"session_id": session.id, "available": False, "verdict": None,
+                "reason": reason, "results": [],
+                "counts": {"validated": 0, "rejected": 0, "unavailable": 0},
+                "unavailable_label": UNAVAILABLE_LABEL}
+
+    if not session.revision_id:
+        return _unavailable("This session has no revision, so there is no twin to verify against")
+    twin = (db.query(DigitalTwin)
+            .filter_by(revision_id=session.revision_id, status=TwinStatus.active)
+            .order_by(DigitalTwin.created_at.desc()).first())
+    if not twin:
+        return _unavailable("No approved twin exists for this revision yet; compile and approve one first")
+    definition = DigitalTwinDefinition.model_validate(twin.definition)
+    snapshot_row = (db.query(MachineKnowledgeModelSnapshot)
+                    .filter_by(revision_id=session.revision_id)
+                    .order_by(MachineKnowledgeModelSnapshot.version.desc()).first())
+    snapshot_model = dict(snapshot_row.model or {}) if snapshot_row else {}
+
+    results, counts = run_tournament(
+        definition, twin.state or {}, snapshot_model, state, repair_name)
+
+    parts = []
+    if counts["validated"]:
+        parts.append(f"{counts['validated']} validated")
+    if counts["rejected"]:
+        parts.append(f"{counts['rejected']} rejected")
+    if counts["unavailable"]:
+        parts.append(f"{counts['unavailable']} unavailable (the twin cannot evaluate these causes)")
+    summary = "Hypothesis tournament: " + (", ".join(parts) if parts else "no hypotheses evaluated")
+    state.timeline.append({
+        "turn": state.turns_taken, "kind": "verify_hypotheses",
+        "input": repair_name or "hypothesis tournament",
+        "available": True, "verdict": None, "reason": None,
+        "counts": counts,
+        "results": [{"cause": r["cause"], "status": r["status"], "verdict": r["verdict"],
+                     "fault_component_id": r["fault_component_id"],
+                     "reason": r["reason"]} for r in results],
+        "step_type": "verify_hypotheses", "step": summary,
     })
     session.state = state.model_dump(mode="json")
     db.commit()
 
-    result = outcome.result
     return {
-        "session_id": session.id, "available": outcome.available,
-        "verdict": outcome.verdict, "reason": outcome.reason,
-        "cause": cause, "repair_name": repair_name,
-        "fault_component_id": fault_component_id,
-        "symptom_path": outcome.symptom_path,
-        "symptom_expected": outcome.symptom_expected,
-        "failure_mode": (failure_mode or {}).get("name"),
-        "procedure": procedure,
-        "rules_used": rules_used,
-        "checks": result.checks if result else [],
-        "fault_trace": result.fault_trace if result else [],
-        "intervention_trace": result.intervention_trace if result else [],
-        "baseline_state": result.baseline_state if result else None,
-        "fault_state": result.fault_state if result else None,
-        "final_state": result.final_state if result else None,
-        "explanation": result.explanation if result else None,
-        "warnings": (result.warnings if result else [])
-            + ["Verification runs in an isolated twin copy; it is not proof of physical safety."],
+        "session_id": session.id, "available": True,
+        "results": results, "counts": counts,
+        "unavailable_label": UNAVAILABLE_LABEL,
+        "warnings": [ISOLATED_TWIN_WARNING],
     }

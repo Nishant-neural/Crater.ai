@@ -809,7 +809,11 @@ def persist_machine_knowledge(session: Session, revision_id: str | None, source_
             entity_type=entity.entity_type,
             properties=entity.properties,
             ports=entity.ports,
-            states=entity.states,
+            # Entity states are objects (name/value); the states column is
+            # JSON, so dump them to plain dicts. Bare strings were stored
+            # as-is before; EntityState normalizes those to
+            # {"name": ..., "value": None}.
+            states=[s.model_dump(mode="json") if hasattr(s, "model_dump") else s for s in (entity.states or [])],
             source_chunk_id=source_chunk_id,
         )
         session.add(db_entity)
