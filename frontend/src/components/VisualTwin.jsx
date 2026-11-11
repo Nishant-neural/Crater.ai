@@ -33,7 +33,7 @@ function changedIds(prev, next) {
   return out;
 }
 
-export default function VisualTwin({ initialRevisionId, visualContext }) {
+export default function VisualTwin({ initialRevisionId, visualContext, refreshKey = 0 }) {
   const [revisionId, setRevisionId] = useState(initialRevisionId || "");
   const [visual, setVisual] = useState(null);
   const [error, setError] = useState("");
@@ -58,7 +58,7 @@ export default function VisualTwin({ initialRevisionId, visualContext }) {
       setVisual(await getTwinVisual(twin.twin_id));
     } catch (e) { setError(e.message); } finally { setBusy(false); }
   }
-  useEffect(() => { if (revisionId) load(); }, [revisionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (revisionId) load(); }, [revisionId, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Playback: advance one phase per tick until the repair phase is shown.
   useEffect(() => {
@@ -98,9 +98,8 @@ export default function VisualTwin({ initialRevisionId, visualContext }) {
       <h2>Visual Twin</h2>
       <p className="muted">Drawn from the twin&rsquo;s real relations. Simulation is not proof of physical safety.</p>
       <div className="twin__setup">
-        <input placeholder="Revision ID" value={revisionId} onChange={(e) => setRevisionId(e.target.value.trim())} />
-        <button disabled={busy || !revisionId} onClick={load}>Load twin</button>
         {visual && <span className="muted">{visual.name} · {visual.status} · {nodes.length} components · {visual.edges.length} relations · {visual.transitions.length} transitions</span>}
+        {!visual && !error && <span className="muted">{busy ? "Loading twin…" : "No twin compiled yet — compile it from the Twin workspace."}</span>}
       </div>
       {error && <div className="error">{error}</div>}
       {visual?.warnings?.length > 0 && <div className="panel"><b>Compiler warnings</b>{visual.warnings.map((w, i) => <p key={i}>{w}</p>)}</div>}
@@ -122,7 +121,7 @@ export default function VisualTwin({ initialRevisionId, visualContext }) {
       {visual && (
         <div className="twin__grid" style={{ gridTemplateColumns: "minmax(0, 2fr) minmax(240px, 1fr)" }}>
           <div className="panel">
-            <svg width={visual.canvas.width} height={visual.canvas.height} role="img" aria-label="Visual twin diagram">
+            <svg className="visual-twin-svg" viewBox={`0 0 ${visual.canvas.width} ${visual.canvas.height}`} width={visual.canvas.width} height={visual.canvas.height} role="img" aria-label="Visual twin diagram">
               {visual.edges.map((e, i) => {
                 const from = nodes.find((n) => n.id === e.from);
                 const to = nodes.find((n) => n.id === e.to);
