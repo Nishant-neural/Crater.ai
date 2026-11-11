@@ -38,6 +38,28 @@ class ModelGateway:
             _gemini_extraction_limiter.wait()
         return provider.complete(messages=messages, max_tokens=max_tokens or route.max_tokens)
 
+    def complete_result(
+        self,
+        task: str,
+        messages: list[dict[str, Any]],
+        max_tokens: int | None = None,
+        json_schema: dict[str, Any] | None = None,
+        temperature: float | None = None,
+    ) -> tuple[str | None, bool]:
+        """Structured-output call: returns (text, truncated). max_tokens
+        defaults to the task route's ceiling, so callers that pass nothing
+        get the configured ceiling instead of a per-call cap. Other tasks
+        keep using complete() and are unaffected."""
+        provider, route = self.provider(task)
+        if task in ("extraction", "integration") and route.provider == "gemini":
+            _gemini_extraction_limiter.wait()
+        return provider.complete_result(
+            messages=messages,
+            max_tokens=max_tokens or route.max_tokens,
+            json_schema=json_schema,
+            temperature=temperature,
+        )
+
 
 class _GeminiExtractionRateLimiter:
     """Process-local limiter for Gemini extraction calls.

@@ -37,7 +37,7 @@ You will be given: the current diagnostic state (symptoms, observations, measure
 hypotheses, eliminated hypotheses so far), freshly retrieved evidence chunks (with chunk_id, content, \
 source), and known structured product knowledge (components, failure modes) for this revision.
 
-Update the diagnostic state and decide the next step. Respond with ONLY JSON in this exact shape:
+Update the diagnostic state and decide the next step. Respond with ONLY the JSON object in this exact shape — no code fences, no commentary before or after it, and never truncate it: if the answer is long, keep the rationales short rather than cutting the JSON off mid-object.
 
 {{
   "hypotheses": [
