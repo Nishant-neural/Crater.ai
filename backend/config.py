@@ -69,7 +69,7 @@ class Settings(BaseSettings):
         return {
             "extraction": {"provider": self.extraction_provider, "model": self.extraction_model, "max_tokens": 4000},
             "integration": {"provider": self.integration_provider, "model": self.integration_model, "max_tokens": 12000},
-            "diagnosis": {"provider": self.diagnosis_provider, "model": self.diagnosis_model, "max_tokens": 2500},
+            "diagnosis": {"provider": self.diagnosis_provider, "model": self.diagnosis_model, "max_tokens": 8192},
             "rerank": {"provider": self.rerank_provider, "model": self.rerank_model, "max_tokens": 500},
             "vision": {"provider": self.vision_provider, "model": self.vision_model, "max_tokens": 2000},
             "expert": {"provider": self.expert_provider, "model": self.expert_model, "max_tokens": 1200},
@@ -77,7 +77,7 @@ class Settings(BaseSettings):
 
     @property
     def task_max_tokens(self) -> dict:
-        return {"extraction": 4000, "integration": 12000, "diagnosis": 2500, "rerank": 500, "vision": 2000, "expert": 1200}
+        return {"extraction": 4000, "integration": 12000, "diagnosis": 8192, "rerank": 500, "vision": 2000, "expert": 1200}
 
 
 settings = Settings()

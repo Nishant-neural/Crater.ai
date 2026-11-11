@@ -4,11 +4,11 @@ import {
   extractExpertKnowledge, reviewExpertKnowledge, generateExpertGraph,
 } from "../api/client";
 
-export default function ExpertKnowledge() {
+export default function ExpertKnowledge({ initialProductId = "", initialRevisionId = "", machineLabel = "" }) {
   const [experts, setExperts] = useState([]);
   const [expertId, setExpertId] = useState("");
-  const [productId, setProductId] = useState("");
-  const [revisionId, setRevisionId] = useState("");
+  const [productId, setProductId] = useState(initialProductId);
+  const [revisionId, setRevisionId] = useState(initialRevisionId);
   const [topic, setTopic] = useState("");
   const [interview, setInterview] = useState(null);
   const [answer, setAnswer] = useState("");
@@ -68,14 +68,13 @@ export default function ExpertKnowledge() {
 
   if (!interview) return (
     <section className="expert">
-      <h2>Capture Rajesh</h2>
+      <h2>Expert knowledge</h2>
       <p>Interview a senior engineer and convert tacit service knowledge into reviewable diagnostic rules.</p>
       <select value={expertId} onChange={e => setExpertId(e.target.value)}>
         <option value="">Select expert</option>
         {experts.map(e => <option key={e.id} value={e.id}>{e.name}{e.role ? ` — ${e.role}` : ""}</option>)}
       </select>
-      <input value={productId} onChange={e => setProductId(e.target.value)} placeholder="Product ID" />
-      <input value={revisionId} onChange={e => setRevisionId(e.target.value)} placeholder="Revision ID (optional)" />
+      {machineLabel ? <p className="muted">Machine: {machineLabel}</p> : <p className="muted">Open this from a diagnosis session to attach it to a machine.</p>}
       <input value={topic} onChange={e => setTopic(e.target.value)} placeholder="Failure/topic, e.g. spindle won't start" />
       <button disabled={busy || !expertId || !productId || !topic} onClick={start}>Start interview</button>
       {error && <p className="error">{error}</p>}
