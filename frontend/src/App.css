@@ -425,7 +425,8 @@ button { font: inherit; }
 /* Machines home */
 .machines { flex: 1; min-width: 0; overflow: auto; padding: 24px 28px 48px; background: radial-gradient(circle at 85% 5%, rgba(77,163,255,.08), transparent 28%), var(--bg); }
 .machine-product { max-width: 1250px; margin: 0 auto 12px; display: flex; flex-direction: column; gap: 12px; }
-.machine-card { background: rgba(28,31,38,.9); border: 1px solid var(--border); border-radius: 11px; padding: 16px; }
+.machine-card { background: rgba(28,31,38,.9); border: 1px solid var(--border); border-radius: 11px; padding: 16px; cursor: pointer; }
+.machine-card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .machine-card__head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
 .machine-card__head h3 { margin: 0 0 4px; font-size: 16px; }
 .machine-card__actions { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }

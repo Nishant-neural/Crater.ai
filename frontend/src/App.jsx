@@ -117,13 +117,16 @@ export default function App() {
           <span className="machine-context-bar__machine">{contextLabel || "Machine"}</span>
           <span className="machine-context-bar__pill">Twin: {twinStatus || "not compiled"}</span>
           <button className="machine-context-bar__switch" onClick={() => setView(VIEWS.MACHINES)}>Switch machine</button>
-        </> : <span className="muted">No machine selected — pick one on the Machines view to diagnose, inspect the model, or open the twin.</span>}
+        </> : view === VIEWS.MACHINES
+          ? <span className="muted">Pick a machine below — click its card to select it, or use Open twin / Diagnose / View model.</span>
+          : <span className="muted">No machine selected — pick one on the Machines view to diagnose, inspect the model, or open the twin.</span>}
       </div>
 
       <div className="app__body">
         <main className="app__main">
           {view === VIEWS.MACHINES && <Machines
             onSelectMachine={selectMachine}
+            selectedRevisionId={revisionId}
             onCompileTwin={compileTwinFor}
             onOpenTwin={openTwinFor}
             onDiagnose={({ productId: pid, revisionId: rid }) => { selectMachine({ productId: pid, revisionId: rid }); setView(VIEWS.DIAGNOSTIC); }}
