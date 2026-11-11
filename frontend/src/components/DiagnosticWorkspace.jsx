@@ -5,6 +5,7 @@ import { getRevisionIngestionStatus } from "../api/client";
 import { startDiagnostic, getDiagnostic, getDiagnosticContext, respondDiagnostic,
   recordDiagnosticOutcome, getMostInformativeTest, getGuidedPhysicalChecks, verifyRepair, verifyHypotheses } from "../api/diagnostics";
 import MachineOnboarding from "./MachineOnboarding";
+import ExpertKnowledge from "./ExpertKnowledge";
 
 function Card({title, children, className=""}) {
   return <section className={`diag-card ${className}`}><div className="diag-card__title">{title}</div>{children}</section>;
@@ -32,11 +33,11 @@ function MachineGraph({components, relationships, focus}) {
   </div>;
 }
 
-export default function DiagnosticWorkspace({ onMachineReady }) {
+export default function DiagnosticWorkspace({ onMachineReady, initialProductId = "", initialRevisionId = "" }) {
   const [machines,setMachines]=useState([]);
   const [revisions,setRevisions]=useState([]);
-  const [productId,setProductId]=useState("");
-  const [revisionId,setRevisionId]=useState("");
+  const [productId,setProductId]=useState(initialProductId);
+  const [revisionId,setRevisionId]=useState(initialRevisionId);
   const [symptom,setSymptom]=useState("Motor M1 is overheating after 20 minutes.");
   const [session,setSession]=useState(null);
   const [context,setContext]=useState(null);
@@ -45,6 +46,7 @@ export default function DiagnosticWorkspace({ onMachineReady }) {
   const [error,setError]=useState("");
   const [selectedEvidence,setSelectedEvidence]=useState(null);
   const [showOnboarding,setShowOnboarding]=useState(false);
+  const [showExpert,setShowExpert]=useState(false);
   const [revisionIngestion,setRevisionIngestion]=useState(null);
   const [outcomeForm,setOutcomeForm]=useState({outcome:"fixed",confirmed_cause:"",repair_performed:"",technician_notes:"",submit_correction_for_review:false});
   const [outcomeResult,setOutcomeResult]=useState(null);
@@ -75,6 +77,9 @@ export default function DiagnosticWorkspace({ onMachineReady }) {
     }
   }
   useEffect(()=>{ loadMachines(); },[]);
+  // Follow the machine picked on the Machines view while no session is running.
+  useEffect(()=>{ if(!session && initialProductId) setProductId(initialProductId); },[initialProductId, session]);
+  useEffect(()=>{ if(!session && initialRevisionId) setRevisionId(initialRevisionId); },[initialRevisionId, session]);
   useEffect(()=>{
     if(!productId){
       setRevisions([]);
@@ -168,8 +173,16 @@ export default function DiagnosticWorkspace({ onMachineReady }) {
   const revision=context?.revision;
   const docs=context?.documents||[];
   const evidence=state?.evidence||[];
+  const selectedMachine = machines.find(m => m.id === productId);
+  const selectedRevision = revisions.find(r => r.id === revisionId);
+  const machineLabel = selectedMachine ? `${selectedMachine.manufacturer} · ${selectedMachine.family} · ${selectedMachine.model}${selectedRevision ? ` — ${selectedRevision.label}` : ""}` : "";
+  const expertOverlay = showExpert && <div className="expert-overlay"><div className="expert-overlay__card">
+    <div className="expert-overlay__head"><b>Expert knowledge</b><button className="secondary-button" onClick={() => setShowExpert(false)}>Close</button></div>
+    <ExpertKnowledge initialProductId={productId} initialRevisionId={revisionId} machineLabel={machineLabel} />
+  </div></div>;
 
   if(!session) return <div className="diagnostic">
+    {expertOverlay}
     {showOnboarding && <MachineOnboarding
       initialProductId={productId}
       initialRevisionId={revisionId}
@@ -208,6 +221,7 @@ export default function DiagnosticWorkspace({ onMachineReady }) {
           {revisionId && revisionIngestion?.status === "processing" && <div className="ready-check"><StatusPill tone="live">INGESTING</StatusPill> {revisionIngestion.completed_count} completed manual(s) · {revisionIngestion.active_count} still processing</div>}
           {revisionId && revisionIngestion?.status === "failed" && <div className="ready-check"><StatusPill tone="warn">INGESTION FAILED</StatusPill> No completed manual is available yet. Open onboarding to retry from the checkpoint.</div>}
           <button className="secondary-button full-width" onClick={()=>setShowOnboarding(true)}>+ Add manual to this revision</button>
+          <button className="quiet-button full-width" onClick={()=>setShowExpert(true)}>Add expert note</button>
         </> : <div className="onboarding-empty">
           <div className="empty-icon">＋</div>
           <h3>No machines onboarded</h3>
@@ -228,12 +242,13 @@ export default function DiagnosticWorkspace({ onMachineReady }) {
   </div>;
 
   return <div className="diagnostic diagnostic--session">
+    {expertOverlay}
     <header className="diagnostic-header">
       <div>
         <div className="eyebrow">LIVE DIAGNOSTIC SESSION</div>
         <h2>{machine?.model || "Machine"} <span>/ {revision?.label || "Revision"}</span></h2>
       </div>
-      <div className="header-actions"><StatusPill tone={session.status==="active"?"live":session.status==="concluded"?"ok":"warn"}>{session.status}</StatusPill><button onClick={refresh} disabled={busy}>Refresh</button></div>
+      <div className="header-actions"><StatusPill tone={session.status==="active"?"live":session.status==="concluded"?"ok":"warn"}>{session.status}</StatusPill><button onClick={()=>setShowExpert(true)}>Add expert note</button><button onClick={refresh} disabled={busy}>Refresh</button></div>
     </header>
     {error && <div className="diag-error">{error}</div>}
     <div className="diagnostic-grid">

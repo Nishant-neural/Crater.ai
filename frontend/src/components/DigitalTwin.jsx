@@ -3,10 +3,8 @@ import {
   createDemoDigitalTwin, getDigitalTwin, listDigitalTwins, runDigitalTwinCommand,
 } from "../api/client";
 
-const initial = { productId: "", revisionId: "", twinId: "" };
-
-export default function DigitalTwin() {
-  const [ids, setIds] = useState(initial);
+export default function DigitalTwin({ productId = "", revisionId = "", initialTwinId = "" }) {
+  const [twinId, setTwinId] = useState(initialTwinId);
   const [twins, setTwins] = useState([]);
   const [twin, setTwin] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -16,17 +14,24 @@ export default function DigitalTwin() {
     try { setTwins(await listDigitalTwins()); } catch (e) { setError(e.message); }
   }
   useEffect(() => { refresh(); }, []);
+  useEffect(() => {
+    if (!initialTwinId) return;
+    setTwinId(initialTwinId);
+    getDigitalTwin(initialTwinId).then(setTwin).catch((e) => setError(e.message));
+  }, [initialTwinId]);
 
   async function load() {
-    if (!ids.twinId) return;
-    setTwin(await getDigitalTwin(ids.twinId));
+    if (!twinId) return;
+    setBusy(true); setError("");
+    try { setTwin(await getDigitalTwin(twinId)); }
+    catch (e) { setError(e.message); } finally { setBusy(false); }
   }
 
   async function demo() {
     setBusy(true); setError("");
     try {
-      const result = await createDemoDigitalTwin(ids.productId, ids.revisionId);
-      setTwin(result); setIds((x) => ({...x, twinId: result.id})); await refresh();
+      const result = await createDemoDigitalTwin(productId, revisionId);
+      setTwin(result); setTwinId(result.id); await refresh();
     } catch (e) { setError(e.message); } finally { setBusy(false); }
   }
 
@@ -46,14 +51,13 @@ export default function DigitalTwin() {
       <h2>Functional Digital Twin</h2>
       <p className="muted">Deterministic virtual machine state model. Simulation is not proof of physical safety.</p>
       <div className="twin__setup">
-        <input placeholder="Product ID" value={ids.productId} onChange={e => setIds({...ids, productId:e.target.value.trim()})}/>
-        <input placeholder="Revision ID" value={ids.revisionId} onChange={e => setIds({...ids, revisionId:e.target.value.trim()})}/>
-        <button disabled={busy || !ids.productId || !ids.revisionId} onClick={demo}>Create demo twin</button>
-        <select value={ids.twinId} onChange={e => setIds({...ids, twinId:e.target.value})}>
-          <option value="">Select existing twin</option>
-          {twins.map(t => <option key={t.id} value={t.id}>{t.name} — {t.id.slice(0,8)}</option>)}
+        <select value={twinId} onChange={e => setTwinId(e.target.value)}>
+          <option value="">Select a twin for this machine</option>
+          {(twins.filter(t => t.revision_id === revisionId).length ? twins.filter(t => t.revision_id === revisionId) : twins).map(t => <option key={t.id} value={t.id}>{t.name} — {t.status}</option>)}
         </select>
-        <button disabled={busy || !ids.twinId} onClick={load}>Load</button>
+        <button disabled={busy || !twinId} onClick={load}>Load</button>
+        <button disabled={busy || !productId || !revisionId} onClick={demo}>Create demo twin</button>
+        {twin && <span className="muted">{twin.name} · {twin.status}</span>}
       </div>
       {error && <div className="error">{error}</div>}
       {twin && (
