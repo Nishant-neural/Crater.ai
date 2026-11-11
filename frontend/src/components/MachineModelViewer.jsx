@@ -2,10 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import { getMachineModel, getMachineKnowledge, getMachineVerification } from "../api/knowledge";
 import { listMachines } from "../api/machines";
 import { listRevisions } from "../api/revisions";
+import ComponentExplorer from "./ComponentExplorer";
+import ProcedureViewer from "./ProcedureViewer";
+import DiagramViewer from "../technical-viewer/DiagramViewer";
 
 const SECTIONS = [
   ["overview", "Overview"],
   ["entities", "Entities"],
+  ["explorer", "Component explorer"],
   ["relations", "Relations"],
   ["facts", "Facts"],
   ["procedures", "Procedures"],
@@ -77,17 +81,27 @@ function EntityDetail({ entity, relations, evidenceByItem, onClose }) {
   </div>;
 }
 
-export default function MachineModelViewer({ initialProductId = "", initialRevisionId = "" }) {
+export default function MachineModelViewer({ initialProductId = "", initialRevisionId = "", productId: productIdProp, revisionId: revisionIdProp, onSelectMachine }) {
   const [machines, setMachines] = useState([]);
   const [revisions, setRevisions] = useState([]);
-  const [productId, setProductId] = useState(initialProductId);
-  const [revisionId, setRevisionId] = useState(initialRevisionId);
+  const [internalProductId, setInternalProductId] = useState(initialProductId);
+  const [internalRevisionId, setInternalRevisionId] = useState(initialRevisionId);
+  // Controlled when the app passes a machine context; standalone otherwise.
+  const productId = productIdProp ?? internalProductId;
+  const revisionId = revisionIdProp ?? internalRevisionId;
+  function pickMachine(pid, rid) {
+    if (onSelectMachine) onSelectMachine({ productId: pid, revisionId: rid });
+    else { setInternalProductId(pid); setInternalRevisionId(rid); }
+  }
   const [snapshot, setSnapshot] = useState(null);
   const [raw, setRaw] = useState(null);
   const [verification, setVerification] = useState(null);
   const [section, setSection] = useState("overview");
   const [query, setQuery] = useState("");
   const [selectedEntity, setSelectedEntity] = useState(null);
+  const [selectedProcedureId, setSelectedProcedureId] = useState(null);
+  const [activeChunkId, setActiveChunkId] = useState("");
+  const [highlightLabels, setHighlightLabels] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -97,9 +111,9 @@ export default function MachineModelViewer({ initialProductId = "", initialRevis
     listRevisions(productId).then(rows => {
       const next = rows || [];
       setRevisions(next);
-      setRevisionId(current => current && next.some(r => r.id === current) ? current : (next[0]?.id || ""));
+      if (!revisionId || !next.some(r => r.id === revisionId)) pickMachine(productId, next[0]?.id || "");
     }).catch(e => setError(e.message));
-  }, [productId]);
+  }, [productId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadModel(id = revisionId) {
     if (!id) return;
@@ -117,6 +131,16 @@ export default function MachineModelViewer({ initialProductId = "", initialRevis
   }
 
   useEffect(() => { if (revisionId) loadModel(revisionId); }, [revisionId]);
+
+  function openAppearance(appearance) {
+    setActiveChunkId(appearance.chunk_id);
+    setHighlightLabels([appearance.label]);
+  }
+  function onProcedureFrameChange(frame) {
+    if (!frame) { setHighlightLabels([]); return; }
+    setActiveChunkId(frame.chunk_id);
+    setHighlightLabels(frame.labels);
+  }
 
   const model = snapshot?.model || {};
   const entities = model.entities || [];
@@ -156,11 +180,11 @@ export default function MachineModelViewer({ initialProductId = "", initialRevis
         <p className="muted">Revision-wide model produced by extraction → global integration → deterministic verification.</p>
       </div>
       <div className="machine-model__controls">
-        <select value={productId} onChange={e => setProductId(e.target.value)}>
+        <select value={productId} onChange={e => pickMachine(e.target.value, "")}>
           <option value="">Select machine</option>
           {machines.map(m => <option key={m.id} value={m.id}>{m.manufacturer} · {m.family} · {m.model}</option>)}
         </select>
-        <select value={revisionId} onChange={e => setRevisionId(e.target.value)} disabled={!productId}>
+        <select value={revisionId} onChange={e => pickMachine(productId, e.target.value)} disabled={!productId}>
           <option value="">Select revision</option>
           {revisions.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
         </select>
@@ -185,9 +209,22 @@ export default function MachineModelViewer({ initialProductId = "", initialRevis
 
       {section === "overview" && <Overview model={model} raw={raw} verification={verification} onSelectSection={setSection} />}
       {section === "entities" && <div className="model-list-grid">{filteredEntities.map(e => <button className="model-entity-card" key={e.id} onClick={() => setSelectedEntity(e)}><div><b>{e.name}</b><Badge>{e.entity_type}</Badge></div><span>{Object.keys(e.properties || {}).length} properties · {e.source_ids?.length || 0} sources</span></button>)}{!filteredEntities.length && <div className="model-empty">No entities match this search.</div>}</div>}
+      {section === "explorer" && <div className="model-explorer-grid">
+        <div className="model-explorer-panel"><ComponentExplorer revisionId={revisionId} onOpenAppearance={openAppearance} /></div>
+        <DiagramViewer chunkId={activeChunkId} highlightLabels={highlightLabels} />
+      </div>}
       {section === "relations" && <div className="model-relation-table">{filteredRelations.map((r,i) => <div className="model-relation-row" key={r.id || i}><b>{r.subject_name}</b><Badge>{r.relation_type}</Badge><b>{r.object_name}</b><span>{r.description || ""}</span></div>)}{!filteredRelations.length && <div className="model-empty">No relationships match this search.</div>}</div>}
       {section === "facts" && <FactList facts={facts} query={query} />}
-      {section === "procedures" && <ProcedureList procedures={procedures} query={query} />}
+      {section === "procedures" && <>
+        {selectedProcedureId && <div className="model-procedure-panel">
+          <div className="model-procedure-panel__head"><b>{procedures.find(p => p.id === selectedProcedureId)?.name || "Procedure"}</b><button className="secondary-button" onClick={() => { setSelectedProcedureId(null); setActiveChunkId(""); setHighlightLabels([]); }}>Close</button></div>
+          <div className="model-explorer-grid">
+            <ProcedureViewer procedureId={selectedProcedureId} onFrameChange={onProcedureFrameChange} />
+            <DiagramViewer chunkId={activeChunkId} highlightLabels={highlightLabels} />
+          </div>
+        </div>}
+        <ProcedureList procedures={procedures} query={query} onOpenProcedure={(p) => { setSelectedProcedureId(p.id); setActiveChunkId(""); setHighlightLabels([]); }} />
+      </>}
       {section === "failures" && <FailureList failures={failures} query={query} />}
       {section === "conflicts" && <ConflictList conflicts={conflicts} unresolved={unresolved} />}
       {section === "evidence" && <EvidenceList evidence={evidence} query={query} />}
@@ -223,7 +260,7 @@ function MiniGraph({ entities, relations }) {
 }
 
 function FactList({ facts, query }) { const q=query.toLowerCase(); const rows=facts.filter(f=>!q||`${f.fact_type} ${f.fact_key} ${JSON.stringify(f.payload)}`.toLowerCase().includes(q)); return <div className="model-card-list">{rows.map(f=><article className="model-panel" key={f.id}><div className="model-card-head"><Badge>{f.fact_type}</Badge><code>{f.fact_key}</code></div><JsonValue value={f.payload}/></article>)}{!rows.length&&<div className="model-empty">No facts match this search.</div>}</div>; }
-function ProcedureList({ procedures, query }) { const q=query.toLowerCase(); const rows=procedures.filter(p=>!q||`${p.name} ${p.procedure_type} ${p.steps.join(" ")}`.toLowerCase().includes(q)); return <div className="model-card-list">{rows.map(p=><article className="model-panel" key={p.id}><div className="model-card-head"><h3>{p.name}</h3><Badge>{p.procedure_type}</Badge></div><ol>{p.steps.map((s,i)=><li key={i}>{s}</li>)}</ol><div className="muted">{p.entity_ids?.length || 0} referenced entities · {p.source_ids?.length || 0} sources</div></article>)}{!rows.length&&<div className="model-empty">No procedures match this search.</div>}</div>; }
+function ProcedureList({ procedures, query, onOpenProcedure }) { const q=query.toLowerCase(); const rows=procedures.filter(p=>!q||`${p.name} ${p.procedure_type} ${p.steps.join(" ")}`.toLowerCase().includes(q)); return <div className="model-card-list">{rows.map(p=><article className="model-panel" key={p.id}><div className="model-card-head"><h3>{p.name}</h3><Badge>{p.procedure_type}</Badge></div><ol>{p.steps.map((s,i)=><li key={i}>{s}</li>)}</ol><div className="muted">{p.entity_ids?.length || 0} referenced entities · {p.source_ids?.length || 0} sources</div>{onOpenProcedure && <button className="secondary-button" onClick={() => onOpenProcedure(p)}>Open procedure viewer</button>}</article>)}{!rows.length&&<div className="model-empty">No procedures match this search.</div>}</div>; }
 function FailureList({ failures, query }) { const q=query.toLowerCase(); const rows=failures.filter(f=>!q||`${f.name} ${f.symptoms.join(" ")} ${f.possible_causes.join(" ")} ${f.diagnostic_test||""}`.toLowerCase().includes(q)); return <div className="model-card-list">{rows.map(f=><article className="model-panel" key={f.id}><div className="model-card-head"><h3>{f.name}</h3><Badge>failure mode</Badge></div><div className="model-two-col"><div><h4>Symptoms</h4><ul>{f.symptoms.map((x,i)=><li key={i}>{x}</li>)}</ul></div><div><h4>Possible causes</h4><ul>{f.possible_causes.map((x,i)=><li key={i}>{x}</li>)}</ul></div></div>{f.diagnostic_test&&<p><b>Diagnostic test:</b> {f.diagnostic_test}</p>}{f.expected_observation&&<p><b>Expected observation:</b> {f.expected_observation}</p>}</article>)}{!rows.length&&<div className="model-empty">No failure modes match this search.</div>}</div>; }
 function ConflictList({ conflicts, unresolved }) { return <div className="model-card-list">{conflicts.map(c=><article className="model-panel model-conflict" key={c.id}><div className="model-card-head"><Badge tone="warn">{c.status || "unresolved"}</Badge><h3>{c.subject}</h3></div><p><b>{c.property}</b></p><ul>{c.values.map((v,i)=><li key={i}><JsonValue value={v}/></li>)}</ul>{c.resolution&&<p><b>Resolution:</b> {c.resolution}</p>}</article>)}{unresolved.map(u=><article className="model-panel" key={`u-${u.source_id}`}><div className="model-card-head"><Badge tone="warn">unresolved source</Badge><code>{u.source_id}</code></div><p>{u.reason}</p><JsonValue value={u.payload}/></article>)}{!conflicts.length&&!unresolved.length&&<div className="model-success"><b>No conflicts or unresolved facts.</b></div>}</div>; }
 function EvidenceList({ evidence, query }) { const q=query.toLowerCase(); const rows=evidence.filter(e=>!q||`${e.fact} ${e.source_document||""} ${e.claim_status||""} ${e.chunk||""}`.toLowerCase().includes(q)); return <div className="model-card-list">{rows.map((e,i)=><EvidenceCard key={e.id||i} evidence={e}/>) }{!rows.length&&<div className="model-empty">No evidence matches this search.</div>}</div>; }
