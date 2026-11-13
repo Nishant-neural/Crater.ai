@@ -22,6 +22,7 @@ import re
 
 import pymupdf as fitz
 import pdfplumber
+from backend.ingestion.source_router import SourceType, classify_source_type
 
 MIN_IMAGE_SIDE_PX = 200
 MIN_IMAGE_PIXELS = 60_000
@@ -36,6 +37,10 @@ class RawPage:
     page_kind: str = "other"
     page_width: float = 0.0
     page_height: float = 0.0
+    # Phase 1: deterministic source-type label (troubleshooting_table,
+    # spec_table, procedure, ...). Annotation only at load time; the
+    # chunking stage copies it onto chunks and the pipeline routes on it.
+    source_type: str = SourceType.OTHER.value
 
 
 def _blocks_to_text(blocks: list[dict]) -> str:
@@ -234,5 +239,5 @@ def load_pdf(pdf_path: str | Path, image_out_dir: str | Path) -> list[RawPage]:
         tables = tables_by_page.get(page_number, [])
         images = images_by_page.get(page_number, [])
         w, h = sizes.get(page_number, (0.0, 0.0))
-        pages.append(RawPage(page_number=page_number, text=text, tables=tables, image_paths=images, page_kind=classify_page(page_number, text, tables, images), page_width=w, page_height=h))
+        pages.append(RawPage(page_number=page_number, text=text, tables=tables, image_paths=images, page_kind=classify_page(page_number, text, tables, images), page_width=w, page_height=h, source_type=classify_source_type(page_number, text, tables, images).value))
     return pages

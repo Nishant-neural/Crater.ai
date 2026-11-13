@@ -13,6 +13,7 @@ from backend.config import settings
 from backend.db.models import ChunkType
 from backend.ingestion.ocr import ocr_page_if_needed
 from backend.ingestion.pdf_loader import RawPage
+from backend.ingestion.source_router import merge_page_source_types
 
 
 @dataclass
@@ -144,15 +145,19 @@ def _document_text_chunks(pdf_path: str, pages: list[RawPage]) -> list[PendingCh
     sections_seen: list[str] = []
     page_numbers: list[int] = []
     page_kinds: list[str] = []
+    page_source_types: list[str] = []
     target = settings.chunk_size_chars
     max_chars = settings.chunk_max_chars
 
     def flush(keep_overlap: bool = True) -> None:
-        nonlocal buffer, section, page_numbers, page_kinds, sections_seen
+        nonlocal buffer, section, page_numbers, page_kinds, sections_seen, page_source_types
         if not buffer.strip():
             return
         pages_seen = sorted(set(page_numbers))
         kinds_seen = sorted(set(page_kinds))
+        # Phase 1: router label from the chunk's first page; the full
+        # list is kept when the chunk spans differently-labelled pages.
+        first_source_type, all_source_types = merge_page_source_types(page_source_types)
         chunks.append(PendingChunk(
             ChunkType.text,
             pages_seen[0] if pages_seen else None,
@@ -165,6 +170,8 @@ def _document_text_chunks(pdf_path: str, pages: list[RawPage]) -> list[PendingCh
                 "page_end": pages_seen[-1] if pages_seen else None,
                 "pages": pages_seen,
                 "page_kinds": kinds_seen,
+                "source_type": first_source_type,
+                "source_types": all_source_types,
             },
         ))
         # Overlap fix: the old code cleared the buffer completely on every
@@ -180,11 +187,13 @@ def _document_text_chunks(pdf_path: str, pages: list[RawPage]) -> list[PendingCh
             buffer = tail.strip()
             page_numbers = [pages_seen[-1]] if pages_seen else []
             page_kinds = [kinds_seen[-1]] if kinds_seen else []
+            page_source_types = [all_source_types[-1]] if all_source_types else []
             sections_seen = [section] if section else []
         else:
             buffer = ""
             page_numbers = []
             page_kinds = []
+            page_source_types = []
             sections_seen = []
 
     page_texts = [ocr_page_if_needed(pdf_path, p.page_number, p.text) for p in pages]
@@ -221,6 +230,7 @@ def _document_text_chunks(pdf_path: str, pages: list[RawPage]) -> list[PendingCh
             buffer = candidate
             page_numbers.append(page.page_number)
             page_kinds.append(getattr(page, "page_kind", "other"))
+            page_source_types.append(getattr(page, "source_type", "other"))
             if len(buffer) >= target and unit.endswith((".", ":", ";")):
                 flush()
 
@@ -265,6 +275,7 @@ def _grouped_table_chunks(page: RawPage, text=None) -> list[PendingChunk]:
     """
     _sec = _page_section(page, text)
     _kind = getattr(page, "page_kind", "other")
+    _stype = getattr(page, "source_type", "other")
     out: list[PendingChunk] = []
     buf: list[str] = []
     indices: list[int] = []
@@ -279,7 +290,8 @@ def _grouped_table_chunks(page: RawPage, text=None) -> list[PendingChunk]:
             ChunkType.table, page.page_number, content,
             {"rows": rows, "cols": cols, "table_index": indices[0] if indices else 0,
              "table_indices": list(indices), "tables_count": len(indices),
-             "chunking": "atomic_grouped", "section": _sec, "page_kind": _kind},
+             "chunking": "atomic_grouped", "section": _sec, "page_kind": _kind,
+             "source_type": _stype},
         ))
         buf, indices, rows, cols = [], [], 0, 0
     for i, table in enumerate(page.tables):
@@ -301,12 +313,14 @@ def page_to_chunks(pdf_path: str, page: RawPage) -> list[PendingChunk]:
     """Backward-compatible single-page helper used by older callers/tests."""
     chunks: list[PendingChunk] = []
     text = ocr_page_if_needed(pdf_path, page.page_number, page.text)
+    _stype = getattr(page, "source_type", "other")
     for section, piece in _semantic_chunks(text):
         chunks.append(PendingChunk(
             ChunkType.text,
             page.page_number,
             piece,
-            {"section": section or None, "chunking": "structure_aware"},
+            {"section": section or None, "chunking": "structure_aware",
+             "source_type": _stype, "source_types": [_stype]},
         ))
     chunks.extend(_grouped_table_chunks(page, text))
     _sec = _page_section(page, text)
@@ -316,7 +330,8 @@ def page_to_chunks(pdf_path: str, page: RawPage) -> list[PendingChunk]:
             ChunkType.diagram,
             page.page_number,
             f"[Diagram on page {page.page_number} | Section: {_sec or _kind} | Page kind: {_kind}]",
-            {"image_path": image_path, "image_index": i, "chunking": "atomic", "section": _sec, "page_kind": _kind},
+            {"image_path": image_path, "image_index": i, "chunking": "atomic", "section": _sec, "page_kind": _kind,
+             "source_type": _stype},
         ))
     return chunks
 
@@ -328,12 +343,14 @@ def pages_to_chunks(pdf_path: str, pages: list[RawPage]) -> list[PendingChunk]:
         chunks.extend(_grouped_table_chunks(page))
         _sec = _page_section(page)
         _kind = getattr(page, "page_kind", "other")
+        _stype = getattr(page, "source_type", "other")
         for i, image_path in enumerate(page.image_paths):
             chunks.append(PendingChunk(
                 ChunkType.diagram,
                 page.page_number,
                 f"[Diagram on page {page.page_number} | Section: {_sec or _kind} | Page kind: {_kind}]",
-                {"image_path": image_path, "image_index": i, "chunking": "atomic", "section": _sec, "page_kind": _kind},
+                {"image_path": image_path, "image_index": i, "chunking": "atomic", "section": _sec, "page_kind": _kind,
+                 "source_type": _stype},
             ))
     return chunks
 
