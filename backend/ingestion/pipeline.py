@@ -5,9 +5,11 @@ from typing import Callable
 import time
 from sqlalchemy.orm import Session
 from backend.schematic.vision_extraction import extract_schematic
-from backend.db.models import Chunk, Component, ComponentRelationship, Document, DocType, IngestionJob, RelationType, SchematicEdge, SchematicNode, UnresolvedFact
+from backend.db.models import Chunk, Component, ComponentRelationship, Document, DocType, IngestionJob, Product, RelationType, SchematicEdge, SchematicNode, UnresolvedFact
 from backend.ingestion.chunking import pages_to_chunks
 from backend.ingestion.pdf_loader import load_pdf
+from backend.ingestion.table_parser import parse_table_chunk
+from backend.knowledge.repair_cases import TIER_3, load_registry, registry_matches_product, tier_for_chunk
 from backend.knowledge.component_extraction import ExtractionError, extract_chunk_knowledge, extract_chunk_knowledge_batch, persist_extraction, persist_machine_knowledge
 from backend.knowledge.validation import quarantine_machine_model, validate_machine_model, validate_machine_model_with_ledger
 from backend.knowledge.global_integration import build_effective_revision_knowledge_context, integrate_revision_knowledge, persist_integration_result
@@ -21,6 +23,54 @@ from backend.ingestion.pending_links import resolve_pending_relationships, resol
 from backend.ingestion.checkpoints import load_checkpoint, save_checkpoint
 
 ProgressCallback = Callable[[int, str], None]
+
+def _phase1_registry_for_product(session: Session, product_id: str | None):
+    """Repair-case registry for this product, or None (v12 behaviour).
+
+    Only the product the registry was written for is gated / parsed
+    deterministically; every other product keeps the v12 LLM path.
+    Any failure here must never break ingestion, so it fails open.
+    """
+    try:
+        if not product_id:
+            return None
+        registry = load_registry()
+        product = session.get(Product, product_id)
+        if product is None:
+            return None
+        if not registry_matches_product(
+            registry, product.manufacturer, product.family, product.model
+        ):
+            return None
+        return registry
+    except Exception:
+        return None
+
+
+def _phase1_deterministic_model(chunk):
+    """Deterministic model for a table chunk, or None = LLM fallback.
+
+    Only table chunks with a router label the deterministic parser
+    handles (troubleshooting_table / spec_table) are parsed here.
+    Malformed tables return None from the parser and fall back to the
+    LLM path -- never silently dropped.
+    """
+    if getattr(chunk.chunk_type, "value", None) != "table":
+        return None
+    source_type = (chunk.extra or {}).get("source_type") or chunk.chunk_type.value
+    if source_type not in {"troubleshooting_table", "spec_table"}:
+        return None
+    try:
+        return parse_table_chunk(
+            chunk.content,
+            source_type,
+            source_document=None,
+            page=chunk.page_number,
+            chunk_id=chunk.id,
+        )
+    except Exception:
+        return None
+
 
 def _is_tesseract_error(exc: Exception) -> bool:
     s = str(exc).lower()
@@ -139,6 +189,47 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
     if run_knowledge_extraction:
         processed_knowledge = len(knowledge_done)
         pending_knowledge = [c for c in text_chunks if c.id not in knowledge_done]
+        # Phase 1: deterministic table parsing + Tier-3 gating, before the
+        # LLM batch loop. Deterministically parsed chunks skip the LLM
+        # entirely (zero new LLM calls; table chunks stop going through
+        # extraction). Tier-3 chunks (registry product only) are never
+        # extracted into the model and are marked done so a resume does
+        # not re-offer them. Everything else keeps the v12 LLM path.
+        _phase1_registry = _phase1_registry_for_product(session, product_id)
+        _phase1_deterministic: dict[str, object] = {}
+        _phase1_tier3_ids: set[str] = set()
+        for _chunk in pending_knowledge:
+            if _phase1_registry is not None and tier_for_chunk(_chunk, _phase1_registry) == TIER_3:
+                _phase1_tier3_ids.add(_chunk.id)
+                continue
+            _model = _phase1_deterministic_model(_chunk)
+            if _model is not None:
+                _phase1_deterministic[_chunk.id] = _model
+        if _phase1_tier3_ids:
+            for _chunk in pending_knowledge:
+                if _chunk.id in _phase1_tier3_ids:
+                    knowledge_done.add(_chunk.id)
+                    knowledge_failures.pop(_chunk.id, None)
+            pending_knowledge = [c for c in pending_knowledge if c.id not in _phase1_tier3_ids]
+        if _phase1_deterministic:
+            for _chunk in [c for c in pending_knowledge if c.id in _phase1_deterministic]:
+                machine_model = _phase1_deterministic[_chunk.id]
+                resolve_unresolved_fact(session, revision_id=revision_id, source_id=_chunk.id, fact_type="chunk_extraction_failure")
+                _router_type = (_chunk.extra or {}).get("source_type") or _chunk.chunk_type.value
+                _stamp_provenance(machine_model, document.title, _chunk.page_number, _chunk.id, _router_type)
+                kept_model, quarantined = quarantine_machine_model(machine_model)
+                for record in quarantined:
+                    persist_unresolved_fact(session, revision_id=revision_id,
+                        source_id=record.get("source_id") or _chunk.id, fact_type=record.get("fact_type", "quarantine"),
+                        payload=record.get("payload", record), reason=record.get("reason", "quarantined"))
+                if (kept_model.entities or kept_model.relations or kept_model.ports or kept_model.quantities or kept_model.states or kept_model.events or kept_model.behaviors or kept_model.constraints or kept_model.procedures or kept_model.failure_modes):
+                    persist_machine_knowledge(session, revision_id, _chunk.id, kept_model)
+                knowledge_done.add(_chunk.id)
+                knowledge_failures.pop(_chunk.id, None)
+            pending_knowledge = [c for c in pending_knowledge if c.id not in _phase1_deterministic]
+            session.commit()
+            if job_id:
+                save_checkpoint(job_id, stage="knowledge", knowledge_done=sorted(knowledge_done), knowledge_failures=knowledge_failures, percent=42 + int(len(knowledge_done) / max(1, total) * 33))
         batch_size = max(1, int(settings.extraction_batch_size))
         total = len(text_chunks)
         batch_index = 0
@@ -272,7 +363,7 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
                         fact_type="chunk_extraction_empty",
                         payload={"chunk_id": chunk.id, "content_excerpt": chunk.content[:2000]},
                         reason=_empty_reason)
-                _stamp_provenance(machine_model, document.title, chunk.page_number, chunk.id, chunk.chunk_type.value)
+                _stamp_provenance(machine_model, document.title, chunk.page_number, chunk.id, (chunk.extra or {}).get("source_type") or chunk.chunk_type.value)
                 if (machine_model.entities or machine_model.relations or machine_model.ports or machine_model.quantities or machine_model.states or machine_model.events or machine_model.behaviors or machine_model.constraints or machine_model.procedures or machine_model.failure_modes):
                     # Per-fact quarantine: keep every usable fact, quarantine
                     # only the structurally unusable ones. The old code dropped
@@ -420,15 +511,34 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
 
 def _stamp_provenance(model,source_document:str,page:int|None,chunk_id:str,source_type:str)->None:
     def evidence(fact:str)->MachineEvidence: return MachineEvidence(fact=fact,source_document=source_document,page=page,chunk=chunk_id,source_type=source_type,confidence=0.7,claim_status="observed",extraction_method="llm_extraction")
+    # Phase 1 provenance truthfulness: the router label is ground truth
+    # about the chunk, so a generic LLM-written "text" source_type is
+    # upgraded to it. Specific labels (expert, schematic, ...) are kept.
+    def _upgrade(ev):
+        if source_type and source_type not in {"text", "table"} and (not ev.source_type or ev.source_type == "text"):
+            ev.source_type = source_type
+        return ev
     for entity in model.entities:
         if not entity.evidence: entity.evidence.append(evidence(f"Entity {entity.name}"))
+        else:
+            for ev in entity.evidence: _upgrade(ev)
     for relation in model.relations:
         if not relation.evidence: relation.evidence.append(evidence(f"{relation.subject_name} {relation.relation_type} {relation.object_name}"))
+        else:
+            for ev in relation.evidence: _upgrade(ev)
     for collection,label in ((model.ports,"Port"),(model.quantities,"Quantity"),(model.states,"State"),(model.events,"Event"),(model.behaviors,"Behavior"),(model.constraints,"Constraint")):
         for item in collection:
             if not item.evidence: item.evidence.append(evidence(f"{label} {getattr(item,'name',getattr(item,'id','unknown'))}"))
+            else:
+                for ev in item.evidence: _upgrade(ev)
     for proc in model.procedures:
         if not proc.evidence: proc.evidence.append(evidence(f"Procedure {proc.name}"))
+        else:
+            for ev in proc.evidence: _upgrade(ev)
     for fm in model.failure_modes:
         if not fm.evidence: fm.evidence.append(evidence(f"Failure mode {fm.name}"))
+        else:
+            for ev in fm.evidence: _upgrade(ev)
     if not model.evidence: model.evidence.append(evidence("Universal machine extraction"))
+    else:
+        for ev in model.evidence: _upgrade(ev)
