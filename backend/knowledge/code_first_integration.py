@@ -15,9 +15,17 @@ tightening a rule and re-running integration, with no re-extraction.
 
 Merge safety (the hard rule, not a similarity score):
 - A name alone is never identity. Code merges only on exact
-  normalised name + same entity type + no conflicting property.
-- Different non-empty values for part_number, location, function,
-  voltage or any other compared property veto a merge.
+  normalised name + compatible entity type + no conflicting *hard*
+  identity signal (part_number, location_description, voltage).
+  Descriptive prose -- notably ``function``, which the LLM paraphrases
+  -- is not an identity signal and never vetoes a merge. (Phase 2: the
+  code-first grouping used to veto on any differing property, which
+  split one physical part into a subgroup per function wording and
+  left the merge to an optional LLM adjudication call that never fired
+  on the crater-9 live run. The narrow rule now lives in
+  ``backend/knowledge/identity.py`` and is the grouping rule itself.)
+- Different non-empty values for part_number, location or voltage
+  veto a merge.
 - Two rows from the same parts list with different item numbers
   are distinct instances and are never merged, even by adjudication.
 - A row that matches more than one existing subgroup (for example
@@ -43,6 +51,13 @@ import json
 import logging
 import re
 from typing import Any
+
+from backend.knowledge.identity import (
+    HARD_IDENTITY_KEYS,
+    entity_types_compatible,
+    hard_identity_conflict,
+)
+from backend.knowledge.provenance import precedence_for_source
 
 logger = logging.getLogger(__name__)
 
@@ -87,48 +102,13 @@ def _is_empty(value: Any) -> bool:
     return value is None or value == "" or value == {} or value == []
 
 
-def _props_conflict(a: dict, b: dict) -> bool:
-    if not isinstance(a, dict) or not isinstance(b, dict):
-        return False
-    for key, value in a.items():
-        if key in b and not _is_empty(b[key]) and not _is_empty(value) and b[key] != value:
-            return True
-    return False
-
-
-def _conflicting_keys(a: dict, b: dict) -> list[str]:
-    keys: list[str] = []
-    if not isinstance(a, dict) or not isinstance(b, dict):
-        return keys
-    for key, value in a.items():
-        if key in b and not _is_empty(b[key]) and not _is_empty(value) and b[key] != value:
-            keys.append(key)
-    return keys
-
-
-# Hard identity signals: the properties that identify a physical component.
-# Descriptive prose (notably `function`, which is LLM-paraphrased and the
-# usual reason two subgroups of one part split) is NOT an identity signal.
-_HARD_IDENTITY_KEYS = ("part_number", "location_description", "voltage")
-
-
-def _hard_identity_conflict(a: dict, b: dict) -> bool:
-    """True when a hard identity signal differs between two property sets.
-
-    Part number, location and voltage identify a physical component; a
-    differing `function` string does not -- it is usually two paraphrases
-    of the same job ("Applies tension to the feed roller/wire" vs
-    "Applies pressure to wire feed"). Vetoing a merge on prose made an
-    LLM merge decision unenforceable for exactly the clusters that need
-    adjudication most, so the veto checks only these keys.
-    """
-    if not isinstance(a, dict) or not isinstance(b, dict):
-        return False
-    for key in _HARD_IDENTITY_KEYS:
-        va, vb = a.get(key), b.get(key)
-        if not _is_empty(va) and not _is_empty(vb) and str(va) != str(vb):
-            return True
-    return False
+# Merge rules live in backend/knowledge/identity.py (single home,
+# shared with the legacy LLM path). The broad "any differing
+# property blocks the merge" rule that used to live here
+# (_props_conflict) was the Phase 0 dedupe bug: it split one
+# physical part per paraphrased `function` string, so the v9 narrow
+# veto -- which only ever ran in the LLM adjudication path -- could
+# not save the merge. The narrow rule is now the grouping rule.
 
 
 def source_fingerprint(context: dict[str, Any]) -> str:
@@ -266,6 +246,25 @@ def _same_list_distinct(source_a: dict[str, Any], source_b: dict[str, Any]) -> b
     return False
 
 
+def _precedence_of_subgroup(subgroup: dict[str, Any]) -> str:
+    """Precedence label for a subgroup, from its evidence documents.
+
+    The highest-ranked source document wins (MTB > OEM > generic).
+    Evidence without a source document is generic -- unknown, not
+    invented.
+    """
+    best = "generic"
+    best_rank = 1
+    for item in subgroup.get("evidence") or []:
+        if not isinstance(item, dict):
+            continue
+        label = precedence_for_source(item.get("source_document"))
+        rank = {"mtb": 3, "oem": 2, "generic": 1}.get(label, 1)
+        if rank > best_rank:
+            best, best_rank = label, rank
+    return best
+
+
 def _group_entities(sources: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Group entity sources into canonical subgroups.
 
@@ -273,20 +272,29 @@ def _group_entities(sources: list[dict[str, Any]]) -> tuple[list[dict[str, Any]]
     subgroup of sources that could be merged safely. A source that
     matches more than one subgroup is kept as its own subgroup:
     that is ambiguity, not a reason to pick the first match.
+
+    Grouping is by normalized name only. The merge rule is the narrow
+    rule in ``backend/knowledge/identity.py``: same name + compatible
+    entity type + no conflicting hard identity signal (part_number,
+    location_description, voltage) + part-compatible + not two distinct
+    items of the same source list. Descriptive prose (``function``) never
+    blocks a merge -- it is the usual reason one physical part was
+    extracted with several wordings.
     """
-    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    groups: dict[str, list[dict[str, Any]]] = {}
     for source in sources:
-        key = (norm_name(source["name"]), norm_name(source["entity_type"]))
-        groups.setdefault(key, []).append(source)
+        groups.setdefault(norm_name(source["name"]), []).append(source)
 
     canonical: list[dict[str, Any]] = []
     conflicts: list[dict[str, Any]] = []
-    for (name_norm, type_norm), rows in groups.items():
+    for name_norm, rows in groups.items():
         subgroups: list[dict[str, Any]] = []
         for row in rows:
             candidates: list[dict[str, Any]] = []
             for subgroup in subgroups:
-                if _props_conflict(subgroup["properties"], row["properties"]):
+                if not entity_types_compatible(subgroup["entity_type"], row["entity_type"]):
+                    continue
+                if hard_identity_conflict(subgroup["properties"], row["properties"]):
                     continue
                 if not _part_compatible(subgroup, row):
                     continue
@@ -310,7 +318,12 @@ def _group_entities(sources: list[dict[str, Any]]) -> tuple[list[dict[str, Any]]
                     "evidence": list(row["evidence"]),
                 })
         # Assign stable canonical ids, with a distinguishing suffix
-        # when one name+type splits into several subgroups.
+        # when one name splits into several subgroups. The suffix must
+        # be unique within the name group: two subgroups that share a
+        # part number (same part, different locations) would otherwise
+        # collide on one id -- the known Welder collision. A colliding
+        # suffix falls back to the index suffix.
+        used_ids: set[str] = set()
         for index, subgroup in enumerate(subgroups):
             base = _slug(subgroup["name"])
             if len(subgroups) == 1:
@@ -324,21 +337,32 @@ def _group_entities(sources: list[dict[str, Any]]) -> tuple[list[dict[str, Any]]
                     locations = {str(s["properties"].get("location_description")) for s in subgroup["sources"] if s["properties"].get("location_description")}
                     if len(locations) == 1:
                         distinguishing = _slug(next(iter(locations)))
-                canonical_id = f"entity:{base}-{distinguishing}" if distinguishing else f"entity:{base}-{index + 1}"
+                candidate_id = f"entity:{base}-{distinguishing}" if distinguishing else f"entity:{base}-{index + 1}"
+                canonical_id = candidate_id if candidate_id not in used_ids else f"entity:{base}-{index + 1}"
+            used_ids.add(canonical_id)
             subgroup["id"] = canonical_id
             canonical.append(subgroup)
         if len(subgroups) > 1:
-            # Record the conflict explicitly instead of hiding it:
-            # every pair of subgroups disagrees on at least one property
-            # (or on item number), otherwise they would have merged.
+            # Record the conflict explicitly instead of hiding it, but
+            # only for hard identity signals: a split is caused by a
+            # hard signal (or by item number), never by paraphrased
+            # prose, so `function` differences are not conflicts.
             seen_keys: dict[str, list[Any]] = {}
             for subgroup in subgroups:
-                for key, value in subgroup["properties"].items():
+                for key in HARD_IDENTITY_KEYS:
+                    value = subgroup["properties"].get(key)
+                    if _is_empty(value):
+                        continue
                     seen_keys.setdefault(key, [])
                     if value not in seen_keys[key]:
                         seen_keys[key].append(value)
             for key, values in seen_keys.items():
                 if len(values) > 1:
+                    precedence = {
+                        str(sub["properties"].get(key)): _precedence_of_subgroup(sub)
+                        for sub in subgroups
+                        if not _is_empty(sub["properties"].get(key))
+                    }
                     conflicts.append({
                         "id": f"conflict:{_slug(rows[0]['name'])}-{_slug(key)}",
                         "subject": rows[0]["name"],
@@ -346,6 +370,7 @@ def _group_entities(sources: list[dict[str, Any]]) -> tuple[list[dict[str, Any]]
                         "values": values,
                         "resolution": None,
                         "status": "unresolved",
+                        "precedence": precedence,
                         "source_ids": sorted({sid for s in subgroups for sid in s["source_ids"]}),
                         "evidence": [],
                     })
@@ -851,11 +876,11 @@ def build_code_first_payload(context: dict[str, Any]) -> dict[str, Any]:
         })
 
     # --- Conflicting same-name groups become adjudication clusters ---
-    # Recompute groups by name+type to find split subgroups.
-    name_type_to_subgroups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    # Recompute groups by name to find split subgroups.
+    name_to_subgroups: dict[str, list[dict[str, Any]]] = {}
     for entity in canonical:
-        name_type_to_subgroups.setdefault((norm_name(entity["name"]), norm_name(entity["entity_type"])), []).append(entity)
-    for (name_norm, _type_norm), subgroups in name_type_to_subgroups.items():
+        name_to_subgroups.setdefault(norm_name(entity["name"]), []).append(entity)
+    for name_norm, subgroups in name_to_subgroups.items():
         if len(subgroups) > 1:
             clusters.append({"cluster_id": f"conflict:{_slug(subgroups[0]['name'])}", "kind": "conflicting_same_name",
                              "name": subgroups[0]["name"],
@@ -887,7 +912,7 @@ def build_code_first_payload(context: dict[str, Any]) -> dict[str, Any]:
             function_overlap = len(_tokens(first["properties"].get("function", "")) & _tokens(second["properties"].get("function", ""))) >= 2
             if not (first_tokens_set <= second_tokens_set or second_tokens_set <= first_tokens_set or shared_first or function_overlap):
                 continue
-            if _props_conflict(first["properties"], second["properties"]):
+            if hard_identity_conflict(first["properties"], second["properties"]):
                 continue
             part_first = first["properties"].get("part_number")
             part_second = second["properties"].get("part_number")
@@ -911,6 +936,31 @@ def build_code_first_payload(context: dict[str, Any]) -> dict[str, Any]:
         if isinstance(row, dict):
             add_unresolved(str(row.get("source_id", "")), "expert_knowledge", row,
                            "expert_knowledge_not_canonicalized_by_code_first")
+
+    # --- Phase 2: typed ports + library type on payload entities ---
+    # Ports were collected into payload["ports"] with canonical entity
+    # ids; attach them to their entities as typed ports, so the snapshot
+    # carries them (the Machine Model view reads the snapshot payload).
+    # library_type binds where the alias rule matches uniquely. Both
+    # are derived here, never LLM output.
+    from backend.knowledge.library_types import bind_library_type
+    _ports_by_entity: dict[str, list[dict[str, Any]]] = {}
+    for _port in payload.get("ports", []):
+        if isinstance(_port, dict) and _port.get("entity_id"):
+            _ports_by_entity.setdefault(str(_port["entity_id"]), []).append(_port)
+    for _entity in payload.get("entities", []):
+        _typed = _ports_by_entity.get(str(_entity.get("id")), [])
+        if _typed:
+            for _p in _typed:
+                _props = _p.get("properties") or {}
+                if isinstance(_props, dict):
+                    _p.setdefault("domain", _props.get("domain"))
+                    _p.setdefault("unit", _props.get("unit"))
+            _entity["typed_ports"] = [dict(_p) for _p in _typed]
+            # Keep the deprecated string view in sync with the typed truth.
+            _entity["ports"] = [str(_p.get("name")) for _p in _typed if _p.get("name")]
+        if "library_type" not in _entity:
+            _entity["library_type"] = bind_library_type(_entity.get("name"), _entity.get("entity_type"))
 
     payload["unresolved_facts"] = unresolved
     return {"payload": payload, "clusters": clusters,
@@ -1076,7 +1126,7 @@ def apply_adjudication(state: dict[str, Any], decisions: list[dict[str, Any]]) -
             # the usual reason two subgroups of one part split at all.
             veto = False
             for other in others:
-                if _hard_identity_conflict(kept["properties"], other["properties"]):
+                if hard_identity_conflict(kept["properties"], other["properties"]):
                     veto = True
                     break
                 if any(_same_list_distinct(existing, other_row) for existing in kept["sources"] for other_row in other["sources"]):

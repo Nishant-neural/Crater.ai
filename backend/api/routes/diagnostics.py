@@ -62,6 +62,36 @@ def start(payload: StartDiagnosticRequest, db: DBSession = Depends(get_session))
     return _to_view(session)
 
 
+@router.get("/sessions")
+def list_sessions(product_id: str | None = None, revision_id: str | None = None, db: DBSession = Depends(get_session)):
+    """Phase 2: list past diagnostic sessions for a machine, most recent
+    first, so the Diagnose view can restore one after navigating away.
+    Registered before /{session_id} so "sessions" is never read as a
+    session id. A light row per session -- the full state comes from
+    GET /diagnose/{session_id} when the user restores one.
+    """
+    query = db.query(DiagnosticSession)
+    if product_id:
+        query = query.filter(DiagnosticSession.product_id == product_id)
+    if revision_id:
+        query = query.filter(DiagnosticSession.revision_id == revision_id)
+    rows = query.order_by(DiagnosticSession.created_at.desc()).all()
+    out = []
+    for session in rows:
+        state = session.state or {}
+        out.append({
+            "session_id": session.id,
+            "product_id": session.product_id,
+            "revision_id": session.revision_id,
+            "status": session.status.value,
+            "symptom": (state.get("symptoms") or [None])[0],
+            "confidence": state.get("confidence", 0.0),
+            "turns_taken": state.get("turns_taken", 0),
+            "created_at": session.created_at.isoformat() if session.created_at else None,
+        })
+    return {"sessions": out}
+
+
 @router.post("/{session_id}/respond", response_model=DiagnosticSessionView)
 def respond(session_id: str, payload: RespondRequest, db: DBSession = Depends(get_session)):
     session = db.get(DiagnosticSession, session_id)

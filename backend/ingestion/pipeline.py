@@ -5,7 +5,7 @@ from typing import Callable
 import time
 from sqlalchemy.orm import Session
 from backend.schematic.vision_extraction import extract_schematic
-from backend.db.models import Chunk, Component, ComponentRelationship, Document, DocType, IngestionJob, Product, RelationType, SchematicEdge, SchematicNode, UnresolvedFact
+from backend.db.models import Chunk, Component, ComponentRelationship, Document, DocType, IngestionJob, Product, RelationType, Revision, SchematicEdge, SchematicNode, UnresolvedFact
 from backend.ingestion.chunking import pages_to_chunks
 from backend.ingestion.pdf_loader import load_pdf
 from backend.ingestion.table_parser import parse_table_chunk
@@ -17,6 +17,7 @@ from backend.knowledge.verification import verify_machine_model
 from backend.retrieval.vector_store import upsert_chunks
 from backend.schematic.graph import persist_schematic, schematic_to_machine_model
 from backend.knowledge.evidence import MachineEvidence
+from backend.knowledge.provenance import precedence_for_source
 from backend.knowledge.normalization import persist_unresolved_fact, resolve_unresolved_fact
 from backend.config import settings
 from backend.ingestion.pending_links import resolve_pending_relationships, resolve_pending_schematic_edges
@@ -196,6 +197,13 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
         # extracted into the model and are marked done so a resume does
         # not re-offer them. Everything else keeps the v12 LLM path.
         _phase1_registry = _phase1_registry_for_product(session, product_id)
+        # Phase 2: the revision label and product model travel with every
+        # fact this job extracts (source_revision / model_variant on the
+        # evidence). Missing rows stay None -- unknown, never invented.
+        _revision_row = session.get(Revision, revision_id)
+        _source_revision = _revision_row.label if _revision_row is not None else None
+        _product_row = session.get(Product, product_id)
+        _model_variant = _product_row.model if _product_row is not None else None
         _phase1_deterministic: dict[str, object] = {}
         _phase1_tier3_ids: set[str] = set()
         for _chunk in pending_knowledge:
@@ -216,7 +224,7 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
                 machine_model = _phase1_deterministic[_chunk.id]
                 resolve_unresolved_fact(session, revision_id=revision_id, source_id=_chunk.id, fact_type="chunk_extraction_failure")
                 _router_type = (_chunk.extra or {}).get("source_type") or _chunk.chunk_type.value
-                _stamp_provenance(machine_model, document.title, _chunk.page_number, _chunk.id, _router_type)
+                _stamp_provenance(machine_model, document.title, _chunk.page_number, _chunk.id, _router_type, source_revision=_source_revision, model_variant=_model_variant)
                 kept_model, quarantined = quarantine_machine_model(machine_model)
                 for record in quarantined:
                     persist_unresolved_fact(session, revision_id=revision_id,
@@ -363,7 +371,7 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
                         fact_type="chunk_extraction_empty",
                         payload={"chunk_id": chunk.id, "content_excerpt": chunk.content[:2000]},
                         reason=_empty_reason)
-                _stamp_provenance(machine_model, document.title, chunk.page_number, chunk.id, (chunk.extra or {}).get("source_type") or chunk.chunk_type.value)
+                _stamp_provenance(machine_model, document.title, chunk.page_number, chunk.id, (chunk.extra or {}).get("source_type") or chunk.chunk_type.value, source_revision=_source_revision, model_variant=_model_variant)
                 if (machine_model.entities or machine_model.relations or machine_model.ports or machine_model.quantities or machine_model.states or machine_model.events or machine_model.behaviors or machine_model.constraints or machine_model.procedures or machine_model.failure_modes):
                     # Per-fact quarantine: keep every usable fact, quarantine
                     # only the structurally unusable ones. The old code dropped
@@ -509,14 +517,25 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
     if job_id: save_checkpoint(job_id,stage="completed",percent=100)
     return document
 
-def _stamp_provenance(model,source_document:str,page:int|None,chunk_id:str,source_type:str)->None:
-    def evidence(fact:str)->MachineEvidence: return MachineEvidence(fact=fact,source_document=source_document,page=page,chunk=chunk_id,source_type=source_type,confidence=0.7,claim_status="observed",extraction_method="llm_extraction")
+def _stamp_provenance(model,source_document:str,page:int|None,chunk_id:str,source_type:str,source_revision:str|None=None,model_variant:str|None=None)->None:
+    # Phase 2: precedence is derived from the source document (MTB
+    # markers win over a manufacturer manual, which wins over generic
+    # material -- see backend/knowledge/provenance.py). Revision and
+    # variant travel on the evidence when known; None means unknown.
+    _precedence = precedence_for_source(source_document)
+    def evidence(fact:str)->MachineEvidence: return MachineEvidence(fact=fact,source_document=source_document,page=page,chunk=chunk_id,source_type=source_type,confidence=0.7,claim_status="observed",extraction_method="llm_extraction",precedence=_precedence,source_revision=source_revision,model_variant=model_variant)
     # Phase 1 provenance truthfulness: the router label is ground truth
     # about the chunk, so a generic LLM-written "text" source_type is
     # upgraded to it. Specific labels (expert, schematic, ...) are kept.
     def _upgrade(ev):
         if source_type and source_type not in {"text", "table"} and (not ev.source_type or ev.source_type == "text"):
             ev.source_type = source_type
+        if ev.precedence is None:
+            ev.precedence = _precedence
+        if ev.source_revision is None and source_revision is not None:
+            ev.source_revision = source_revision
+        if ev.model_variant is None and model_variant is not None:
+            ev.model_variant = model_variant
         return ev
     for entity in model.entities:
         if not entity.evidence: entity.evidence.append(evidence(f"Entity {entity.name}"))
