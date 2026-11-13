@@ -46,18 +46,21 @@ function EvidenceCard({ evidence }) {
       {evidence.page != null && <span>p. {evidence.page}</span>}
       {evidence.chunk && <span>chunk {String(evidence.chunk).slice(0, 12)}</span>}
       {evidence.source_type && <span>{evidence.source_type}</span>}
+      {evidence.precedence && <span>precedence: {evidence.precedence}</span>}
+      {evidence.source_revision && <span>rev {evidence.source_revision}</span>}
     </div>
   </div>;
 }
 
-function EntityDetail({ entity, relations, evidenceByItem, onClose }) {
+function EntityDetail({ entity, relations, evidenceByItem, quantities = [], onClose }) {
   if (!entity) return null;
   const outgoing = relations.filter(r => r.subject_id === entity.id);
   const incoming = relations.filter(r => r.object_id === entity.id);
   const evidence = evidenceByItem.get(entity.id) || [];
+  const entityQuantities = (quantities || []).filter(q => q.entity_id === entity.id);
   return <div className="model-detail-drawer">
     <div className="model-detail-head">
-      <div><div className="eyebrow">ENTITY</div><h3>{entity.name}</h3><Badge>{entity.entity_type}</Badge></div>
+      <div><div className="eyebrow">ENTITY</div><h3>{entity.name}</h3><Badge>{entity.entity_type}</Badge>{entity.library_type && <Badge tone="ok">library: {entity.library_type}</Badge>}</div>
       <button className="secondary-button" onClick={onClose}>Close</button>
     </div>
     <div className="model-detail-grid">
@@ -66,9 +69,17 @@ function EntityDetail({ entity, relations, evidenceByItem, onClose }) {
     </div>
     <h4>Properties</h4>
     {Object.keys(entity.properties || {}).length ? <div className="model-properties">{Object.entries(entity.properties).map(([k,v]) => <div key={k}><span>{k}</span><JsonValue value={v}/></div>)}</div> : <p className="muted">No additional properties.</p>}
-    {(entity.ports?.length > 0 || entity.states?.length > 0) && <>
+    {(entity.typed_ports?.length > 0 || entity.ports?.length > 0 || entity.states?.length > 0) && <>
       <h4>Ports & states</h4>
-      <div className="model-chip-list">{entity.ports?.map(p => <Badge key={`p-${p}`}>port: {p}</Badge>)}{entity.states?.map(s => <Badge key={`s-${s}`}>state: {s}</Badge>)}</div>
+      <div className="model-chip-list">
+        {entity.typed_ports?.map(p => <Badge key={`tp-${p.id || p.name}`}>port: {p.name}{p.direction ? ` · ${p.direction}` : ""}{p.domain ? ` · ${p.domain}` : ""}{p.unit ? ` · ${p.unit}` : ""}</Badge>)}
+        {!entity.typed_ports?.length && entity.ports?.map(p => <Badge key={`p-${p}`}>port: {p}</Badge>)}
+        {entity.states?.map(s => <Badge key={`s-${s}`}>state: {s}</Badge>)}
+      </div>
+    </>}
+    {entityQuantities.length > 0 && <>
+      <h4>Parameters</h4>
+      <div className="model-properties">{entityQuantities.map(q => <div key={q.id}><span>{q.name}</span><span>{q.value != null && q.value !== "" ? `${q.value} ${q.unit || ""}`.trim() : "unbound"}{q.source_kind ? ` · ${q.source_kind}` : ""}</span></div>)}</div>
     </>}
     <h4>Relationships</h4>
     <div className="model-relation-list">
@@ -229,7 +240,7 @@ export default function MachineModelViewer({ initialProductId = "", initialRevis
       {section === "conflicts" && <ConflictList conflicts={conflicts} unresolved={unresolved} />}
       {section === "evidence" && <EvidenceList evidence={evidence} query={query} />}
 
-      {selectedEntity && <EntityDetail entity={selectedEntity} relations={relations} evidenceByItem={evidenceByItem} onClose={() => setSelectedEntity(null)} />}
+      {selectedEntity && <EntityDetail entity={selectedEntity} relations={relations} evidenceByItem={evidenceByItem} quantities={(model.quantities || []).filter(q => q.entity_id === selectedEntity.id)} onClose={() => setSelectedEntity(null)} />}
     </>}
   </div>;
 }

@@ -42,6 +42,15 @@ export async function getTwinVisual(twinId) { return getJson(`/simulation/twins/
 
 export async function startDiagnostic(payload) { return postJson("/diagnose/start", payload, "start diagnostic"); }
 export async function getDiagnostic(sessionId) { return getJson(`/diagnose/${sessionId}`); }
+export async function listDiagnostics(productId, revisionId) {
+  // Phase 2: past sessions for a machine, most recent first (backend
+  // orders by created_at desc). Returns { sessions: [...] }.
+  const params = new URLSearchParams();
+  if (productId) params.set("product_id", productId);
+  if (revisionId) params.set("revision_id", revisionId);
+  const query = params.toString();
+  return getJson(`/diagnose/sessions${query ? `?${query}` : ""}`);
+}
 export async function getDiagnosticContext(sessionId) { return getJson(`/diagnose/${sessionId}/context`); }
 export async function respondDiagnostic(sessionId, payload) { return postJson(`/diagnose/${sessionId}/respond`, payload, "diagnostic response"); }
 export async function recordDiagnosticOutcome(sessionId, payload) { return postJson(`/diagnose/${sessionId}/outcome`, payload, "record repair outcome"); }

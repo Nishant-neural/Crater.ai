@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { listMachines } from "../api/machines";
 import { listRevisions } from "../api/revisions";
 import { getRevisionIngestionStatus } from "../api/client";
-import { startDiagnostic, getDiagnostic, getDiagnosticContext, respondDiagnostic,
+import { startDiagnostic, getDiagnostic, listDiagnostics, getDiagnosticContext, respondDiagnostic,
   recordDiagnosticOutcome, getMostInformativeTest, getGuidedPhysicalChecks, verifyRepair, verifyHypotheses } from "../api/diagnostics";
 import MachineOnboarding from "./MachineOnboarding";
 import ExpertKnowledge from "./ExpertKnowledge";
@@ -57,6 +57,8 @@ export default function DiagnosticWorkspace({ onMachineReady, initialProductId =
   const [verifyBusy,setVerifyBusy]=useState(false);
   const [tournament,setTournament]=useState(null);
   const [tournamentBusy,setTournamentBusy]=useState(false);
+  const [pastSessions,setPastSessions]=useState([]);
+  const [pastLoading,setPastLoading]=useState(false);
 
   async function loadMachines(selectProductId = null, selectRevisionId = null) {
     try {
@@ -105,6 +107,41 @@ export default function DiagnosticWorkspace({ onMachineReady, initialProductId =
       .then(setRevisionIngestion)
       .catch(e=>setRevisionIngestion({status:"unknown",error:e.message}));
   },[revisionId]);
+
+  // Phase 2: past sessions for this machine, most recent first, so a
+  // session survives navigating away from Diagnose. Loads whenever no
+  // session is open.
+  useEffect(()=>{
+    if(session || !productId || !revisionId){ setPastSessions([]); return; }
+    setPastLoading(true);
+    listDiagnostics(productId, revisionId)
+      .then(res=>setPastSessions(res?.sessions || []))
+      .catch(()=>setPastSessions([]))
+      .finally(()=>setPastLoading(false));
+  },[session, productId, revisionId]);
+
+  async function restoreSession(row){
+    setBusy(true);setError("");
+    try {
+      const s=await getDiagnostic(row.session_id);
+      if(!s) { setError("That session no longer exists."); return; }
+      // Verification / tournament / outcome state is not persisted in
+      // the session -- only the timeline is -- so clear it on restore.
+      setVerification(null); setTournament(null); setOutcomeResult(null);
+      setNextTest(null); setGuidedChecks(null);
+      setProductId(s.product_id); setRevisionId(s.revision_id);
+      setSession(s);
+      setContext(await getDiagnosticContext(s.session_id));
+    } catch(e){setError(e.message)} finally{setBusy(false)}
+  }
+  function backToSessions(){
+    // Leave the session open on the backend; the past-sessions list
+    // restores it. Clear only the per-session UI state that is not
+    // persisted (verification / tournament / outcome).
+    setSession(null); setContext(null);
+    setVerification(null); setTournament(null); setOutcomeResult(null);
+    setNextTest(null); setGuidedChecks(null);
+  }
 
   async function begin(){
     if(!productId||!revisionId||!symptom.trim()) return;
@@ -238,6 +275,15 @@ export default function DiagnosticWorkspace({ onMachineReady, initialProductId =
         </button>
       </Card>
     </div>
+    {productId && revisionId && <Card title="Past sessions" className="diag-past-sessions">
+      {pastLoading ? <p className="muted">Loading past sessions…</p>
+      : pastSessions.length ? <div className="model-card-list">{pastSessions.map(row => <div key={row.session_id} className="model-panel">
+        <div className="model-card-head"><h3>{row.symptom || "No symptom recorded"}</h3><StatusPill tone={row.status==="active"?"live":row.status==="concluded"?"ok":"warn"}>{row.status}</StatusPill></div>
+        <div className="muted">{row.turns_taken} turn(s) · confidence {Math.round(Number(row.confidence || 0)*100)}%{row.created_at ? ` · ${new Date(row.created_at).toLocaleString()}` : ""}</div>
+        <button className="secondary-button" disabled={busy} onClick={()=>restoreSession(row)}>Restore session</button>
+      </div>)}</div>
+      : <p className="muted">No past sessions for this machine yet. Start an investigation above.</p>}
+    </Card>}
     {error && <div className="diag-error">{error}</div>}
   </div>;
 
@@ -248,7 +294,7 @@ export default function DiagnosticWorkspace({ onMachineReady, initialProductId =
         <div className="eyebrow">LIVE DIAGNOSTIC SESSION</div>
         <h2>{machine?.model || "Machine"} <span>/ {revision?.label || "Revision"}</span></h2>
       </div>
-      <div className="header-actions"><StatusPill tone={session.status==="active"?"live":session.status==="concluded"?"ok":"warn"}>{session.status}</StatusPill><button onClick={()=>setShowExpert(true)}>Add expert note</button><button onClick={refresh} disabled={busy}>Refresh</button></div>
+      <div className="header-actions"><StatusPill tone={session.status==="active"?"live":session.status==="concluded"?"ok":"warn"}>{session.status}</StatusPill><button onClick={()=>setShowExpert(true)}>Add expert note</button><button onClick={backToSessions}>Sessions</button><button onClick={refresh} disabled={busy}>Refresh</button></div>
     </header>
     {error && <div className="diag-error">{error}</div>}
     <div className="diagnostic-grid">
