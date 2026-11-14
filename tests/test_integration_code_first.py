@@ -210,24 +210,21 @@ def _tensioner_context():
 
 
 def test_adjudication_merge_allowed_when_only_function_differs():
-    # v9 narrow veto: a differing `function` string is descriptive prose,
-    # not an identity signal. When the LLM says merge, the crater-8
-    # Feed Tensioner subgroups -- one per function wording -- become one
-    # entity; the kept function wins via setdefault and the other wording
-    # stays in source rows/evidence. (Live crater-8 has 5 canonical
-    # tensioners because legacy rows split further; the mechanism is the
-    # same: the cluster's candidates differ only in `function`.)
-    from backend.knowledge.code_first_integration import apply_adjudication, build_code_first_payload
+    # Phase 2 (updated: this test previously asserted the old behaviour --
+    # that function-only splits form a cluster needing LLM adjudication).
+    # Function prose is not a hard identity signal, so the code-first
+    # grouping now merges the five crater-8 Feed Tensioner rows in code:
+    # no conflicting_same_name cluster forms, no LLM call is needed, and
+    # the merged entity keeps every source id with the first function
+    # winning via setdefault. The seed can then resolve it by unique name.
+    from backend.knowledge.code_first_integration import build_code_first_payload
     state = build_code_first_payload(_tensioner_context())
-    clusters = state["clusters"]
-    conflict = next(c for c in clusters if c["kind"] == "conflicting_same_name")
-    assert len(conflict["candidates"]) == 2
-    kept_id = conflict["candidates"][0]["id"]
-    apply_adjudication(state, [{"cluster_id": conflict["cluster_id"], "action": "merge", "kept_id": kept_id}])
+    assert [c for c in state["clusters"] if c["kind"] == "conflicting_same_name"] == []
     tensioners = [e for e in state["payload"]["entities"] if e["name"] == "Feed Tensioner"]
     assert len(tensioners) == 1
     assert sorted(tensioners[0]["source_ids"]) == ["t1", "t2", "t3", "t4", "t5"]
     assert tensioners[0]["properties"]["function"] == "Applies tension to the feed roller/wire"
+    assert len(tensioners[0].get("merged_from") or []) == 5
 
 
 def test_adjudication_merge_still_vetoed_on_location_or_voltage():
@@ -258,12 +255,14 @@ def test_adjudication_merge_still_vetoed_on_location_or_voltage():
 
 
 def test_adjudication_merge_skipped_when_canonical_ids_collide():
-    # v9 guard: universal and legacy groupings can assign the same
-    # canonical id to two distinct entities (the known Welder collision:
-    # entity:welder-57812 twice). A merge resolves its candidates by id
-    # AND source rows, so the universal cluster merges while the legacy
-    # entity sharing the kept id is left untouched -- no source row is
-    # ever removed without being unioned into the kept entity.
+    # Phase 2 (rewritten: this test previously asserted the v9 Welder
+    # collision -- universal and legacy rows assigning the same canonical
+    # id, entity:welder-57812 twice). Name-only grouping now merges the
+    # universal and legacy rows with the same part number into one
+    # subgroup each, and the id-uniqueness fallback guarantees distinct
+    # canonical ids, so the collision no longer arises: two Welders with
+    # distinct ids, one cluster, and an adjudication merge resolves them
+    # by id AND source rows with no source row lost.
     from backend.knowledge.code_first_integration import apply_adjudication, build_code_first_payload
     context = {
         "universal_entities": [
@@ -276,9 +275,9 @@ def test_adjudication_merge_skipped_when_canonical_ids_collide():
         ],
         "universal_relations": [], "universal_facts": [], "behaviors": [],
         "legacy_components": [
-            # Same name, same part number, different type group: assigns the
-            # same canonical ids as the universal rows (entity:welder-57812
-            # and entity:welder-2) -- the collision itself.
+            # Same name, same part number, different type group: with
+            # name-only grouping these merge with the universal rows
+            # carrying the same part number instead of colliding.
             {"source_id": "w-leg-1", "name": "Welder", "function": "Perform welding operations",
              "location_description": "", "part_number": "57812", "source_chunk_id": "chunk-b"},
             {"source_id": "w-leg-2", "name": "Welder", "function": "Performs welding operations",
@@ -290,14 +289,38 @@ def test_adjudication_merge_skipped_when_canonical_ids_collide():
     }
     state = build_code_first_payload(context)
     welders = [e for e in state["payload"]["entities"] if e["name"] == "Welder"]
-    assert len(welders) == 4
-    assert [e["id"] for e in welders].count("entity:welder-57812") == 2  # the collision itself
-    assert [e["id"] for e in welders].count("entity:welder-2") == 2
+    assert len(welders) == 2
+    assert len({e["id"] for e in welders}) == 2  # no canonical-id collision
+    assert {e["id"] for e in welders} == {"entity:welder-57812", "entity:welder-2"}
     conflict = next(c for c in state["clusters"] if c["kind"] == "conflicting_same_name")
     kept_id = conflict["candidates"][0]["id"]
     apply_adjudication(state, [{"cluster_id": conflict["cluster_id"], "action": "merge", "kept_id": kept_id}])
     welders = [e for e in state["payload"]["entities"] if e["name"] == "Welder"]
-    assert len(welders) == 3
-    assert sorted(s for e in welders for s in e["source_ids"]) == ["w-leg-1", "w-leg-2", "w-univ-1", "w-univ-2"]
-    legacy = [e for e in welders if e["source_ids"] == ["w-leg-1"] or e["source_ids"] == ["w-leg-2"]]
-    assert len(legacy) == 2  # both legacy entities untouched by the merge
+    assert len(welders) == 1
+    assert sorted(welders[0]["source_ids"]) == ["w-leg-1", "w-leg-2", "w-univ-1", "w-univ-2"]
+
+
+def test_canonical_ids_unique_within_name_group():
+    # The id-uniqueness fallback: two Welders that must stay separate
+    # (same part number, conflicting locations) still get distinct
+    # canonical ids -- the second falls back to an index suffix.
+    from backend.knowledge.code_first_integration import build_code_first_payload
+    context = {
+        "universal_entities": [
+            {"source_id": "w-a", "name": "Welder", "entity_type": "equipment",
+             "properties": {"part_number": "57812", "location_description": "Interior Controls"},
+             "ports": [], "states": [], "evidence": [], "source_chunk_id": "chunk-a"},
+            {"source_id": "w-b", "name": "Welder", "entity_type": "equipment",
+             "properties": {"part_number": "57812", "location_description": "Front Panel"},
+             "ports": [], "states": [], "evidence": [], "source_chunk_id": "chunk-b"},
+        ],
+        "universal_relations": [], "universal_facts": [], "behaviors": [],
+        "legacy_components": [], "legacy_relationships": [], "procedures": [],
+        "failure_modes": [], "schematic_nodes": [], "schematic_edges": [],
+        "expert_knowledge": [],
+    }
+    state = build_code_first_payload(context)
+    welders = [e for e in state["payload"]["entities"] if e["name"] == "Welder"]
+    assert len(welders) == 2  # conflicting location keeps them separate
+    assert len({e["id"] for e in welders}) == 2
+    assert "entity:welder-57812" in {e["id"] for e in welders}

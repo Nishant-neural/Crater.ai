@@ -205,6 +205,29 @@ def coverage_for_case(case: RepairCase, snapshot: UniversalMachineModel) -> dict
     }
 
 
+def model_coverage(snapshot: UniversalMachineModel) -> dict:
+    """Phase 2 model-level coverage, computed from the snapshot.
+
+    Typed ports, library bindings, bound parameters, failure-mode
+    entity links, and recorded conflicts -- the gaps the canonical
+    model itself can show, before any repair case is scored. Unbound
+    quantities are named, not hidden: an unbound parameter is a gap
+    in the model, not a value to borrow from somewhere else.
+    """
+    quantities = snapshot.quantities
+    return {
+        "entities": len(snapshot.entities),
+        "entities_with_typed_ports": sum(1 for e in snapshot.entities if e.typed_ports),
+        "entities_with_library_type": sum(1 for e in snapshot.entities if e.library_type),
+        "quantities": len(quantities),
+        "quantities_bound": sum(1 for q in quantities if q.is_bound),
+        "quantities_unbound": [q.name for q in quantities if not q.is_bound],
+        "failure_modes": len(snapshot.failure_modes),
+        "failure_modes_with_entity_links": sum(1 for fm in snapshot.failure_modes if fm.entity_ids),
+        "conflicts": len(snapshot.conflicts),
+    }
+
+
 def coverage_for_registry(registry: RepairCaseRegistry, snapshot: UniversalMachineModel) -> list[dict]:
     """Per-case coverage for every case in the registry."""
     return [coverage_for_case(case, snapshot) for case in registry.cases]
