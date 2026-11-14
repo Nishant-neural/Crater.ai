@@ -46,6 +46,15 @@ class MachineEvidence(BaseModel):
     confidence: float = 0.0
     claim_status: Literal["observed", "inferred", "uncertain"] = "observed"
     extraction_method: str | None = None
+    # Phase 2: source identity + precedence, derived at stamp time
+    # from the document (never from the LLM, never guessed).
+    # ``source_revision`` is the document revision label (e.g. "Rev A");
+    # ``model_variant`` is the machine variant the fact is about;
+    # ``precedence`` is "mtb" | "oem" | "generic" (MTB > OEM > generic).
+    # All three are None when not recorded -- unknown, not invented.
+    source_revision: str | None = None
+    model_variant: str | None = None
+    precedence: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     def as_summary(self) -> str:

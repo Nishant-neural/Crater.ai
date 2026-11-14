@@ -122,10 +122,30 @@ class MachineEntity(MachineModelBase):
     name: str
     entity_type: str
     properties: dict[str, Any] = Field(default_factory=dict)
+    # Deprecated view: the plain port names. The typed truth is
+    # ``typed_ports`` below; this list is derived from it whenever typed
+    # ports are present, never a second source of truth. Extraction-era
+    # payloads that only carry string ports keep working unchanged.
     ports: list[str] = Field(default_factory=list)
+    # Typed ports (Phase 2): MachinePort objects attached at integration
+    # from the model's port list (matched by entity_id). Empty until then.
+    typed_ports: list[MachinePort] = Field(default_factory=list)
+    # Library type (Phase 2): the field + the unique-match-only binding
+    # rule in library_types.py. The contracts themselves are Phase 3.
+    # None means unbound (no unique match) -- never guessed.
+    library_type: str | None = None
     states: list[EntityState] = Field(default_factory=list)
     source_ids: list[str] = Field(default_factory=list)
     evidence: list[MachineEvidence] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _derive_port_names(self):
+        if self.typed_ports:
+            names = [p.name for p in self.typed_ports if p.name]
+            if names:
+                # Typed ports are the truth; the string list is their view.
+                self.ports = names
+        return self
 
 
 class MachineEntityRelation(MachineModelBase):
@@ -156,6 +176,11 @@ class MachinePort(MachineModelBase):
     entity_id: str
     name: str
     direction: str | None = None
+    # Phase 2: the port's domain (electrical / mechanical / control /
+    # material / signal) and unit, when the source states them. Both are
+    # optional and never invented: absent means unrecorded, not "none".
+    domain: str | None = None
+    unit: str | None = None
     properties: dict[str, Any] = Field(default_factory=dict)
     evidence: list[MachineEvidence] = Field(default_factory=list)
 
@@ -167,8 +192,22 @@ class MachineQuantity(MachineModelBase):
     name: str
     value: str | None = None
     unit: str | None = None
+    # Phase 2: parameters as first-class quantities. A range is two
+    # optional numeric bounds (None = unbounded on that side, not zero).
+    # ``source_kind`` says where the value came from -- "spec_page" /
+    # "nameplate" / "data_book" / "parameter_manual" -- or None when the
+    # source is not recorded. A quantity with no value is unbound: no
+    # value is ever invented to fill it, and coverage reports the gap.
+    range_min: float | None = None
+    range_max: float | None = None
+    source_kind: str | None = None
     properties: dict[str, Any] = Field(default_factory=dict)
     evidence: list[MachineEvidence] = Field(default_factory=list)
+
+    @property
+    def is_bound(self) -> bool:
+        """True when this parameter has a real value bound to a source."""
+        return self.value is not None and str(self.value).strip() != ""
 
 
 class MachineState(MachineModelBase):
@@ -244,6 +283,11 @@ class MachineConflict(MachineModelBase):
     evidence: list[MachineEvidence] = Field(default_factory=list)
     resolution: str | None = None
     status: str = "unresolved"
+    # Phase 2: precedence per conflicting value, as {"<value>": "mtb" |
+    # "oem" | "generic"}. The conflict is recorded, never silently
+    # resolved: precedence says which side would win if a human (or a
+    # later phase) resolves it, it does not resolve it by itself.
+    precedence: dict[str, str] = Field(default_factory=dict)
 
 
 class MachineUnresolvedFact(MachineModelBase):
