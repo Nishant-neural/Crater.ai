@@ -30,18 +30,31 @@ def _norm(name: Any) -> str:
     return " ".join(str(name or "").strip().lower().split())
 
 
-def load_seed_for_product(manufacturer: str | None, model: str | None) -> dict[str, Any] | None:
-    """Return the golden-rules seed whose product block matches, else None."""
+def load_seed_for_product(manufacturer: str | None, model: str | None, family: str | None = None) -> dict[str, Any] | None:
+    """Return the golden-rules seed whose product block matches, else None.
+
+    The seed file stores the model as one combined string ("OMNIPRO 220"),
+    but the products table stores family and model separately (family
+    "OMNIPRO", model "220") and the compile route passes only the model.
+    So a seed matches when the manufacturer matches and the seed model
+    equals either the model on its own or "family model" — otherwise the
+    seed never loads under the app's own compile route (found 13 Nov 2026
+    on crater-10.db: model "220" never matched seed model "OMNIPRO 220").
+    """
     if not _GOLDEN_DIR.is_dir():
         return None
+    model_norm = _norm(model)
+    combined_norm = _norm(f"{family} {model}") if family else ""
     for path in sorted(_GOLDEN_DIR.glob("*.json")):
         try:
             seed = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
         product = seed.get("product") or {}
-        if (_norm(product.get("manufacturer")) == _norm(manufacturer)
-                and _norm(product.get("model")) == _norm(model)):
+        if _norm(product.get("manufacturer")) != _norm(manufacturer):
+            continue
+        seed_model = _norm(product.get("model"))
+        if seed_model == model_norm or (combined_norm and seed_model == combined_norm):
             return seed
     return None
 
