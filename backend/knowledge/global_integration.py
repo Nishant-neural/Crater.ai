@@ -32,6 +32,12 @@ from backend.db.models import (
     SchematicNode,
 )
 from backend.knowledge.evidence import MachineEvidence
+from backend.knowledge.identity import (
+    entity_types_compatible,
+    hard_identity_conflict,
+)
+from backend.knowledge.library_types import bind_library_type
+from backend.knowledge.provenance import source_kind_for_evidence
 from backend.knowledge.machine_model import (
     MachineBehavior,
     MachineConstraint,
@@ -259,23 +265,78 @@ def _ev(raw: list[dict[str, Any]] | None) -> list[MachineEvidence]:
 
 def _model_from_payload(payload: dict[str, Any]) -> UniversalMachineModel:
     # source_ids are integration metadata and are deliberately not part of the canonical model.
-    entities = [MachineEntity(
-        id=x["id"], name=x["name"], entity_type=x.get("entity_type", "unknown"),
-        properties=x.get("properties", {}), source_ids=x.get("source_ids", []), evidence=_ev(x.get("evidence")),
-    ) for x in payload.get("entities", []) if x.get("id") and x.get("name")]
+    # Phase 2: ports are built first so entities can carry their typed
+    # ports at construction (the deprecated list[str] view is derived
+    # from them by MachineEntity). Quantities carry their range /
+    # source_kind, derived from the payload or from their evidence.
+    def _port_from(x: dict[str, Any]) -> MachinePort | None:
+        if not x.get("id") or not x.get("entity_id"):
+            return None
+        props = x.get("properties") or {}
+        if not isinstance(props, dict):
+            props = {}
+        return MachinePort(
+            id=x["id"], source_ids=x.get("source_ids", []), entity_id=x["entity_id"], name=x["name"],
+            direction=x.get("direction"),
+            domain=x.get("domain") or props.get("domain"),
+            unit=x.get("unit") or props.get("unit"),
+            properties=props, evidence=_ev(x.get("evidence")),
+        )
+
+    ports = [p for p in (_port_from(x) for x in payload.get("ports", [])) if p is not None]
+    ports_by_entity: dict[str, list[MachinePort]] = {}
+    for port in ports:
+        ports_by_entity.setdefault(port.entity_id, []).append(port)
+
+    def _typed_ports_for(entity_id: str, raw: dict[str, Any]) -> list[MachinePort]:
+        # Prefer the payload's own typed_ports (written by the code-first
+        # builder, so the snapshot carries them); fall back to deriving
+        # them from the model's port list, so v12 snapshots load too.
+        raw_typed = raw.get("typed_ports")
+        if isinstance(raw_typed, list) and raw_typed:
+            out: list[MachinePort] = []
+            for item in raw_typed:
+                if isinstance(item, dict):
+                    try:
+                        out.append(MachinePort.model_validate(item))
+                    except Exception:
+                        continue
+            if out:
+                return out
+        return list(ports_by_entity.get(entity_id, []))
+
+    entities = []
+    for x in payload.get("entities", []):
+        if not x.get("id") or not x.get("name"):
+            continue
+        entities.append(MachineEntity(
+            id=x["id"], name=x["name"], entity_type=x.get("entity_type", "unknown"),
+            properties=x.get("properties", {}),
+            typed_ports=_typed_ports_for(x["id"], x),
+            library_type=x.get("library_type") if x.get("library_type") is not None else bind_library_type(x.get("name"), x.get("entity_type")),
+            source_ids=x.get("source_ids", []), evidence=_ev(x.get("evidence")),
+        ))
     relations = [MachineRelation(
         source_ids=x.get("source_ids", []), subject_id=x["subject_id"], subject_name=x["subject_name"], relation_type=x["relation_type"],
         object_id=x["object_id"], object_name=x["object_name"], description=x.get("description"),
         evidence=_ev(x.get("evidence")),
     ) for x in payload.get("relations", []) if x.get("subject_id") and x.get("object_id")]
-    ports = [MachinePort(
-        id=x["id"], source_ids=x.get("source_ids", []), entity_id=x["entity_id"], name=x["name"], direction=x.get("direction"),
-        properties=x.get("properties", {}), evidence=_ev(x.get("evidence")),
-    ) for x in payload.get("ports", []) if x.get("id") and x.get("entity_id")]
-    quantities = [MachineQuantity(
-        id=x["id"], source_ids=x.get("source_ids", []), entity_id=x["entity_id"], name=x["name"], value=x.get("value"), unit=x.get("unit"),
-        properties=x.get("properties", {}), evidence=_ev(x.get("evidence")),
-    ) for x in payload.get("quantities", []) if x.get("id") and x.get("entity_id")]
+    quantities = []
+    for x in payload.get("quantities", []):
+        if not x.get("id") or not x.get("entity_id"):
+            continue
+        ev = _ev(x.get("evidence"))
+        source_kind = x.get("source_kind")
+        if source_kind is None and ev:
+            # Derive the parameter's source from its first evidence item
+            # (spec table -> spec_page, parameter manual, DATA BOOK);
+            # None when the evidence does not say -- unbound, not guessed.
+            source_kind = source_kind_for_evidence(ev[0].model_dump(mode="json"))
+        quantities.append(MachineQuantity(
+            id=x["id"], source_ids=x.get("source_ids", []), entity_id=x["entity_id"], name=x["name"], value=x.get("value"), unit=x.get("unit"),
+            range_min=x.get("range_min"), range_max=x.get("range_max"), source_kind=source_kind,
+            properties=x.get("properties", {}), evidence=ev,
+        ))
     states = [MachineState(
         source_ids=x.get("source_ids", []), entity_id=x["entity_id"], name=x["name"], value=x.get("value"), properties=x.get("properties", {}),
         evidence=_ev(x.get("evidence")),
@@ -335,7 +396,7 @@ def _model_from_payload(payload: dict[str, Any]) -> UniversalMachineModel:
         entity_names=x.get("entity_names", []), evidence=_ev(x.get("evidence")),
     ) for x in payload.get("failure_modes", []) if x.get("id") and x.get("name")]
     from backend.knowledge.machine_model import MachineConflict
-    conflicts = [MachineConflict(id=x["id"], source_ids=x.get("source_ids", []), subject=x.get("subject", ""), property=x.get("property", ""), values=x.get("values", []), resolution=x.get("resolution"), status=x.get("status", "unresolved"), evidence=_ev(x.get("evidence"))) for x in payload.get("conflicts", []) if x.get("id")]
+    conflicts = [MachineConflict(id=x["id"], source_ids=x.get("source_ids", []), subject=x.get("subject", ""), property=x.get("property", ""), values=x.get("values", []), resolution=x.get("resolution"), status=x.get("status", "unresolved"), precedence=x.get("precedence") or {}, evidence=_ev(x.get("evidence"))) for x in payload.get("conflicts", []) if x.get("id")]
     return UniversalMachineModel(
         entities=entities, relations=relations, ports=ports, quantities=quantities,
         states=states, events=events, behaviors=behaviors, constraints=constraints,
@@ -553,18 +614,19 @@ def _norm_text(value: object) -> str:
 
 
 def _props_conflict(a: dict, b: dict) -> bool:
-    """True if a and b claim different values for the same property key.
+    """True if a and b claim different values for a hard identity signal.
 
     This is what protects two real parts with the same name (two Fans with
     different part numbers) from being merged, while still merging a welder
     that the LLM emitted twice with identical or subset properties.
+
+    Phase 2: narrowed from "any differing property" to the hard-identity
+    rule (part_number / location_description / voltage). The old rule
+    vetoed merges on paraphrased ``function`` prose -- the Phase 0 dedupe
+    bug, where one Feed Tensioner became six rows. See
+    ``backend/knowledge/identity.py``.
     """
-    if not isinstance(a, dict) or not isinstance(b, dict):
-        return False
-    for k, v in a.items():
-        if k in b and b[k] not in (None, "", {}) and v not in (None, "", {}) and v != b[k]:
-            return True
-    return False
+    return hard_identity_conflict(a, b)
 
 
 def _merge_rows_by_identity(rows: list[dict[str, Any]], kind: str = "") -> list[dict[str, Any]]:
@@ -605,7 +667,11 @@ def _merge_rows_by_identity(rows: list[dict[str, Any]], kind: str = "") -> list[
             return (_norm_text(row.get("subject_id")), _norm_text(row.get("relation_type")), _norm_text(row.get("object_id")))
         if kind == "failure_modes":
             return (_norm_text(row.get("name")),)
-        return (_norm_text(row.get("name")), _norm_text(row.get("entity_type")))
+        # Phase 2: entities group by name only; type compatibility is
+        # checked at the candidate step (a generic "component" type never
+        # blocks a merge with a specific type, two different specific
+        # types do). See backend/knowledge/identity.py.
+        return (_norm_text(row.get("name")),)
 
     out: list[dict[str, Any]] = []
     for row in kept:
@@ -619,8 +685,13 @@ def _merge_rows_by_identity(rows: list[dict[str, Any]], kind: str = "") -> list[
             if kind == "relations":
                 target = cand
                 break
-            # Name+type match: merge only if properties do not conflict, and
-            # for failure modes, causes do not conflict either.
+            # Name match: merge only if entity types are compatible and
+            # no hard identity signal conflicts, and for failure modes,
+            # causes do not conflict either.
+            if kind != "failure_modes" and not entity_types_compatible(
+                cand.get("entity_type"), row.get("entity_type")
+            ):
+                continue
             if _props_conflict(cand.get("properties") or {}, row.get("properties") or {}):
                 continue
             if kind == "failure_modes":
