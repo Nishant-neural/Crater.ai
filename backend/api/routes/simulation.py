@@ -37,7 +37,7 @@ def compile_revision(revision_id: str, db: Session = Depends(get_session)):
     # entity name into a copy of the model before compiling. Unique match
     # only -- an ambiguous name is skipped and named in the warnings, never
     # guessed. The twin records which seed rules applied, in its metadata.
-    seed = load_seed_for_product(product.manufacturer if product else None, product.model if product else None)
+    seed = load_seed_for_product(product.manufacturer if product else None, product.model if product else None, product.family if product else None)
     seed_applied = None
     seed_warnings: list[str] = []
     if seed is not None:
