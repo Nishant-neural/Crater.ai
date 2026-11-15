@@ -16,8 +16,13 @@ from __future__ import annotations
 from typing import Any
 
 from backend.diagnostics.schema import DiagnosticState
+from backend.simulation.repair_actions import (
+    failure_to_behaviour,
+    find_registry_cause,
+    find_repair_action,
+)
 from backend.simulation.schema import DigitalTwinDefinition
-from backend.simulation.verification import run_verified_repair
+from backend.simulation.verification import run_verified_repair, run_verified_repair_action
 
 #: Label shown for rows the twin cannot evaluate. It is never a rejection.
 UNAVAILABLE_LABEL = "the twin cannot evaluate this cause"
@@ -92,6 +97,65 @@ def verify_single_cause(
         if any(h and (h in norm_cause or norm_cause in h) for h in haystacks):
             failure_mode = fm
             break
+
+    # Phase 3B (third Amendments item 3): resolve via the registry's
+    # fault_injection FIRST. A cause with a reviewed injection is
+    # verified through its RepairAction; the legacy name-match path runs
+    # only where no injection exists. Ambiguity stays unresolved, never
+    # guessed.
+    registry_cause = find_registry_cause(
+        cause, failure_mode_name=(failure_mode or {}).get("name"))
+    if registry_cause is not None and registry_cause.get("fault_injection") is not None:
+        injection = registry_cause["fault_injection"]
+        ref = f"{registry_cause['case_id']}:{registry_cause['cause_letter']}"
+        bindings = (definition.metadata or {}).get("archetype_bindings") or {}
+        f2b = failure_to_behaviour(definition, injection, registry_cause, bindings)
+        action = find_repair_action(ref)
+        if action is None:
+            return {"available": False, "verdict": None,
+                    "reason": f"The cause {cause!r} has a reviewed fault_injection "
+                              f"({ref}) but no reviewed RepairAction yet; the twin can "
+                              "express the fault but not the repair",
+                    "cause": cause, "repair_name": repair_name,
+                    "fault_component_id": f2b.behaviour_owner_id,
+                    "fault_component_name": f2b.behaviour_owner_instance,
+                    "failure_to_behaviour": f2b.model_dump(mode="json"),
+                    "repair_action_id": None, "trace_note": None}
+        outcome = run_verified_repair_action(
+            definition, twin_state or {},
+            action=action, fault_injection=injection,
+            failure_to_behaviour=f2b.model_dump(mode="json"),
+            repair_name=repair_name,
+            hypothesis=f"Repairing {cause} restores the machine to its healthy state.",
+        )
+        result = outcome.result
+        procedure = {"name": action.name,
+                     "refs": [ref_item.model_dump(mode="json")
+                              for ref_item in action.procedure_refs]}
+        rules_used = list(outcome.fault_rules) + list(outcome.recovery_rules)
+        return {
+            "available": outcome.available,
+            "verdict": outcome.verdict, "reason": outcome.reason,
+            "cause": cause, "repair_name": repair_name,
+            "fault_component_id": f2b.behaviour_owner_id,
+            "fault_component_name": f2b.behaviour_owner_instance,
+            "symptom_path": outcome.symptom_path,
+            "symptom_expected": outcome.symptom_expected,
+            "failure_mode": (failure_mode or {}).get("name"),
+            "procedure": procedure,
+            "rules_used": rules_used,
+            "checks": result.checks if result else [],
+            "fault_trace": result.fault_trace if result else [],
+            "intervention_trace": result.intervention_trace if result else [],
+            "baseline_state": result.baseline_state if result else None,
+            "fault_state": result.fault_state if result else None,
+            "final_state": result.final_state if result else None,
+            "explanation": result.explanation if result else None,
+            "warnings": (result.warnings if result else []) + [ISOLATED_TWIN_WARNING],
+            "repair_action_id": outcome.repair_action_id,
+            "trace_note": outcome.trace_note,
+            "failure_to_behaviour": outcome.failure_to_behaviour,
+        }
 
     # Resolve the cause to ONE twin component: failure-mode entity_ids first,
     # then a unique name match against twin components. Ambiguity stays open.

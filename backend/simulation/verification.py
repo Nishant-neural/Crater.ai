@@ -36,6 +36,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .agent import run_experiment
+from .repair_actions import (
+    check_expected_trace,
+    parse_trace_messages,
+    resolve_action,
+)
 from .schema import DigitalTwinDefinition
 from .simulation_schema import ExperimentCommand, ExperimentRequest, ExperimentResult, StateAssertion
 
@@ -53,10 +58,18 @@ class RepairVerification:
     recovery_rules: list[dict[str, Any]] = field(default_factory=list)
     symptom_path: str | None = None
     symptom_expected: Any = None
+    # Phase 3B (third Amendments items 1–2): the RepairAction path.
+    repair_action_id: str | None = None
+    trace_note: str | None = None
+    failure_to_behaviour: dict[str, Any] | None = None
 
 
 def _is_scalar(value: Any) -> bool:
     return value is None or isinstance(value, (bool, int, float, str))
+
+
+def _norm_text(value: str | None) -> str:
+    return " ".join(str(value or "").strip().lower().split())
 
 
 def _split_path(path: str) -> tuple[str, str] | None:
@@ -320,6 +333,204 @@ def run_verified_repair(
         return outcome
 
     outcome.verdict = result.verdict
+    return outcome
+
+
+def _trace_transition_summaries(definition: DigitalTwinDefinition,
+                                 trace: list[str]) -> list[dict[str, Any]]:
+    """The transitions that produced a trace, as rule summaries (the
+    archetype rows / links the run actually used)."""
+    by_name = {t.name: t for t in definition.transitions or []}
+    seen: list[dict[str, Any]] = []
+    used: set[str] = set()
+    for entry in parse_trace_messages(trace):
+        transition = by_name.get(entry["transition_name"])
+        if transition is not None and transition.id not in used:
+            used.add(transition.id)
+            seen.append(_rule_summary(transition))
+    return seen
+
+
+def run_verified_repair_action(
+    definition: DigitalTwinDefinition,
+    initial_state: dict[str, Any] | None,
+    *,
+    action: Any,
+    fault_injection: dict[str, Any] | None,
+    failure_to_behaviour: dict[str, Any] | None = None,
+    repair_name: str = "",
+    hypothesis: str = "",
+) -> RepairVerification:
+    """Run the verified-repair loop for one reviewed RepairAction.
+
+    Phase 3B (third Amendments items 1–2): the fault comes from the
+    registry's ``fault_injection`` (not from a component name), the
+    repair is the action's ``state_effects``, the verdict comes from the
+    action's ``postconditions`` checked independently, and the action's
+    ``expected_trace`` is enforced on the intervention trace.
+
+    Pre-flight gates, in order, before any verdict is reported:
+    1. The action's paths must resolve in this twin (unique name match).
+    2. The fault state must reproduce the symptom — at least one
+       postcondition path must differ from its expected value — else
+       unavailable, "fault did not reproduce the symptom".
+    3. No postcondition may depend on an unknown final value — else
+       unavailable with reason.
+    4. The ExpectedTrace must show the required chain in order — a
+       missing required step is unavailable ("trace does not show the
+       required chain"); a forbidden change present is a REJECTION.
+    5. The terminal conditions must hold in the final state — else
+       rejected.
+    6. The intervention must fire at least one real transition — else
+       unavailable, "no recovery transition fired".
+    Only then does the experiment's validated/rejected verdict stand.
+    An action with no trace contract keeps the single-assertion path,
+    and the verdict carries the explicit note "thin trace — no trace
+    contract".
+    """
+    outcome = RepairVerification(
+        available=False, repair_action_id=getattr(action, "id", None),
+        failure_to_behaviour=failure_to_behaviour)
+    if fault_injection is None:
+        outcome.reason = ("This cause has no fault_injection in the registry, "
+                          "so the twin cannot express the fault.")
+        return outcome
+    resolved, problems = resolve_action(action, definition)
+    if problems:
+        outcome.reason = ("The RepairAction does not resolve in this twin: "
+                          + "; ".join(problems))
+        return outcome
+    fault = fault_injection
+    fault_component_name = fault.get("instance") or ""
+    matches = [c for c in definition.components
+               if _norm_text(c.name) == _norm_text(fault_component_name)]
+    if len(matches) != 1:
+        outcome.reason = (f"The fault instance {fault_component_name!r} does not "
+                          "resolve to exactly one component in this twin.")
+        return outcome
+    fault_component_id = matches[0].id
+    fault_field = fault.get("parameter") or "fault"
+    fault_value = fault.get("value") if "parameter" in fault else fault.get("fault_state")
+
+    if not initial_state:
+        initial_state = {"components": {c.id: dict(c.initial_state)
+                                        for c in definition.components},
+                         "signals": dict(definition.initial_signals or {})}
+
+    fault_commands = [ExperimentCommand(
+        command="inject_fault", target=fault_component_id, field=str(fault_field),
+        value=fault_value,
+        reason=f"Fault from registry fault_injection for {action.id}: "
+               f"{fault_component_name}.{fault_field} = {fault_value!r}",
+    )]
+    intervention_commands = [
+        ExperimentCommand(command="set_component_state",
+                          target=path.split(".", 1)[0], field=path.split(".", 1)[1],
+                          value=value,
+                          reason=f"RepairAction {action.id}: set {path} = {value!r}")
+        for path, value in resolved["state_effects"].items()
+    ]
+    assertions = [
+        StateAssertion(path=f"components.{path}", expected=value)
+        for path, value in resolved["postconditions"].items()
+    ]
+    request = ExperimentRequest(
+        name=repair_name or action.name,
+        hypothesis=hypothesis or f"{action.name} restores the machine to its healthy state.",
+        fault_commands=fault_commands,
+        intervention_commands=intervention_commands,
+        assertions=assertions,
+    )
+    result = run_experiment(definition, initial_state, request)
+    outcome.result = result
+
+    # Symptom: the first postcondition path whose fault-state value
+    # differs from its expected (healthy) value.
+    symptom_path: str | None = None
+    symptom_expected: Any = None
+    for path, expected in resolved["postconditions"].items():
+        fault_actual = _get_path(result.fault_state, f"components.{path}")
+        if fault_actual != expected:
+            symptom_path, symptom_expected = path, fault_actual
+            break
+    outcome.symptom_path = symptom_path
+    outcome.symptom_expected = symptom_expected
+
+    # Gate 2: the fault must reproduce the symptom.
+    if symptom_path is None:
+        outcome.available = False
+        outcome.verdict = None
+        outcome.result = None
+        outcome.reason = (
+            "Fault did not reproduce the symptom in the twin: no postcondition "
+            "path differs from its expected value in the fault state."
+        )
+        return outcome
+
+    # Gate 3: no postcondition may depend on an unknown final value.
+    for path, expected in resolved["postconditions"].items():
+        final_value = _get_path(result.final_state, f"components.{path}")
+        if final_value == "unknown":
+            outcome.available = False
+            outcome.verdict = None
+            outcome.result = None
+            outcome.reason = (
+                f"Postcondition {path} reads 'unknown' in the final state; "
+                "the twin cannot evaluate this repair (unmodelled input)."
+            )
+            return outcome
+
+    # Gate 4: the ExpectedTrace contract.
+    trace_entries = parse_trace_messages(result.intervention_trace or [])
+    trace_check = check_expected_trace(
+        trace_entries, result.fault_state, resolved["expected_trace"], definition)
+    outcome.trace_note = trace_check["note"]
+    if trace_check["forbidden_hit"] is not None:
+        outcome.available = True
+        outcome.verdict = "rejected"
+        outcome.reason = trace_check["note"]
+        outcome.fault_rules = _trace_transition_summaries(definition, result.fault_trace or [])
+        outcome.recovery_rules = _trace_transition_summaries(
+            definition, result.intervention_trace or [])
+        return outcome
+    if not trace_check["satisfied"]:
+        outcome.available = False
+        outcome.verdict = None
+        outcome.result = None
+        outcome.reason = trace_check["note"]
+        return outcome
+
+    # Gate 5: terminal conditions.
+    terminal = (resolved["expected_trace"] or {}).get("terminal") or {}
+    terminal_failed = [
+        path for path, expected in terminal.items()
+        if _get_path(result.final_state, f"components.{path}") != expected]
+    if terminal_failed:
+        outcome.available = True
+        outcome.verdict = "rejected"
+        outcome.reason = ("Terminal conditions not met in the final state: "
+                          + ", ".join(terminal_failed))
+        outcome.fault_rules = _trace_transition_summaries(definition, result.fault_trace or [])
+        outcome.recovery_rules = _trace_transition_summaries(
+            definition, result.intervention_trace or [])
+        return outcome
+
+    # Gate 6: the intervention must fire a real transition.
+    if not result.intervention_trace:
+        outcome.available = False
+        outcome.verdict = None
+        outcome.result = None
+        outcome.reason = (
+            "No recovery transition fired for this repair in the twin; "
+            "the model does not describe how this repair restores the machine."
+        )
+        return outcome
+
+    outcome.available = True
+    outcome.verdict = result.verdict
+    outcome.fault_rules = _trace_transition_summaries(definition, result.fault_trace or [])
+    outcome.recovery_rules = _trace_transition_summaries(
+        definition, result.intervention_trace or [])
     return outcome
 
 
