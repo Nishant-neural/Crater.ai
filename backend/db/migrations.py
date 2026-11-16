@@ -19,6 +19,10 @@ _REQUIRED_COLUMNS = {
         "revision_id": "VARCHAR",
         "claim_status": "VARCHAR DEFAULT 'observed'",
     },
+    # Phase 5 (c): the archetype-library version pin on the twin row.
+    "digital_twins": {
+        "library_version": "VARCHAR",
+    },
 }
 
 
