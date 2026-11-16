@@ -6,13 +6,15 @@ from pathlib import Path
 from uuid import uuid4
 from datetime import datetime, timedelta
 
+from pydantic import BaseModel
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from backend.db.models import Document, DocType, IngestionJob, IngestionStatus, Revision
 from backend.db.session import SessionLocal, get_session
 from backend.ingestion.ocr import optional_ocr_warning
-from backend.ingestion.pipeline import ingest_pdf
+from backend.ingestion.checkpoints import load_checkpoint, save_checkpoint
+from backend.ingestion.pipeline import _phase1_registry_for_product, ingest_pdf, lazy_ingest_summary
 
 router = APIRouter(prefix="/ingest", tags=["ingestion"])
 _UPLOAD_DIR = Path("data") / "uploads"
@@ -59,9 +61,11 @@ def _run_job_background(job_id: str) -> None:
                     current.status = IngestionStatus.processing
                     current.stage = f"processing|{max(0,min(100,int(percent)))}|{label}"
                     session.commit()
+            _tier2_flag = load_checkpoint(job.id).get("ingest_tier2", True)
             document = ingest_pdf(session=session, pdf_path=job.source_path, revision_id=revision.id, product_id=revision.product_id,
                 doc_type=job.doc_type, title=job.title, image_out_dir=_IMAGE_DIR / revision.id,
-                existing_document_id=job.document_id, progress_callback=progress, job_id=job.id)
+                existing_document_id=job.document_id, progress_callback=progress, job_id=job.id,
+                ingest_tier2=_tier2_flag)
             job = session.get(IngestionJob, job_id); job.document_id = document.id
             job.status = IngestionStatus.completed; job.stage = "completed|100|Ingestion and machine-knowledge verification complete"; job.error_message = None; session.commit()
         except Exception as exc:
@@ -80,7 +84,9 @@ def _queue(job: IngestionJob, tasks: BackgroundTasks):
     tasks.add_task(_run_job_background, job.id); return _job_response(job)
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
-async def ingest_document(background_tasks: BackgroundTasks, revision_id: str = Form(...), doc_type: DocType = Form(...), title: str = Form(...), idempotency_key: str = Form(..., min_length=1, max_length=255), file: UploadFile = File(...), session: Session = Depends(get_session)):
+async def ingest_document(background_tasks: BackgroundTasks, revision_id: str = Form(...), doc_type: DocType = Form(...), title: str = Form(...), idempotency_key: str = Form(..., min_length=1, max_length=255), file: UploadFile = File(...), ingest_tier2: bool | None = Form(default=None), session: Session = Depends(get_session)):
+    # Phase 4, Option C: the Tier-2 flag. An explicit value wins; otherwise
+    # the registry's per-product default; otherwise True (Phase 1 behaviour).
     revision = session.get(Revision, revision_id)
     if not revision: raise HTTPException(404, "Revision not found")
     source_path, sha = _store_upload(file)
@@ -91,7 +97,11 @@ async def ingest_document(background_tasks: BackgroundTasks, revision_id: str = 
     duplicate = session.query(IngestionJob).filter(IngestionJob.revision_id==revision_id, IngestionJob.content_sha256==sha).first()
     if duplicate: return _job_response(duplicate, reused=True)
     job = IngestionJob(revision_id=revision_id, idempotency_key=idempotency_key, content_sha256=sha, doc_type=doc_type, title=title, source_path=str(source_path), stage="queued|0|Upload complete; queued for processing")
-    session.add(job); session.commit(); session.refresh(job); return _queue(job, background_tasks)
+    session.add(job); session.commit(); session.refresh(job)
+    _registry = _phase1_registry_for_product(session, revision.product_id)
+    _resolved_tier2 = ingest_tier2 if ingest_tier2 is not None else (_registry.tier2_default if _registry is not None else True)
+    save_checkpoint(job.id, ingest_tier2=bool(_resolved_tier2))
+    return _queue(job, background_tasks)
 
 
 @router.get("/revisions/{revision_id}/status")
@@ -157,3 +167,30 @@ def retry_ingestion_job(job_id: str, background_tasks: BackgroundTasks, session:
     if not Path(job.source_path).is_file(): raise HTTPException(409, "Original upload is unavailable; upload the document again")
     job.attempt_count += 1; job.status = IngestionStatus.queued; job.error_message = None; session.commit(); session.refresh(job)
     return _queue(job, background_tasks)
+
+
+class LazyIngestRequest(BaseModel):
+    pages: list[int]
+
+
+@router.post("/jobs/{job_id}/lazy-ingest", status_code=status.HTTP_202_ACCEPTED)
+def lazy_ingest_job(job_id: str, payload: LazyIngestRequest, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
+    """Phase 4 lazy ingest: release one section (pages) of deferred Tier-2 chunks.
+
+    Only chunks covering the requested pages are released from
+    ``tier2_deferred``; the rest stay deferred, and the bounded job that
+    follows extracts only the released chunks through the normal v12 LLM
+    path. The response carries a condensed summary (pages, counts, source
+    types) — never raw chunk content."""
+    job = session.get(IngestionJob, job_id)
+    if not job: raise HTTPException(404, "Ingestion job not found")
+    if job.status == IngestionStatus.processing:
+        raise HTTPException(409, "Ingestion job is already running")
+    if not payload.pages: raise HTTPException(422, "pages must list at least one page")
+    summary = lazy_ingest_summary(session, job_id, payload.pages)
+    if not summary["chunks_released"]:
+        return {"job_id": job.id, "status": job.status.value, "released": [], **summary}
+    save_checkpoint(job_id, tier2_deferred=summary["remaining_deferred"])
+    job.attempt_count += 1; job.status = IngestionStatus.queued; job.error_message = None; session.commit(); session.refresh(job)
+    response = _queue(job, background_tasks)
+    return {**response, **summary}

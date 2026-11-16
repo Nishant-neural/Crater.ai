@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.api.routes import diagnostics, digital_twin, expert, ingestion, machine_knowledge, products, query, schematics, visualization, simulation
+from backend.api.routes import diagnostics, digital_twin, expert, ingestion, learning, machine_knowledge, mode_b, products, query, schematics, visualization, simulation
 from backend.db.session import init_db
 
 
@@ -42,6 +42,8 @@ app.include_router(visualization.router)
 app.include_router(expert.router)
 app.include_router(digital_twin.router)
 app.include_router(simulation.router)
+app.include_router(learning.router)
+app.include_router(mode_b.router)
 app.include_router(machine_knowledge.router)
 
 
