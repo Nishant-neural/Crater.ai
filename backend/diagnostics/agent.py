@@ -50,6 +50,7 @@ from sqlalchemy.orm import Session as DBSession
 from backend.db.models import Component, DiagnosticSession, DiagnosticStatus, FailureMode
 from backend.diagnostics.prompts import DIAGNOSTIC_SYSTEM_PROMPT
 from backend.diagnostics.schema import DiagnosticState, EvidenceRef, Hypothesis, NextStep, NextStepType
+from backend.diagnostics.downtime import start_downtime
 from backend.llm import gateway
 from backend.retrieval.hybrid import retrieve_revision_context
 
@@ -656,5 +657,12 @@ def start_session(
     db.commit()
     db.refresh(session)
 
+    # Phase 5 (steal item 8): open the downtime record for this
+    # diagnosis. Best-effort — a downtime failure must never break a
+    # session start.
+    try:
+        start_downtime(db, session)
+    except Exception as exc:  # noqa: BLE001 - downtime is advisory here
+        logging.getLogger(__name__).warning("diagnostics: downtime start failed: %s", exc)
     run_turn(db, session, initial_symptom, input_kind="symptom")
     return session

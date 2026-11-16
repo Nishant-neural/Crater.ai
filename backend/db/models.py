@@ -656,6 +656,7 @@ class TwinEventType(str, enum.Enum):
     command = "command"
     transition = "transition"
     reset = "reset"
+    library_version = "library_version"
 
 
 class DigitalTwin(Base):
@@ -670,6 +671,10 @@ class DigitalTwin(Base):
     definition: Mapped[dict] = mapped_column(JSON)
     state: Mapped[dict] = mapped_column(JSON)
     model_version: Mapped[int] = mapped_column(Integer, default=1)
+    # Phase 5 (c): the archetype-library version this twin was compiled
+    # against. None on twins compiled before Phase 5 (their definition
+    # metadata still carries archetype_library_version).
+    library_version: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     status: Mapped[TwinStatus] = mapped_column(Enum(TwinStatus), default=TwinStatus.active)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -687,3 +692,136 @@ class DigitalTwinEvent(Base):
     state_after: Mapped[dict] = mapped_column(JSON)
     trace: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — verify / repair / learn hardening (plan.md §4 Phase 5)
+# ---------------------------------------------------------------------------
+
+class LearningLogEntry(Base):
+    """Append-only learning log (Phase 5b).
+
+    One row per field-solved fault proposed as a registry case. The
+    proposal (``proposed_case``) is immutable — a correction means a new
+    entry, never an edit. Only the review decision fields (status,
+    reviewer, review_reason, reviewed_at) are ever set, exactly once:
+    a second review is rejected in code. Nothing auto-promotes: an entry
+    becomes a registry case only when its status is ``approved``.
+    """
+    __tablename__ = "learning_log_entries"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    source_type: Mapped[str] = mapped_column(String)  # field_outcome | closeout_note
+    source_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    session_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    product_id: Mapped[str] = mapped_column(ForeignKey("products.id"), index=True)
+    symptom: Mapped[str] = mapped_column(Text)
+    cause: Mapped[str] = mapped_column(Text)
+    proposed_case: Mapped[dict] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String, default="pending")  # pending | approved | rejected
+    reviewer: Mapped[str | None] = mapped_column(String, nullable=True)
+    review_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class FieldValidationHistory(Base):
+    """validation_history per archetype row, WRITTEN from recorded field
+    outcomes (Phase 5e). Counts FIELD outcomes only — simulator verdicts
+    are never written here (field_promotion.py). ``row_id`` is "" for an
+    archetype-level record (no single row implicated)."""
+    __tablename__ = "field_validation_history"
+    __table_args__ = (UniqueConstraint("archetype_id", "row_id",
+                                       name="uq_field_validation_history"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    archetype_id: Mapped[str] = mapped_column(String, index=True)
+    row_id: Mapped[str] = mapped_column(String, default="")
+    validated_count: Mapped[int] = mapped_column(Integer, default=0)
+    rejected_count: Mapped[int] = mapped_column(Integer, default=0)
+    field_instances: Mapped[int] = mapped_column(Integer, default=0)
+    outcomes: Mapped[list] = mapped_column(JSON, default=list)  # capped, latest first
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow,
+                                                 onupdate=datetime.utcnow)
+
+
+class ArchetypeRowFlag(Base):
+    """A twin VALIDATED followed by field FAILED flags the implicated
+    archetype row for review (Phase 5a). Cleared only by a named reviewer."""
+    __tablename__ = "archetype_row_flags"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    archetype_id: Mapped[str] = mapped_column(String, index=True)
+    row_id: Mapped[str] = mapped_column(String, default="")
+    reason: Mapped[str] = mapped_column(Text)
+    source_outcome_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, default="flagged")  # flagged | cleared
+    reviewed_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class DowntimeRecord(Base):
+    """Structured downtime record per diagnosis/repair (steal item 8).
+
+    ``duration_minutes`` is null while the outage is ongoing — never
+    zero. On close it is the elapsed minutes, minimum 1 (a closed
+    outage lasted some positive time). Twin VALIDATED vs field
+    SUCCESSFUL stay separate statuses; this record carries neither —
+    it carries the confirmed/unconfirmed state of the diagnosis.
+    """
+    __tablename__ = "downtime_records"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    session_id: Mapped[str | None] = mapped_column(String, nullable=True, unique=True, index=True)
+    product_id: Mapped[str] = mapped_column(ForeignKey("products.id"), index=True)
+    symptom: Mapped[str] = mapped_column(Text)
+    cause: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confirmed: Mapped[bool] = mapped_column(Integer, default=0)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    safety_flagged: Mapped[bool] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class PMDraft(Base):
+    """PM-interval draft (steal item 7): a draft interval or procedure
+    change for one asset and failure mode, for the planner. It stays a
+    draft until expert approval. Without a current PM plan in Crater,
+    ``current_interval`` is null and the draft asks what today's
+    interval is instead of proposing a number."""
+    __tablename__ = "pm_drafts"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    product_id: Mapped[str] = mapped_column(ForeignKey("products.id"), index=True)
+    failure_mode: Mapped[str] = mapped_column(Text)
+    current_interval: Mapped[str | None] = mapped_column(String, nullable=True)
+    proposed_interval: Mapped[str | None] = mapped_column(String, nullable=True)
+    proposed_change: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String, default="draft")  # draft | approved | rejected
+    reviewer: Mapped[str | None] = mapped_column(String, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ProductMode(Base):
+    """Phase 6 (Mode B) — whether a product is served on-demand or
+    pre-built. Mode B (on_demand) is the individual user with a big
+    manual for an unknown machine: Tier 1 first, diagnosis on the
+    partial model, lazy-ingest the norm. Mode A (prebuilt) is the
+    contracted company: the model was built in the background before
+    any repair. Graduation flips the mode and records who/when; the
+    background full ingest is the release of the job's deferred Tier 2
+    chunks (see backend/ingestion/mode_b.graduate_to_prebuilt)."""
+    __tablename__ = "product_modes"
+
+    product_id: Mapped[str] = mapped_column(ForeignKey("products.id"), primary_key=True)
+    mode: Mapped[str] = mapped_column(String, default="on_demand")  # on_demand | prebuilt
+    background_job_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    graduated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    graduated_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow,
+                                                 onupdate=datetime.utcnow)
