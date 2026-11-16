@@ -169,3 +169,18 @@ def test_seed_skips_when_duplicates_remain():
     assert "seed:feed-tension-ok-restores-feed" not in applied["rules_applied"]
     # The Wingnut rules still resolve: one skip does not block the rest.
     assert "seed:wingnut-loose-spool-spins" in applied["rules_applied"]
+
+
+def test_seed_matches_split_family_and_model():
+    # Regression, found during Phase 3A verification (13 Nov 2026): the
+    # seed file stores model "OMNIPRO 220", but the products table stores
+    # family "OMNIPRO" and model "220" separately, and the compile route
+    # passes only the model — so load_seed_for_product("Harbor Freight",
+    # "220") never matched and the seed never loaded on a real run
+    # (crater-10.db), even though the combined-form tests above passed.
+    assert load_seed_for_product("Harbor Freight", "220", family="OMNIPRO") is not None
+    # The combined form still works (the old tests' calling convention).
+    assert load_seed_for_product("Harbor Freight", "OMNIPRO 220") is not None
+    # And a different model still does not match.
+    assert load_seed_for_product("Harbor Freight", "221", family="OMNIPRO") is None
+    assert load_seed_for_product("Harbor Freight", "220", family="OTHER") is None

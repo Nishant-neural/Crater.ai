@@ -1,0 +1,279 @@
+{
+ "actions": [
+  {
+   "case_id": "omni-01-wire-not-feeding",
+   "cause_letter": "a",
+   "expected_trace": {
+    "forbidden_state_changes": [
+     {
+      "path": "Wire Feed Motor.motion_out",
+      "transition_id": null,
+      "value": "absent"
+     }
+    ],
+    "required_state_changes": [
+     {
+      "path": "Wire Feed Mechanism.material_out",
+      "value": "normal",
+      "transition_id": "archetype:transmission.t1.feeding@wire-feed-mechanism"
+     },
+     {
+      "path": "liner assembly.material_out",
+      "value": "normal",
+      "transition_id": "archetype:conductor.c-nominal.ok@liner-assembly"
+     },
+     {
+      "path": "MIG Gun.material_out",
+      "value": "normal",
+      "transition_id": "archetype:conductor.c-nominal.ok@mig-gun"
+     },
+     {
+      "path": "Contact Tip.material_out",
+      "value": "normal",
+      "transition_id": "archetype:conductor.c-nominal.ok@contact-tip"
+     },
+     {
+      "path": "Welder.arc",
+      "value": "normal",
+      "transition_id": "link:edge:arc-to-welder:normal"
+     }
+    ],
+    "terminal_conditions": {
+     "Welder.arc": "normal"
+    }
+   },
+   "fault_injection_ref": "omni-01-wire-not-feeding:a",
+   "id": "repair:omni-01-a",
+   "name": "Increase wire feed pressure (adjust Feed Tensioner to correct pressure)",
+   "postconditions": {
+    "MIG Gun.material_out": "normal",
+    "Welder.arc": "normal",
+    "Wire Feed Mechanism.material_out": "normal"
+   },
+   "procedure_refs": [
+    {
+     "page": 42,
+     "quote": "1. Increase wire feed pressure properly. Follow step 27 on page 17.",
+     "source": "owner-manual p42 troubleshooting, case 1 remedy 1"
+    },
+    {
+     "page": 17,
+     "quote": "If the wire stops instead of bending, the Feed Tensioner needs adjustment; slightly tighten the Feed Tensioner.",
+     "source": "owner-manual p17 step 27"
+    }
+   ],
+   "required_tests": [
+    "step27_wood_test"
+   ],
+   "state_effects": {
+    "Wire Feed Mechanism.tension": "normal"
+   }
+  },
+  {
+   "case_id": "omni-01-wire-not-feeding",
+   "cause_letter": "b",
+   "expected_trace": {
+    "forbidden_state_changes": [
+     {
+      "path": "Wire Feed Motor.motion_out",
+      "transition_id": null,
+      "value": "absent"
+     }
+    ],
+    "required_state_changes": [
+     {
+      "path": "Wire Feed Mechanism.material_out",
+      "value": "normal",
+      "transition_id": "archetype:transmission.t1.feeding@wire-feed-mechanism"
+     },
+     {
+      "path": "liner assembly.material_out",
+      "value": "normal",
+      "transition_id": "archetype:conductor.c-nominal.ok@liner-assembly"
+     },
+     {
+      "path": "MIG Gun.material_out",
+      "value": "normal",
+      "transition_id": "archetype:conductor.c-nominal.ok@mig-gun"
+     },
+     {
+      "path": "Contact Tip.material_out",
+      "value": "normal",
+      "transition_id": "archetype:conductor.c-nominal.ok@contact-tip"
+     },
+     {
+      "path": "Welder.arc",
+      "value": "normal",
+      "transition_id": "link:edge:arc-to-welder:normal"
+     }
+    ],
+    "terminal_conditions": {
+     "Welder.arc": "normal"
+    }
+   },
+   "fault_injection_ref": "omni-01-wire-not-feeding:b",
+   "id": "repair:omni-01-b",
+   "name": "Fit the correct Feed Roller groove size",
+   "postconditions": {
+    "MIG Gun.material_out": "normal",
+    "Welder.arc": "normal",
+    "Wire Feed Mechanism.material_out": "normal"
+   },
+   "procedure_refs": [
+    {
+     "page": 42,
+     "quote": "2. Flip roll to correct size. Follow the Feed Roller instructions on page 12.",
+     "source": "owner-manual p42 troubleshooting, case 1 remedy 2"
+    },
+    {
+     "page": 12,
+     "quote": "The groove on the Feed Roller must match the wire size marked on the spool.",
+     "source": "owner-manual p12 feed roller"
+    }
+   ],
+   "required_tests": [
+    "groove_check",
+    "step27_wood_test"
+   ],
+   "state_effects": {
+    "Wire Feed Mechanism.groove_matches": true
+   }
+  },
+  {
+   "case_id": "omni-01-wire-not-feeding",
+   "cause_letter": "c",
+   "expected_trace": {
+    "forbidden_state_changes": [
+     {
+      "path": "Wire Feed Motor.motion_out",
+      "transition_id": null,
+      "value": "absent"
+     }
+    ],
+    "required_state_changes": [
+     {
+      "path": "Wire Feed Mechanism.material_out",
+      "value": "normal",
+      "transition_id": "archetype:transmission.t1.feeding@wire-feed-mechanism"
+     },
+     {
+      "path": "liner assembly.material_out",
+      "value": "normal",
+      "transition_id": "archetype:conductor.c-nominal.ok@liner-assembly"
+     },
+     {
+      "path": "MIG Gun.material_out",
+      "value": "normal",
+      "transition_id": "archetype:conductor.c-nominal.ok@mig-gun"
+     },
+     {
+      "path": "Contact Tip.material_out",
+      "value": "normal",
+      "transition_id": "archetype:conductor.c-nominal.ok@contact-tip"
+     },
+     {
+      "path": "Welder.arc",
+      "value": "normal",
+      "transition_id": "link:edge:arc-to-welder:normal"
+     }
+    ],
+    "terminal_conditions": {
+     "Welder.arc": "normal"
+    }
+   },
+   "fault_injection_ref": "omni-01-wire-not-feeding:c",
+   "id": "repair:omni-01-c",
+   "name": "Replace the damaged MIG Gun, cable, or liner assembly",
+   "postconditions": {
+    "MIG Gun.material_out": "normal",
+    "Welder.arc": "normal",
+    "Wire Feed Mechanism.material_out": "normal"
+   },
+   "procedure_refs": [
+    {
+     "page": 42,
+     "quote": "3. Replace damaged MIG Gun, cable, or liner assembly.",
+     "source": "owner-manual p42 troubleshooting, case 1 remedy 3"
+    }
+   ],
+   "required_tests": [
+    "step27_wood_test"
+   ],
+   "state_effects": {
+    "MIG Gun.fault": "none"
+   }
+  },
+  {
+   "case_id": "omni-01-wire-not-feeding",
+   "cause_letter": "d",
+   "expected_trace": {
+    "forbidden_state_changes": [
+     {
+      "path": "Wire Feed Motor.motion_out",
+      "transition_id": null,
+      "value": "absent"
+     }
+    ],
+    "required_state_changes": [
+     {
+      "path": "Wire Feed Mechanism.material_out",
+      "value": "normal",
+      "transition_id": "archetype:transmission.t1.feeding@wire-feed-mechanism"
+     },
+     {
+      "path": "liner assembly.material_out",
+      "value": "normal",
+      "transition_id": "archetype:conductor.c-nominal.ok@liner-assembly"
+     },
+     {
+      "path": "MIG Gun.material_out",
+      "value": "normal",
+      "transition_id": "archetype:conductor.c-nominal.ok@mig-gun"
+     },
+     {
+      "path": "Contact Tip.material_out",
+      "value": "normal",
+      "transition_id": "archetype:conductor.c-nominal.ok@contact-tip"
+     },
+     {
+      "path": "Welder.arc",
+      "value": "normal",
+      "transition_id": "link:edge:arc-to-welder:normal"
+     }
+    ],
+    "terminal_conditions": {
+     "Welder.arc": "normal"
+    }
+   },
+   "fault_injection_ref": "omni-01-wire-not-feeding:d",
+   "id": "repair:omni-01-d",
+   "name": "Loosen the Feed Tensioner to correct pressure",
+   "postconditions": {
+    "MIG Gun.material_out": "normal",
+    "Welder.arc": "normal",
+    "Wire Feed Mechanism.material_out": "normal"
+   },
+   "procedure_refs": [
+    {
+     "page": 42,
+     "quote": "4. Loosen Feed Tensioner so it applies only enough pressure to prevent continued spinning after the Gun Trigger is released.",
+     "source": "owner-manual p42 troubleshooting, case 1 remedy 4"
+    },
+    {
+     "page": 17,
+     "quote": "If the wire stops instead of bending, the Feed Tensioner needs adjustment; slightly tighten the Feed Tensioner.",
+     "source": "owner-manual p17 step 27"
+    }
+   ],
+   "required_tests": [
+    "post_release_spin",
+    "step27_wood_test"
+   ],
+   "state_effects": {
+    "Wire Feed Mechanism.tension": "normal"
+   }
+  }
+ ],
+ "note": "Minimal RepairAction schema (design v3, third Amendments item 1). v2 (3C): the ExpectedTrace required chain is feeder -> liner -> gun -> tip -> arc (the 3B feeder->gun link fault-override and gun->arc threshold link are retired; the A8 conductor rows and A7 load rows carry the gun/tip/arc path), and the transition ids carry the component (archetype:{row}@{component}) so multi-instance archetypes are unambiguous. Full preconditions/safety is Phase 5 \u2014 deliberately NOT built here. Only case 1 has reviewed actions; cases 2-9 get actions only when their archetypes and trace contracts are reviewed.",
+ "version": "repair-actions-omnipro-v2"
+}
