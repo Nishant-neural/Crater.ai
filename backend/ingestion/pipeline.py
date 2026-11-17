@@ -9,7 +9,7 @@ from backend.db.models import Chunk, Component, ComponentRelationship, Document,
 from backend.ingestion.chunking import pages_to_chunks
 from backend.ingestion.pdf_loader import load_pdf
 from backend.ingestion.table_parser import parse_table_chunk
-from backend.knowledge.repair_cases import TIER_3, load_registry, registry_matches_product, tier_for_chunk
+from backend.knowledge.repair_cases import TIER_2, TIER_3, load_registry, registry_matches_product, tier_for_chunk
 from backend.knowledge.component_extraction import ExtractionError, extract_chunk_knowledge, extract_chunk_knowledge_batch, persist_extraction, persist_machine_knowledge
 from backend.knowledge.validation import quarantine_machine_model, validate_machine_model, validate_machine_model_with_ledger
 from backend.knowledge.global_integration import build_effective_revision_knowledge_context, integrate_revision_knowledge, persist_integration_result
@@ -73,6 +73,77 @@ def _phase1_deterministic_model(chunk):
         return None
 
 
+def _chunk_pages(chunk) -> list[int]:
+    """Pages a chunk covers (``extra["pages"]``, else ``page_number``)."""
+    extra = getattr(chunk, "extra", None) or {}
+    pages = extra.get("pages") or [getattr(chunk, "page_number", None)]
+    return [int(p) for p in pages if p is not None]
+
+
+def tier2_partition(chunks, registry, ingest_tier2: bool, lazy_pages=None):
+    """Split chunks into (extract, deferred) under the Tier-2 flag.
+
+    Phase 4, Option C: with the flag on (or no registry) everything
+    extracts, exactly as Phase 1 behaved. With the flag off, Tier-2
+    chunks are deferred — except chunks covering a ``lazy_pages``
+    entry, which the Phase 4 lazy-ingest trigger released for one
+    bounded section. Tier 1 and Tier 3 are never deferred here
+    (Tier 3 is handled by its own gating above). Pure: no DB, no LLM.
+    """
+    lazy = {int(p) for p in (lazy_pages or [])}
+    extract, deferred = [], []
+    for chunk in chunks:
+        if registry is None or ingest_tier2:
+            extract.append(chunk)
+            continue
+        if tier_for_chunk(chunk, registry) == TIER_2 and not (set(_chunk_pages(chunk)) & lazy):
+            deferred.append(chunk)
+        else:
+            extract.append(chunk)
+    return extract, deferred
+
+
+def lazy_ingest_summary(session: Session, job_id: str, pages) -> dict:
+    """Condensed summary for a lazy-ingest trigger (Phase 4).
+
+    Returns which deferred chunks cover the requested pages and how
+    many stay deferred — page numbers, tiers and source types only,
+    never raw chunk content (the diagnosis lead gets a condensed
+    structured summary, per the Anthropic subagent shape in the
+    scenario doc §5). Pure read: it does not clear anything; the
+    route clears the released ids and queues the bounded job.
+    """
+    from backend.ingestion.checkpoints import load_checkpoint as _load_cp
+    cp = _load_cp(job_id)
+    deferred_ids = set(cp.get("tier2_deferred") or [])
+    job = session.get(IngestionJob, job_id)
+    document_id = job.document_id if job is not None else None
+    rows = []
+    if document_id:
+        rows = session.query(Chunk).filter(Chunk.document_id == document_id).all()
+    wanted = {int(p) for p in (pages or [])}
+    released, per_page = [], {}
+    for chunk in rows:
+        chunk_pages = _chunk_pages(chunk)
+        for page in chunk_pages:
+            entry = per_page.setdefault(page, {"page": page, "chunks": 0,
+                                               "tier": None, "source_types": []})
+            entry["chunks"] += 1
+            source_type = (chunk.extra or {}).get("source_type") or chunk.chunk_type.value
+            if source_type not in entry["source_types"]:
+                entry["source_types"].append(source_type)
+        if chunk.id in deferred_ids and wanted & set(chunk_pages):
+            released.append(chunk.id)
+    return {"job_id": job_id, "pages": sorted(wanted),
+            "deferred_chunk_ids": sorted(deferred_ids),
+            "chunks_released": sorted(released),
+            "remaining_deferred": sorted(deferred_ids - set(released)),
+            "per_page": [per_page[p] for p in sorted(per_page) if p in wanted],
+            "summary": (f"Lazy ingest releases {len(released)} deferred chunk(s) "
+                        f"covering page(s) {sorted(wanted)}; "
+                        f"{len(deferred_ids) - len(released)} chunk(s) stay deferred.")}
+
+
 def _is_tesseract_error(exc: Exception) -> bool:
     s = str(exc).lower()
     return "tesseract" in s or "pytesseract" in s
@@ -93,7 +164,7 @@ def _load_pages_optional_ocr(pdf_path: Path, image_out_dir: Path):
             if old is None: os.environ.pop("CRATER_DISABLE_OCR", None)
             else: os.environ["CRATER_DISABLE_OCR"] = old
 
-def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product_id: str, doc_type: DocType, title: str, image_out_dir: str | Path, run_knowledge_extraction: bool=True, run_schematic_extraction: bool=True, existing_document_id: str|None=None, progress_callback: ProgressCallback|None=None, job_id: str|None=None) -> Document:
+def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product_id: str, doc_type: DocType, title: str, image_out_dir: str | Path, run_knowledge_extraction: bool=True, run_schematic_extraction: bool=True, existing_document_id: str|None=None, progress_callback: ProgressCallback|None=None, job_id: str|None=None, ingest_tier2: bool | None = None, lazy_pages: list[int] | None = None) -> Document:
     pdf_path=Path(pdf_path); image_out_dir=Path(image_out_dir); cp=load_checkpoint(job_id) if job_id else {"stage":"start","completed_pages":[],"vectors_done":False,"knowledge_done":[],"knowledge_failures":{},"schematics_done":[],"integration_done":False,"verification_warnings":[]}; completed_pages=set(cp.get("completed_pages",[])); vector_chunks_done=set(cp.get("vector_chunks_done",[])); knowledge_done=set(cp.get("knowledge_done",[])); schematics_done=set(cp.get("schematics_done",[])); knowledge_failures=dict(cp.get("knowledge_failures",{}))
     def progress(p:int,label:str):
         if job_id: save_checkpoint(job_id, stage=label, percent=p)
@@ -197,6 +268,40 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
         # extracted into the model and are marked done so a resume does
         # not re-offer them. Everything else keeps the v12 LLM path.
         _phase1_registry = _phase1_registry_for_product(session, product_id)
+        # Phase 4, Option C: resolve the Tier-2 flag (explicit argument
+        # wins; else the job checkpoint; else the registry default;
+        # default True = Phase 1 behaviour unchanged). Deferred chunks
+        # are recorded in the checkpoint as tier2_deferred, NOT
+        # knowledge_done, so Retry respects the deferral; a lazy_pages
+        # trigger releases only the chunks covering those pages.
+        _tier2_flag = ingest_tier2
+        if _tier2_flag is None and job_id:
+            _tier2_flag = load_checkpoint(job_id).get("ingest_tier2", True)
+        if _tier2_flag is None:
+            _tier2_flag = _phase1_registry.tier2_default if _phase1_registry is not None else True
+        _tier2_deferred = set(load_checkpoint(job_id).get("tier2_deferred") or []) if job_id else set()
+        if lazy_pages:
+            _released = {c.id for c in pending_knowledge
+                         if c.id in _tier2_deferred and set(_chunk_pages(c)) & {int(p) for p in lazy_pages}}
+            _tier2_deferred -= _released
+        else:
+            _released = set()
+        # A released chunk re-enters pending_knowledge; every other
+        # deferred chunk stays out (Retry respects the deferral).
+        pending_knowledge = [c for c in pending_knowledge
+                             if c.id not in _tier2_deferred or c.id in _released]
+        _extract, _deferred_now = tier2_partition(pending_knowledge, _phase1_registry, bool(_tier2_flag), lazy_pages)
+        if _deferred_now:
+            _tier2_deferred |= {c.id for c in _deferred_now}
+            pending_knowledge = _extract
+            if job_id:
+                save_checkpoint(job_id, tier2_deferred=sorted(_tier2_deferred),
+                                ingest_tier2=bool(_tier2_flag))
+        elif job_id and lazy_pages:
+            # A lazy release with no new deferral still persists the
+            # cleared list, so the deferral does not come back on Retry.
+            save_checkpoint(job_id, tier2_deferred=sorted(_tier2_deferred),
+                            ingest_tier2=bool(_tier2_flag))
         # Phase 2: the revision label and product model travel with every
         # fact this job extracts (source_revision / model_variant on the
         # evidence). Missing rows stay None -- unknown, never invented.

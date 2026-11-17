@@ -17,7 +17,7 @@ def _path(job_id: str) -> Path:
 def load_checkpoint(job_id: str) -> dict[str, Any]:
     path = _path(job_id)
     if not path.exists():
-        return {"stage": "start", "completed_pages": [], "vectors_done": False, "vector_chunks_done": [], "knowledge_done": [], "knowledge_failures": {}, "schematics_done": [], "integration_done": False, "verification_warnings": []}
+        return {"stage": "start", "completed_pages": [], "vectors_done": False, "vector_chunks_done": [], "knowledge_done": [], "knowledge_failures": {}, "schematics_done": [], "integration_done": False, "verification_warnings": [], "tier2_deferred": [], "ingest_tier2": True}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         data.setdefault("stage", "start")
@@ -29,9 +29,11 @@ def load_checkpoint(job_id: str) -> dict[str, Any]:
         data.setdefault("schematics_done", [])
         data.setdefault("integration_done", False)
         data.setdefault("verification_warnings", [])
+        data.setdefault("tier2_deferred", [])
+        data.setdefault("ingest_tier2", True)
         return data
     except Exception:
-        return {"stage": "start", "completed_pages": [], "vectors_done": False, "vector_chunks_done": [], "knowledge_done": [], "knowledge_failures": {}, "schematics_done": [], "integration_done": False, "verification_warnings": []}
+        return {"stage": "start", "completed_pages": [], "vectors_done": False, "vector_chunks_done": [], "knowledge_done": [], "knowledge_failures": {}, "schematics_done": [], "integration_done": False, "verification_warnings": [], "tier2_deferred": [], "ingest_tier2": True}
 
 
 def save_checkpoint(job_id: str, **updates: Any) -> dict[str, Any]:
