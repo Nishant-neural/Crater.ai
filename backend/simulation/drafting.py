@@ -12,9 +12,13 @@ builder, the draft schema (Pydantic, structured output), the six
 pre-review code checks (with the oracle as check 5), the authorization
 states (enforced in code), the bounded revision loop (max two rounds),
 and the review-view data. The LLM itself is a pluggable slot
-(``DraftLLM``): this build does NOT call an LLM (no new runtime LLM
-calls anywhere). Tests exercise the machinery with hand-written drafts
-that stand in for LLM output.
+(``DraftLLM``), implemented for real by ``gateway_draft_llm`` on the
+existing gateway (task ``"drafting"``, the same ``complete_result``
+interface diagnosis uses). No new provider, no new dependency, no new
+API-key handling. Tests stub the gateway; no live LLM call happens in
+the suite. The first REAL draft + the 15-minute review measurement is
+still a live check for the user (it needs his LLM credentials and a
+chosen first Layer 2 type).
 
 Candidate ``0.x`` versions compile ONLY in sandbox test twins, never an
 approved one. The sandbox is enforced by ``sandbox_archetype_library``:
@@ -33,6 +37,7 @@ from typing import Any, Callable, Iterator, Protocol
 
 from pydantic import BaseModel, Field
 
+from backend.llm import gateway
 from .archetypes import (
     ARCHETYPE_LIBRARY_VERSION,
     ARCHETYPES,
@@ -47,39 +52,106 @@ from .oracle import load_vocabulary, run_oracle
 from .repair_actions import load_registry_causes
 
 # ---------------------------------------------------------------------------
-# The LLM slot (not wired in this build)
+# The LLM slot — implemented on the existing gateway (readiness item C)
 # ---------------------------------------------------------------------------
+
+# Gateway task for drafting. The task has no entry in
+# settings.model_routes, so the gateway would fall back to its default
+# provider/model with a 2000-token ceiling; a full archetype JSON (ports,
+# states, parameters, propagation rows, failure modes) needs more, so the
+# call passes DRAFTING_MAX_TOKENS explicitly — the diagnosis ceiling.
+DRAFTING_TASK = "drafting"
+DRAFTING_MAX_TOKENS = 8192
+
+DRAFTING_INSTRUCTION = (
+    "You are drafting a machine-behaviour archetype for Crater.ai. "
+    "Return ONLY the draft archetype as JSON matching the supplied JSON schema. "
+    "Do not wrap it in code fences. No invented values: unbound is always an "
+    "acceptable answer. A template condition may only reference declared ports, "
+    "states and parameters. Every field needs a source citation or an explicit "
+    "unbound mark. A fault proposal must name its discriminating test."
+)
 
 
 class DraftLLM(Protocol):
     """The LLM's slot: given a drafting brief (dict), return a draft
     archetype (dict, validated against ``DraftArchetype``).
 
-    This build does NOT implement it — there is no LLM call anywhere in
-    what is built here. The gate, the review view and the loop all take a
-    draft that is already produced (in tests, hand-written). Wiring a real
-    LLM means implementing this protocol against the brief's JSON schema
-    and passing it to ``draft_archetype``; nothing else changes.
+    Implemented for real by ``gateway_draft_llm`` below, on the existing
+    gateway (task ``"drafting"``) — the same ``complete_result`` interface
+    diagnosis uses, with structured output against the draft schema. A
+    caller that needs a stub (tests) or a different model passes its own
+    ``DraftLLM`` to ``draft_archetype`` explicitly.
     """
 
     def __call__(self, brief: dict[str, Any]) -> dict[str, Any]:
         ...
 
 
+def gateway_draft_llm(brief: dict[str, Any]) -> dict[str, Any]:
+    """The real DraftLLM: the existing gateway, task ``"drafting"``.
+
+    Structured output against the ``DraftArchetype`` schema, temperature
+    0.0, exactly the way diagnosis calls the gateway. No new provider, no
+    new dependency, no new API-key handling: the gateway routes by its
+    configured provider/model.
+
+    Fail-closed: no provider configured -> RuntimeError (never a
+    fabricated draft); truncated output -> RuntimeError (a partial
+    archetype must never reach review); unparseable output -> ValueError.
+    The returned dict is schema-validated downstream by the pre-review
+    gate (check 1); this function only guarantees it is a JSON object.
+    """
+    raw, truncated = gateway.complete_result(
+        DRAFTING_TASK,
+        messages=[{"role": "user", "content": (
+            DRAFTING_INSTRUCTION + "\n\nDrafting brief (JSON):\n"
+            + json.dumps(brief))}],
+        json_schema=DraftArchetype.model_json_schema(),
+        temperature=0.0,
+        max_tokens=DRAFTING_MAX_TOKENS,
+    )
+    if raw is None:
+        raise RuntimeError(
+            "No LLM provider is configured for drafting (task 'drafting'); "
+            "configure the provider before calling draft_archetype "
+            "without an LLM.")
+    if truncated:
+        raise RuntimeError(
+            "The drafting LLM output was truncated at the token ceiling; "
+            "no draft is returned (a partial archetype must never be "
+            "reviewed).")
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.strip("`").strip()
+        if text.lower().startswith("json"):
+            text = text[4:].strip()
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        try:
+            parsed = json.loads(_repair_json_once(text))
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                "The drafting LLM did not return parseable JSON; no draft "
+                f"is returned (first 200 chars: {text[:200]!r})") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError(
+            "The drafting LLM did not return a JSON object; no draft is "
+            "returned.")
+    return parsed
+
+
 def draft_archetype(brief: dict[str, Any],
                     llm: DraftLLM | None = None) -> dict[str, Any]:
     """Produce a draft archetype from a brief.
 
-    Raises ``NotImplementedError`` when no LLM is supplied: the LLM is a
-    slot, not a call this build makes. The error message says so, so a
-    caller cannot mistake the stub for a working drafter.
+    With ``llm=None`` the gateway-backed ``gateway_draft_llm`` is used
+    (the existing gateway, task ``"drafting"``). Pass ``llm`` explicitly
+    for a stub (tests) or a different model.
     """
     if llm is None:
-        raise NotImplementedError(
-            "Layer 2 drafting needs an LLM implementing the DraftLLM "
-            "protocol (brief -> draft JSON). No LLM is wired in this build; "
-            "pass a DraftLLM, or hand a draft dict to run_pre_review_gate "
-            "directly.")
+        llm = gateway_draft_llm
     return llm(brief)
 
 

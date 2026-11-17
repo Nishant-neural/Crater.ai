@@ -6,8 +6,16 @@ discriminating test, Tier 1 pages, library types. Each case is one row
 of the manual's own troubleshooting tables -- no case invented.
 
 Tier gating is a filter on the extraction step only: Tier 1 pages are
-extracted always, Tier 2 only when a case/repair needs it (flag on the
-job, default off in Phase 1), Tier 3 never extracted into the model.
+extracted always, Tier 2 only when a case/repair needs it — the job
+flag ``ingest_tier2`` (Phase 4, Option C of tier2-flag-decision-v1.md:
+the flag exists, default ON for the OMNIPRO registry so the Phase 1
+live check tests the packaged system unchanged; the default flips
+per product in the registry only when per-case coverage justifies
+it), Tier 3 never extracted into the model. Tier-2 chunks deferred
+by a flag-off job are recorded in the checkpoint as
+``tier2_deferred`` — NOT ``knowledge_done`` — so Retry respects the
+deferral and only an explicit flag-on job or a Phase 4 lazy-ingest
+trigger clears them, one section at a time.
 Chunking and vector indexing are unchanged -- retrieval is not the
 model. Tier labels are recorded on the chunk ``extra`` so the decision
 is auditable.
@@ -74,6 +82,11 @@ class RepairCaseRegistry(BaseModel):
     tier1_pages: list[int] = Field(default_factory=list)
     tier3_pages: list[int] = Field(default_factory=list)
     tier3_note: str = ""
+    # Phase 4, Option C: the per-product default for the ``ingest_tier2``
+    # job flag. True = Tier 2 extracted (Phase 1 behaviour, unchanged);
+    # flip to False per product only when per-case coverage shows Tier 1
+    # alone carries the cases. The job flag always wins over this default.
+    tier2_default: bool = True
     source: str = ""
     cases: list[RepairCase] = Field(default_factory=list)
 
