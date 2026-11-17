@@ -6,6 +6,7 @@ from sqlalchemy.orm import sessionmaker
 from backend.api.routes.machine_knowledge import get_machine_knowledge
 from backend.db.models import (
     Base,
+    Chunk,
     ChunkType,
     DocType,
     ExpertKnowledge,
@@ -38,7 +39,12 @@ from backend.knowledge.machine_model import (
     UniversalMachineModel,
 )
 from backend.schematic.graph import schematic_to_machine_model
-from backend.schematic.schema import ExtractedEdge, ExtractedNode, SchematicExtractionResult
+from backend.schematic.schema import (
+    ExtractedEdge,
+    ExtractedNode,
+    ExtractedPort,
+    SchematicExtractionResult,
+)
 
 
 def make_session():
@@ -111,6 +117,21 @@ def test_persistence_and_query_include_every_universal_fact():
 
 
 def test_pdf_chunk_modalities_reach_universal_persistence(monkeypatch, tmp_path):
+    """Text + table chunks reach universal persistence through extraction.
+
+    Readiness fix (14 Nov 2026): this test monkeypatched
+    ``pipeline.page_to_chunks`` and ``pipeline.extract_chunk_knowledge``,
+    neither of which is on the pipeline's path any more (Phase 1 rewrote
+    chunking to document-level ``pages_to_chunks`` and extraction to the
+    batch ``extract_chunk_knowledge_batch``; the per-chunk
+    ``extract_chunk_knowledge`` survives only as the empty-batch retry).
+    The test is updated to the current names. The diagram chunk is
+    deliberately NOT extracted here: diagram content is indexed only
+    after schematic extraction as a node/edge summary (pipeline comment),
+    and this run disables the schematic pass -- so the assertion is 2
+    entities (text + table), with the diagram chunk present as a Chunk
+    row but contributing no knowledge entity.
+    """
     db = make_session()
     product = Product(manufacturer="Acme", family="CNC", model="C1")
     db.add(product)
@@ -124,25 +145,58 @@ def test_pdf_chunk_modalities_reach_universal_persistence(monkeypatch, tmp_path)
         PendingChunk(ChunkType.table, 1, "| name | value |"),
         PendingChunk(ChunkType.diagram, 1, "OCR label X1", {"image_path": "diagram.png"}),
     ]
+
+    def _model_for(content):
+        # One distinct entity per extracted chunk, so the count is
+        # meaningful (persist creates one row per entity per chunk).
+        name = "Pump P1" if "text evidence" in content else "Valve V1"
+        entity_id = "pump" if "text evidence" in content else "valve"
+        evidence = MachineEvidence(
+            fact="Documented fact", source_document="manual.pdf", page=1,
+            source_type="text", confidence=0.9, extraction_method="test",
+        )
+        return UniversalMachineModel(
+            entities=[MachineEntity(id=entity_id, name=name,
+                                    entity_type="pump", evidence=[evidence])],
+            evidence=[evidence],
+        )
+
     monkeypatch.setattr(pipeline, "load_pdf", lambda *_args: [RawPage(1, "text")])
-    monkeypatch.setattr(pipeline, "page_to_chunks", lambda *_args: chunks)
+    monkeypatch.setattr(pipeline, "pages_to_chunks", lambda *_args: chunks)
     monkeypatch.setattr(pipeline, "upsert_chunks", lambda **_kwargs: None)
-    monkeypatch.setattr(pipeline, "extract_chunk_knowledge", lambda content: (None, complete_model()))
-    monkeypatch.setattr(pipeline, "validate_machine_model", lambda _model: [])
+    monkeypatch.setattr(
+        pipeline, "extract_chunk_knowledge_batch",
+        lambda pairs: {chunk_id: (None, _model_for(content))
+                       for chunk_id, content in pairs})
 
     pipeline.ingest_pdf(
         db, tmp_path / "manual.pdf", revision.id, product.id, DocType.manual,
         "Manual", tmp_path / "images", run_schematic_extraction=False,
     )
 
-    assert db.query(MachineKnowledgeEntity).filter_by(revision_id=revision.id).count() == 3
+    # Chunk rows carry document_id, not revision_id (the Document owns
+    # the revision link); this is a fresh in-memory DB, so the totals
+    # are this run's alone.
+    assert db.query(Chunk).count() == 3
+    assert db.query(MachineKnowledgeEntity).filter_by(revision_id=revision.id).count() == 2
+    diagram_chunk = db.query(Chunk).filter(
+        Chunk.chunk_type == ChunkType.diagram).one()
+    assert db.query(MachineKnowledgeEntity).filter_by(
+        revision_id=revision.id, source_chunk_id=diagram_chunk.id).count() == 0
 
 
 def test_schematic_projection_creates_entities_ports_and_relations():
     model = schematic_to_machine_model(SchematicExtractionResult(
+        # Real pins only (backend/schematic/graph.py): the projection
+        # creates a port per extracted pin and no synthetic "terminal"
+        # port, so the fixture must carry the pins it expects. The old
+        # fixture supplied pin-less nodes and asserted 2 ports -- the
+        # pre-existing failure was the test, not the projection.
         nodes=[
-            ExtractedNode(label="P1", symbol_type="pump"),
-            ExtractedNode(label="V3", symbol_type="valve"),
+            ExtractedNode(label="P1", symbol_type="pump",
+                          ports=[ExtractedPort(name="inlet")]),
+            ExtractedNode(label="V3", symbol_type="valve",
+                          ports=[ExtractedPort(name="outlet")]),
         ],
         edges=[ExtractedEdge(from_label="P1", to_label="V3", wire_type="fluid")],
     ), "manual.pdf", 4, "chunk-4")
