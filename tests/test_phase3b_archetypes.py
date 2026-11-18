@@ -359,9 +359,23 @@ def test_for_steps_mechanism_on_a_hand_built_twin():
 
 def test_repair_actions_load_and_resolve():
     actions = load_repair_actions()
-    assert len(actions) == 4
+    # Readiness item A: 4 case-1 actions + 16 reviewed actions for the
+    # oracle-passing rows of cases 2-9 (cases 7/9 and the oracle-failing
+    # rows carry none). The id set is pinned; see
+    # tests/test_phase456_readiness_repairs.py for the per-case counts
+    # and the no-action rows.
+    assert len(actions) == 20
     assert {a.id for a in actions} == {
-        "repair:omni-01-a", "repair:omni-01-b", "repair:omni-01-c", "repair:omni-01-d"}
+        "repair:omni-01-a", "repair:omni-01-b", "repair:omni-01-c", "repair:omni-01-d",
+        "repair:omni-02-wire-stops-a", "repair:omni-02-wire-stops-d",
+        "repair:omni-02-wire-stops-e", "repair:omni-02-wire-stops-f",
+        "repair:omni-03-birds-nest-a",
+        "repair:omni-04-arc-not-stable-b", "repair:omni-04-arc-not-stable-e",
+        "repair:omni-04-arc-not-stable-g", "repair:omni-04-arc-not-stable-h",
+        "repair:omni-05-does-not-function-b", "repair:omni-05-does-not-function-c",
+        "repair:omni-06-lcd-dark-a", "repair:omni-06-lcd-dark-c",
+        "repair:omni-06-lcd-dark-e",
+        "repair:omni-08-porosity-a", "repair:omni-08-porosity-b"}
     definition, _model = _proof_definition()
     for action in actions:
         resolved, problems = resolve_action(action, definition)
@@ -408,14 +422,21 @@ def test_verify_single_cause_uses_fault_injection_first():
 
 
 def test_cause_with_injection_but_no_action_is_unavailable_not_rejected():
-    # Case 2 has reviewed fault_injections but no reviewed RepairAction
-    # in 3B: the tournament must say the twin cannot evaluate the
-    # repair, not reject a repair it never ran.
+    # A cause with a reviewed fault_injection but no reviewed RepairAction:
+    # the tournament must say the twin cannot evaluate the repair, not
+    # reject a repair it never ran. Case 2a used to be the example; since
+    # the readiness follow-up added reviewed RepairActions for the
+    # oracle-passing rows, the first case-2 cause without one is 2b
+    # (liner clogged — its oracle row fails, so it carries no action).
     definition, _model = _proof_definition()
     twin_state = initial_twin_state(definition)
     snapshot = snapshot_model_for_tournament()
+    with_action = {(a.case_id, a.cause_letter) for a in load_repair_actions()}
     cause = next(c for c in load_registry_causes()
-                 if c["case_id"] == "omni-02-wire-stops" and c["fault_injection"])
+                 if c["case_id"] == "omni-02-wire-stops"
+                 and c["fault_injection"]
+                 and (c["case_id"], c["cause_letter"]) not in with_action)
+    assert cause["cause_letter"] == "b", cause
     row = verify_single_cause(
         definition, twin_state, snapshot, _FakeState(),
         cause["cause"], cause["fix"])

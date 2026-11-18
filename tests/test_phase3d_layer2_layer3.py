@@ -1,9 +1,12 @@
 """Phase 3D tests — Layer 2 drafting workflow, Layer 3 field promotion,
 review view, and the binding points-table decision.
 
-No LLM is called anywhere here: the drafting machinery is exercised with
-hand-written drafts that stand in for LLM output. The LLM is a slot
-(``DraftLLM``), not a call this build makes.
+No live LLM is called anywhere here: the drafting machinery is exercised
+with hand-written drafts that stand in for LLM output, and the gateway
+path is exercised with a stubbed gateway (see
+tests/test_phase456_readiness_drafting.py). The LLM is a slot
+(``DraftLLM``), implemented for real by ``gateway_draft_llm`` on the
+existing gateway.
 """
 
 import json
@@ -127,13 +130,32 @@ def _gas_regulator_draft():
 
 
 # ---------------------------------------------------------------------------
-# The LLM slot (not wired)
+# The LLM slot — wired to the gateway (readiness item C)
 # ---------------------------------------------------------------------------
 
-def test_draft_archetype_without_llm_raises_not_implemented():
+def test_draft_archetype_without_llm_uses_the_gateway(monkeypatch):
+    """No explicit LLM -> the gateway-backed DraftLLM, stubbed here (never
+    a live call). The stub records the call shape: task "drafting", the
+    DraftArchetype JSON schema, temperature 0.0."""
+    import backend.simulation.drafting as drafting_module
+
+    seen: dict = {}
+
+    def _stub(task, messages, json_schema=None, temperature=None,
+              max_tokens=None):
+        seen.update(task=task, messages=messages, json_schema=json_schema,
+                    temperature=temperature, max_tokens=max_tokens)
+        return (json.dumps({"archetype_id": "stub", "human_name": "stub",
+                            "states": ["ok"], "version": "0.1.0"}), False)
+
+    monkeypatch.setattr(drafting_module.gateway, "complete_result", _stub)
     brief = _brief()
-    with pytest.raises(NotImplementedError, match="DraftLLM"):
-        draft_archetype(brief.model_dump(mode="json"), llm=None)
+    result = draft_archetype(brief.model_dump(mode="json"), llm=None)
+    assert result["archetype_id"] == "stub"
+    assert seen["task"] == "drafting"
+    assert seen["temperature"] == 0.0
+    assert seen["json_schema"]["properties"]["propagation_table"]
+    assert "Drafting brief" in seen["messages"][0]["content"]
 
 
 def test_draft_archetype_with_a_stub_llm_returns_its_output():

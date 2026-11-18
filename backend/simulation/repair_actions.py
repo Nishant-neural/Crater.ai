@@ -67,6 +67,14 @@ class RepairAction(BaseModel):
     postconditions: dict[str, Any] = Field(default_factory=dict)
     required_tests: list[str] = Field(default_factory=list)
     expected_trace: ExpectedTrace | None = None
+    # Phase 5 (d): the full RepairAction schema. Preconditions are the
+    # states that must hold before the repair starts (each cites the
+    # manual page it comes from in the procedure refs); safety
+    # requirements are the safety lines for this repair, presented
+    # BEFORE the repair steps (steal item 6). Both are reviewer-authored
+    # in the data file; page evidence lives in procedure_refs.
+    preconditions: list[str] = Field(default_factory=list)
+    safety_requirements: list[str] = Field(default_factory=list)
 
 
 class FailureToBehaviour(BaseModel):
@@ -408,3 +416,37 @@ def check_expected_trace(trace_entries: list[dict[str, Any]],
             "forbidden_hit": forbidden_hit,
             "note": "; ".join(note_parts) if note_parts else "trace shows the required chain",
             "produced_by": produced_by}
+
+
+# ---------------------------------------------------------------------------
+# Safety-first presentation (Phase 5d + steal item 6)
+# ---------------------------------------------------------------------------
+
+def render_repair_action_safety_first(action: RepairAction) -> dict[str, Any]:
+    """Present a full RepairAction with the safety line BEFORE the repair
+    steps. A repair with a safety implication leads with it; nobody is
+    sent to the machine above the safety flag. The order is fixed:
+    Safety, then Preconditions, then Steps (procedure refs), then the
+    expected trace summary. The safety section is always present — an
+    action with no safety_requirements still carries the lockout line,
+    so its absence is visible rather than silent.
+    """
+    from backend.diagnostics.safety import LOCKOUT_LINE
+    safety_lines = [LOCKOUT_LINE] + list(action.safety_requirements or [])
+    return {
+        "action_id": action.id,
+        "name": action.name,
+        "fault_injection_ref": action.fault_injection_ref,
+        "order": ["Safety", "Preconditions", "Steps", "Expected trace"],
+        "Safety": safety_lines,
+        "Preconditions": list(action.preconditions or []),
+        "Steps": [{"page": ref.page, "quote": ref.quote, "source": ref.source}
+                  for ref in action.procedure_refs],
+        "Expected trace": {
+            "required": [{"path": step.path, "value": step.value}
+                         for step in (action.expected_trace.required_state_changes
+                                      if action.expected_trace else [])],
+            "terminal": dict(action.expected_trace.terminal_conditions)
+                        if action.expected_trace else {},
+        },
+    }
