@@ -1,4 +1,5 @@
 """Central settings, loaded from environment / .env."""
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -7,8 +8,19 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-6"
-    gemini_api_key: str = ""
-    gemini_model: str = "gemini-3.8-flash"
+    # Accept Google's standard key name as a fallback: a key stored only
+    # under GOOGLE_API_KEY used to be silently ignored (every Gemini call
+    # then ran with an empty key and returned None). GEMINI_API_KEY wins
+    # when both are set. Verified with tests in test_ingestion_gemini_fix.py.
+    gemini_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+    )
+    # NOTE (21 Nov 2026): this id could not be verified live against
+    # Google's model list in this build (no live probe run here). If the
+    # API 404s on it, the error names the model; llm-probe.py on the
+    # user's laptop remains the decider.
+    gemini_model: str = "gemini-2.5-flash-lite"
     llm_provider: str = "anthropic"
     llm_model: str = ""
 

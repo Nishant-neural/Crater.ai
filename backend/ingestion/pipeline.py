@@ -449,7 +449,7 @@ def ingest_pdf(session: Session, pdf_path: str | Path, revision_id: str, product
                     if _has0:
                         continue
                     try:
-                        _single_result, _single_model = extract_chunk_knowledge(_retry_chunk.content)
+                        _single_result, _single_model = extract_chunk_knowledge(_retry_chunk.content, chunk_id=_retry_chunk.id)
                     except Exception as exc:  # noqa: BLE001 - see comment above
                         empty_retry_errors[_retry_chunk.id] = str(exc)[:500]
                         continue

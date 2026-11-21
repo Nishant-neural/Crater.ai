@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from pathlib import Path
 from uuid import uuid4
 from datetime import datetime, timedelta
@@ -17,6 +18,7 @@ from backend.ingestion.checkpoints import load_checkpoint, save_checkpoint
 from backend.ingestion.pipeline import _phase1_registry_for_product, ingest_pdf, lazy_ingest_summary
 
 router = APIRouter(prefix="/ingest", tags=["ingestion"])
+logger = logging.getLogger(__name__)
 _UPLOAD_DIR = Path("data") / "uploads"
 _IMAGE_DIR = Path("data") / "images"
 
@@ -69,6 +71,10 @@ def _run_job_background(job_id: str) -> None:
             job = session.get(IngestionJob, job_id); job.document_id = document.id
             job.status = IngestionStatus.completed; job.stage = "completed|100|Ingestion and machine-knowledge verification complete"; job.error_message = None; session.commit()
         except Exception as exc:
+            # Logging only: the traceback goes to the server log (uvicorn
+            # console), since the UI only ever sees the stored error_message.
+            # No session/job state, control flow, or error_message change here.
+            logger.exception("Background ingestion job %s failed", job_id)
             session.rollback(); job = session.get(IngestionJob, job_id)
             if job:
                 job.status = IngestionStatus.failed
