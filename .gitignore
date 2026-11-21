@@ -11,3 +11,4 @@ data/
 docs/
 crater-benchmarks/
 *.md
+benchmark/

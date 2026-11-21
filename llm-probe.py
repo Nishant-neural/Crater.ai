@@ -1,4 +1,4 @@
-"""Pinpoint why the Gemini model is unavailable in Crater.
+"""Pinpoint why the diagnosis model is unavailable in Crater.
 
 Run from the Crater project root, with the project's venv active:
     python llm-probe.py
@@ -6,6 +6,11 @@ Run from the Crater project root, with the project's venv active:
 It uses the app's own config (backend.config, .env) and gateway, so it
 tests exactly what the app sees. It NEVER prints your API key — only
 whether one is present and how long it is.
+
+Diagnosis + rerank default to OpenRouter (fix5, 21 Nov 2026) because
+Gemini's free tier 503s on those calls; extraction / integration stay
+on Gemini. So the tiny call below now exercises the OpenRouter route
+unless DIAGNOSIS_PROVIDER is overridden in .env.
 
 What it prints:
   1. The resolved route for each task (provider + model).
@@ -37,8 +42,10 @@ def main() -> int:
     print("=== keys (never printed, only presence) ===")
     print(f"GEMINI_API_KEY:    {_key_status(settings.gemini_api_key)}")
     print(f"ANTHROPIC_API_KEY: {_key_status(settings.anthropic_api_key)}")
+    print(f"OPENROUTER_API_KEY: {_key_status(settings.openrouter_api_key)}")
     print()
     print("=== one tiny call on the diagnosis route ===")
+    diag_route = gateway.route("diagnosis")
     try:
         text, truncated = gateway.complete_result(
             "diagnosis",
@@ -48,12 +55,20 @@ def main() -> int:
     except Exception as exc:  # noqa: BLE001 - the point is to show the error
         print(f"CALL RAISED: {type(exc).__name__}: {exc}")
         print()
-        print("Reading the error above:")
-        print("  404 / NOT_FOUND  -> the model id does not exist. Fix GEMINI_MODEL")
-        print("                     (try gemini-2.5-flash-lite) or DIAGNOSIS_MODEL.")
-        print("  401 / 403        -> bad or missing key. Fix GEMINI_API_KEY.")
-        print("  429              -> quota / rate limit. Wait, or check the")
-        print("                     Google Cloud quota page for this key.")
+        print("Reading the error above (diagnosis route: "
+              f"provider={diag_route.provider} model={diag_route.model}):")
+        print("  404 / NOT_FOUND  -> the model id does not exist. For OpenRouter,")
+        print("                     re-check GET https://openrouter.ai/api/v1/models")
+        print("                     and set OPENROUTER_MODEL to a live :free id; for")
+        print("                     Gemini, fix GEMINI_MODEL (try gemini-2.5-flash-lite)")
+        print("                     or DIAGNOSIS_MODEL.")
+        print("  401 / 403        -> bad or missing key for the diagnosis route's")
+        print("                     provider. OpenRouter: fix OPENROUTER_API_KEY (free")
+        print("                     key at openrouter.ai). Gemini: fix GEMINI_API_KEY.")
+        print("  429              -> quota / rate limit. OpenRouter free models also")
+        print("                     have a daily cap: 429s late in the day usually mean")
+        print("                     the cap, not a bug. Otherwise wait, or check the")
+        print("                     Google Cloud quota page for a Gemini key.")
         return 1
     if text is None:
         print("CALL RETURNED None -> the provider reported unavailable WITHOUT an error.")

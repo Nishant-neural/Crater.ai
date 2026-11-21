@@ -24,6 +24,22 @@ class Settings(BaseSettings):
     llm_provider: str = "anthropic"
     llm_model: str = ""
 
+    # OpenRouter fallback (fix5, 21 Nov 2026): OpenAI-compatible endpoint
+    # used when Gemini's free tier 503s. Free key from openrouter.ai.
+    # Default model verified live 21 Nov 2026 via GET
+    # https://openrouter.ai/api/v1/models: the suggested
+    # meta-llama/llama-3.3-70b-instruct:free is DELISTED (only the paid
+    # variant remains, $0.71/1M tokens, so it must not be the default).
+    # Default is google/gemma-4-31b-it:free — the largest well-known
+    # instruction model among the 11 live :free models with
+    # response_format support: context 262144, max_completion_tokens
+    # 32768, pricing $0. The 1M-context :free models (Ling, Ernie
+    # preview, Particle, Nemotron) are preview/obscure, and the Nemotron
+    # free variants do not support response_format at all.
+    openrouter_api_key: str = ""
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_model: str = "google/gemma-4-31b-it:free"
+
     # Task-specific routing. Environment variables can override the individual
     # model names without changing application code.
     extraction_model: str = ""
@@ -32,8 +48,13 @@ class Settings(BaseSettings):
     rerank_model: str = ""
     extraction_provider: str = ""
     integration_provider: str = ""
-    diagnosis_provider: str = ""
-    rerank_provider: str = ""
+    # fix5 (21 Nov 2026, user decision): the benchmark's live path is
+    # diagnosis + rerank only, and Gemini's free tier 503s there, so
+    # those two tasks default to the OpenRouter free model. Extraction,
+    # integration, vision and expert stay on Gemini (blank = fall back
+    # to llm_provider). Override per task, e.g. DIAGNOSIS_PROVIDER=gemini.
+    diagnosis_provider: str = "openrouter"
+    rerank_provider: str = "openrouter"
     vision_provider: str = ""
     vision_model: str = ""
     expert_provider: str = ""

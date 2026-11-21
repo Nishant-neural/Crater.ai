@@ -1,7 +1,7 @@
 """
 The Phase 2 payoff endpoints: start a troubleshooting session on a symptom,
 then keep feeding it observations/measurements until it concludes or
-escalates.
+ends with the ranked best guesses.
 
 Phase 4 corrected loop order (13 Nov 2026 correction, plan.md Phases 4-5
 carried the old ordering): hypotheses ranked -> the tournament runs EARLY
@@ -41,6 +41,10 @@ import logging as _logging
 from pathlib import Path as _Path
 _logger = _logging.getLogger(__name__)
 from backend.diagnostics.agent import run_turn, start_session
+from backend.diagnostics.twin_verification import (
+    load_twin_for_session,
+    run_tournament_for_state,
+)
 from backend.simulation.schema import DigitalTwinDefinition
 from backend.simulation.tournament import (
     ISOLATED_TWIN_WARNING, UNAVAILABLE_LABEL, run_tournament, verify_single_cause,
@@ -55,7 +59,7 @@ from backend.diagnostics.safety import check_safety, safety_evidence_from_state
 from backend.diagnostics.backtracking import (
     MAX_LIVE_HYPOTHESES, _texts_match, apply_test_answer,
     cite_hypotheses, generate_pair_hypotheses, present_hypotheses,
-    rerank_with_tournament, select_discriminating_test,
+    select_discriminating_test,
     signatures_from_registry, signatures_from_vocabulary,
     split_live_and_reserves, unavailable_with_attempt, upstream_walk,
 )
@@ -597,20 +601,12 @@ def _apply_walk_answer(db, session, state, answer_text, input_kind):
 
 
 def _load_twin_for_session(db, session):
-    """(definition, twin_state, snapshot_model) or None when no approved twin exists."""
-    if not session.revision_id:
-        return None
-    twin = (db.query(DigitalTwin)
-            .filter_by(revision_id=session.revision_id, status=TwinStatus.active)
-            .order_by(DigitalTwin.created_at.desc()).first())
-    if not twin:
-        return None
-    definition = DigitalTwinDefinition.model_validate(twin.definition)
-    snapshot_row = (db.query(MachineKnowledgeModelSnapshot)
-                    .filter_by(revision_id=session.revision_id)
-                    .order_by(MachineKnowledgeModelSnapshot.version.desc()).first())
-    snapshot_model = dict(snapshot_row.model or {}) if snapshot_row else {}
-    return definition, twin.state or {}, snapshot_model
+    """(definition, twin_state, snapshot_model) or None when no approved twin exists.
+
+    Thin wrapper over the shared helper in backend.diagnostics.twin_verification
+    (the agent's pre-turn run and conclusion gate use the same loader).
+    """
+    return load_twin_for_session(db, session)
 
 
 def _apply_early_tournament(db, session, state: DiagnosticState) -> dict | None:
@@ -618,39 +614,84 @@ def _apply_early_tournament(db, session, state: DiagnosticState) -> dict | None:
 
     Returns the tournament summary or None when no twin / no hypotheses.
     Never raises: a tournament failure must not break the diagnosis turn.
+    With no approved twin the absence is recorded on the timeline
+    (``twin_unavailable``) instead of silently skipping (fix-3) -- a
+    diagnosis must never run with verification silently absent.
     """
     try:
         if not state.hypotheses:
             return None
-        loaded = _load_twin_for_session(db, session)
-        if loaded is None:
-            return None
-        definition, twin_state, snapshot_model = loaded
         repair_name = (state.current_step.content if state.current_step else "") or ""
-        results, counts = run_tournament(definition, twin_state, snapshot_model, state, repair_name)
-        reranked = rerank_with_tournament(
-            [h.model_dump() for h in state.hypotheses], results)
-        state.hypotheses = [Hypothesis.model_validate(h) for h in reranked["hypotheses"]]
+        # Fix-3: when the conclusion gate already ran the tournament on
+        # this turn's hypotheses (a demoted conclusion, or a
+        # cannot-express ending), reuse its verdicts instead of running
+        # the tournament a second time on the same set -- the re-rank's
+        # confidence adjustments are not idempotent. The
+        # discriminating-test selection below still runs on the re-ranked list.
+        _held = next(
+            (entry for entry in reversed(state.timeline)
+             if entry.get("kind") in ("conclusion_held", "conclusion_unexpressible")
+             and entry.get("turn") == state.turns_taken
+             and entry.get("results") is not None),
+            None)
+        if _held is not None:
+            summary = {"available": True, "results": _held["results"],
+                       "counts": _held["counts"],
+                       "reranked": {"hypotheses": [h.model_dump() for h in state.hypotheses],
+                                    "reranked": True, "counts": _held["counts"]}}
+        else:
+            summary = run_tournament_for_state(db, session, state, repair_name)
+        if not summary["available"]:
+            state.timeline.append({
+                "turn": state.turns_taken, "kind": "twin_unavailable",
+                "input": repair_name or "hypothesis tournament (early)",
+                "available": False, "reason": summary["reason"],
+                "step_type": "twin_unavailable",
+                "step": f"Twin verification unavailable: {summary['reason']}",
+            })
+            session.state = state.model_dump(mode="json")
+            db.commit()
+            return None
+        results, counts = summary["results"], summary["counts"]
+        reranked = summary["reranked"]
         # The discriminating test for the top remaining cause replaces the
         # LLM's question only when the signatures actually split the
-        # remaining hypotheses — otherwise the agent's question stands.
+        # remaining hypotheses -- otherwise the agent's question stands.
+        # Fix-3: a test already asked-and-answered in an earlier turn is
+        # excluded, so the same discriminating test is never asked twice.
         discriminating = None
         if state.current_step is not None and state.current_step.type.value in ("question", "action"):
+            asked_tests = {
+                (entry.get("discriminating_test") or {}).get("test")
+                for entry in state.timeline
+                if entry.get("kind") == "early_tournament"
+                and (entry.get("turn") or 0) < state.turns_taken
+                and (entry.get("discriminating_test") or {}).get("test")
+            }
             discriminating = select_discriminating_test(
-                _signatures_for_session(), [h.model_dump() for h in state.hypotheses])
-            if discriminating is not None:
+                _signatures_for_session(), [h.model_dump() for h in state.hypotheses],
+                exclude_tests=asked_tests)
+            # A cannot-express ending is the answer, not a question to
+            # vary: never rewrite it into a discriminating-test question.
+            _unexpressible = any(
+                entry.get("kind") == "conclusion_unexpressible"
+                and entry.get("turn") == state.turns_taken
+                for entry in state.timeline)
+            if discriminating is not None and not _unexpressible:
                 test_name = discriminating["test"]
                 state.current_step.content = (
-                    "Discriminating test: " + test_name + " — " +
+                    "Discriminating test: " + test_name + " -- " +
                     discriminating["rationale"] + " What do you observe?")
                 state.current_step.rationale = discriminating["rationale"]
         state.timeline.append({
             "turn": state.turns_taken, "kind": "early_tournament",
             "input": repair_name or "hypothesis tournament (early)",
             "available": True, "counts": counts,
+            "cause": state.hypotheses[0].cause if state.hypotheses else None,
             "discriminating_test": discriminating,
             "results": [{"cause": r["cause"], "status": r["status"], "verdict": r["verdict"],
-                         "reason": r["reason"]} for r in results],
+                         "reason": r["reason"],
+                         "cannot_express": r.get("cannot_express", False)} for r in results],
             "step_type": "early_tournament",
             "step": "Hypothesis tournament (early): " + ", ".join(
                 f"{k} {v}" for k, v in counts.items() if v),
