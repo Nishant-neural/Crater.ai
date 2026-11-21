@@ -9,3 +9,5 @@ data/raw/
 data/processed/
 data/
 docs/
+crater-benchmarks/
+*.md
