@@ -55,7 +55,7 @@ def verify_machine_model(model: UniversalMachineModel) -> list[VerificationIssue
     entities = model.entity_map()
     by_name: dict[str, list[str]] = {}
     for e in model.entities:
-        entity_type = e.entity_type.strip().lower()
+        entity_type = (e.entity_type or "").strip().lower()
         if entity_type and entity_type not in KNOWN_ENTITY_TYPES:
             issues.append(VerificationIssue(
                 "ontology", "warning",
@@ -65,9 +65,9 @@ def verify_machine_model(model: UniversalMachineModel) -> list[VerificationIssue
         # Identity is the canonical id, not the display name. Repeated part
         # names (two fans, two knobs, ...) are normal in parts lists, so a shared
         # name is a review warning, never a reason to reject the whole model.
-        by_name.setdefault(e.name.strip().lower(), [])
-        if e.id not in by_name[e.name.strip().lower()]:
-            by_name[e.name.strip().lower()].append(e.id)
+        by_name.setdefault((e.name or "").strip().lower(), [])
+        if e.id not in by_name[(e.name or "").strip().lower()]:
+            by_name[(e.name or "").strip().lower()].append(e.id)
 
         bbox = _bbox(e.properties.get("bbox"))
         if bbox is not None:
@@ -75,7 +75,7 @@ def verify_machine_model(model: UniversalMachineModel) -> list[VerificationIssue
             if w <= 0 or h <= 0 or x < 0 or y < 0 or x + w > 1 or y + h > 1:
                 issues.append(VerificationIssue("spatial", "error", f"invalid/out-of-page bbox for {e.name}", [e.id]))
 
-    display = {e.name.strip().lower(): e.name for e in model.entities}
+    display = {(e.name or "").strip().lower(): e.name for e in model.entities}
     for key, ids in by_name.items():
         if len(ids) > 1:
             issues.append(VerificationIssue(
@@ -87,7 +87,7 @@ def verify_machine_model(model: UniversalMachineModel) -> list[VerificationIssue
 
     adjacency: dict[str, set[str]] = {e.id: set() for e in model.entities}
     for r in model.relations:
-        relation_type = r.relation_type.strip().lower()
+        relation_type = (r.relation_type or "").strip().lower()
         if relation_type and relation_type not in KNOWN_RELATION_TYPES:
             issues.append(VerificationIssue(
                 "ontology", "warning",

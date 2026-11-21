@@ -1,0 +1,374 @@
+{
+  "db": "C:\\programming\\Crater.ai\\crater.db",
+  "gold": {
+    "spec_table_p7": {
+      "chunk_id": "4768def0-0528-4c28-afe3-f114e1a6d7d7",
+      "page_number": 7,
+      "chunk_type": "table",
+      "chars": 1373
+    },
+    "troubleshooting_table_p42": {
+      "chunk_id": "d409d51a-b32b-4759-83b1-cfa8ea2b0d97",
+      "page_number": 42,
+      "chunk_type": "table",
+      "chars": 3294
+    },
+    "procedure_text_p10": {
+      "chunk_id": "099755e3-089c-4ac0-8dc0-e26798cef984",
+      "page_number": 10,
+      "chunk_type": "text",
+      "chars": 6082
+    }
+  },
+  "arms": {
+    "single": {
+      "spec_table_p7": {
+        "legacy_components": 0,
+        "legacy_relationships": 0,
+        "legacy_procedures": 0,
+        "entities": 3,
+        "relations": 0,
+        "ports": 0,
+        "quantities": 2,
+        "states": 0,
+        "events": 0,
+        "behaviors": 0,
+        "constraints": 0,
+        "procedures": 0,
+        "failure_modes": 0,
+        "component_names": [],
+        "failure_mode_names": [],
+        "procedure_names": [],
+        "quantity_sample": [
+          {
+            "name": "Power Input",
+            "value": "120",
+            "unit": "VAC / 60 Hz"
+          },
+          {
+            "name": "Power Input",
+            "value": "240",
+            "unit": "VAC / 60 Hz"
+          }
+        ],
+        "entity_names": [
+          "MIG Welding Mode",
+          "TIG Welding Mode",
+          "Stick Welding Mode"
+        ],
+        "total": 5,
+        "error": null
+      },
+      "troubleshooting_table_p42": {
+        "legacy_components": 5,
+        "legacy_relationships": 1,
+        "legacy_procedures": 0,
+        "entities": 5,
+        "relations": 1,
+        "ports": 0,
+        "quantities": 0,
+        "states": 0,
+        "events": 0,
+        "behaviors": 0,
+        "constraints": 0,
+        "procedures": 0,
+        "failure_modes": 5,
+        "component_names": [
+          "Wire Feed Motor",
+          "MIG Gun",
+          "Feed Tensioner",
+          "Contact Tip",
+          "Feed Rollers"
+        ],
+        "failure_mode_names": [
+          "Wire Feed Motor Runs but Wire Does Not Feed Properly",
+          "Wire Creates a Bird's Nest During Operation",
+          "Wire Stops During Welding",
+          "Welding Arc Not Stable",
+          "Weak Arc Strength"
+        ],
+        "procedure_names": [],
+        "quantity_sample": [],
+        "entity_names": [
+          "Wire Feed Motor",
+          "MIG Gun",
+          "Feed Tensioner",
+          "Contact Tip",
+          "Feed Rollers"
+        ],
+        "total": 17,
+        "error": null
+      },
+      "procedure_text_p10": {
+        "legacy_components": 16,
+        "legacy_relationships": 3,
+        "legacy_procedures": 5,
+        "entities": 16,
+        "relations": 3,
+        "ports": 0,
+        "quantities": 0,
+        "states": 0,
+        "events": 0,
+        "behaviors": 5,
+        "constraints": 0,
+        "procedures": 5,
+        "failure_modes": 2,
+        "component_names": [
+          "Wire Spool",
+          "Spool Spindle",
+          "Spool Brake Pad",
+          "Spacer",
+          "Wingnut",
+          "Spool Adapter",
+          "Spool Knob",
+          "Idler Arm",
+          "Feed Roller Knob",
+          "Feed Roller",
+          "Gun Cable Connector",
+          "Wire Feed Control Cable",
+          "Ground Clamp Cable",
+          "Wire Feed Power Cable",
+          "Regulator",
+          "Gas Hose"
+        ],
+        "failure_mode_names": [
+          "Welding wire unspooling, tangling, and feeding problems",
+          "Shielding gas leak"
+        ],
+        "procedure_names": [
+          "1-2 lb Wire Spool Loading",
+          "10-12 Pound Wire Spool Installation",
+          "Feed Roller Instructions",
+          "DCEN Flux-Cored (Gasless) Polarity Setup",
+          "DCEP Solid Core (Gas Shielded) Polarity Setup"
+        ],
+        "quantity_sample": [],
+        "entity_names": [
+          "Wire Spool",
+          "Spool Spindle",
+          "Spool Brake Pad",
+          "Spacer",
+          "Wingnut",
+          "Spool Adapter",
+          "Spool Knob",
+          "Idler Arm",
+          "Feed Roller Knob",
+          "Feed Roller",
+          "Gun Cable Connector",
+          "Wire Feed Control Cable",
+          "Ground Clamp Cable",
+          "Wire Feed Power Cable",
+          "Regulator",
+          "Gas Hose"
+        ],
+        "total": 55,
+        "error": null
+      }
+    },
+    "small_batch": {
+      "spec_table_p7": {
+        "legacy_components": 0,
+        "legacy_relationships": 0,
+        "legacy_procedures": 0,
+        "entities": 0,
+        "relations": 0,
+        "ports": 0,
+        "quantities": 23,
+        "states": 0,
+        "events": 0,
+        "behaviors": 0,
+        "constraints": 0,
+        "procedures": 0,
+        "failure_modes": 0,
+        "component_names": [],
+        "failure_mode_names": [],
+        "procedure_names": [],
+        "quantity_sample": [
+          {
+            "name": "Mig Power Input",
+            "value": "120",
+            "unit": "VAC / 60 Hz"
+          },
+          {
+            "name": "Mig Power Input",
+            "value": "240",
+            "unit": "VAC / 60 Hz"
+          },
+          {
+            "name": "Mig Current Input at Output",
+            "value": "20.8",
+            "unit": "A at 100 A"
+          },
+          {
+            "name": "Mig Current Input at Output",
+            "value": "25.5",
+            "unit": "A at 200 A"
+          },
+          {
+            "name": "Mig Welding Current Range",
+            "value": "30 –140",
+            "unit": "A"
+          },
+          {
+            "name": "Mig Welding Current Range",
+            "value": "30 –220",
+            "unit": "A"
+          },
+          {
+            "name": "Mig Maximum OCV",
+            "value": "86",
+            "unit": "VDC"
+          },
+          {
+            "name": "Mig Wire Speed",
+            "value": "50 – 500",
+            "unit": "IPM"
+          },
+          {
+            "name": "Mig Wire Spool Capacity",
+            "value": "Up to 12",
+            "unit": "lb spool"
+          },
+          {
+            "name": "Tig Power Input",
+            "value": "120",
+            "unit": "VAC / 60 Hz"
+          }
+        ],
+        "entity_names": [],
+        "total": 23,
+        "error": null
+      },
+      "troubleshooting_table_p42": {
+        "legacy_components": 0,
+        "legacy_relationships": 0,
+        "legacy_procedures": 0,
+        "entities": 0,
+        "relations": 0,
+        "ports": 0,
+        "quantities": 0,
+        "states": 0,
+        "events": 0,
+        "behaviors": 0,
+        "constraints": 0,
+        "procedures": 0,
+        "failure_modes": 5,
+        "component_names": [],
+        "failure_mode_names": [
+          "Wire Feed Motor Runs but Wire Does Not Feed Properly",
+          "Wire Creates a Bird’s Nest During Operation",
+          "Wire Stops During Welding",
+          "Welding Arc Not Stable",
+          "Weak Arc Strength"
+        ],
+        "procedure_names": [],
+        "quantity_sample": [],
+        "entity_names": [],
+        "total": 5,
+        "error": null
+      },
+      "procedure_text_p10": {
+        "legacy_components": 17,
+        "legacy_relationships": 0,
+        "legacy_procedures": 5,
+        "entities": 17,
+        "relations": 0,
+        "ports": 0,
+        "quantities": 0,
+        "states": 0,
+        "events": 0,
+        "behaviors": 5,
+        "constraints": 0,
+        "procedures": 0,
+        "failure_modes": 0,
+        "component_names": [
+          "Wingnut",
+          "Spool Spindle",
+          "Spool Brake Pad",
+          "Spacer",
+          "Spool Adapter",
+          "Spool Knob",
+          "Feed Tensioner",
+          "Idler Arm",
+          "Feed Roller",
+          "Feed Roller Knob",
+          "Wire Feed Mechanism",
+          "Gun Cable Connector",
+          "Wire Feed Control Cable",
+          "Ground Clamp Cable",
+          "Wire Feed Power Cable",
+          "Regulator",
+          "Gas Hose"
+        ],
+        "failure_mode_names": [],
+        "procedure_names": [
+          "1-2 lb Wire Spool Installation",
+          "10-12 Pound Wire Spool Installation",
+          "Feed Roller Instructions",
+          "DCEN Direct Current Electrode Negative Wire Setup for Flux-Cored (gasless) welding",
+          "DCEP Direct Current Electrode Positive Wire Setup for Solid Core (gas shielded) welding"
+        ],
+        "quantity_sample": [],
+        "entity_names": [
+          "Wingnut",
+          "Spool Spindle",
+          "Spool Brake Pad",
+          "Spacer",
+          "Spool Adapter",
+          "Spool Knob",
+          "Feed Tensioner",
+          "Idler Arm",
+          "Feed Roller",
+          "Feed Roller Knob",
+          "Wire Feed Mechanism",
+          "Gun Cable Connector",
+          "Wire Feed Control Cable",
+          "Ground Clamp Cable",
+          "Wire Feed Power Cable",
+          "Regulator",
+          "Gas Hose"
+        ],
+        "total": 44,
+        "error": null
+      }
+    },
+    "full_batch": {
+      "spec_table_p7": {
+        "total": 0,
+        "batch_index": 1,
+        "error": "ExtractionError: LLM returned invalid JSON: Expecting property name enclosed in double quotes (unrecoverable after lenient parsing and one repair retry)"
+      },
+      "troubleshooting_table_p42": {
+        "total": 0,
+        "batch_index": 1,
+        "error": "ExtractionError: LLM returned invalid JSON: Expecting property name enclosed in double quotes (unrecoverable after lenient parsing and one repair retry)"
+      },
+      "procedure_text_p10": {
+        "legacy_components": 0,
+        "legacy_relationships": 0,
+        "legacy_procedures": 2,
+        "entities": 0,
+        "relations": 0,
+        "ports": 0,
+        "quantities": 0,
+        "states": 0,
+        "events": 0,
+        "behaviors": 2,
+        "constraints": 0,
+        "procedures": 0,
+        "failure_modes": 0,
+        "component_names": [],
+        "failure_mode_names": [],
+        "procedure_names": [
+          "10-12 Pound Wire Spool Installation",
+          "Feed Roller Setup"
+        ],
+        "quantity_sample": [],
+        "entity_names": [],
+        "total": 4,
+        "error": null,
+        "batch_index": 0
+      }
+    }
+  }
+}
