@@ -473,17 +473,17 @@ def _merge_contexts(contexts: list[dict[str, Any]]) -> dict[str, Any]:
         return {}
     merged = {k: [] for k in contexts[0]}
     key_fields = {
-        "universal_entities": lambda x: (x.get("name", "").strip().lower(), x.get("entity_type", "")),
-        "universal_relations": lambda x: (x.get("subject_name", "").strip().lower(), x.get("relation_type", ""), x.get("object_name", "").strip().lower()),
+        "universal_entities": lambda x: ((x.get("name") or "").strip().lower(), x.get("entity_type", "")),
+        "universal_relations": lambda x: ((x.get("subject_name") or "").strip().lower(), x.get("relation_type", ""), (x.get("object_name") or "").strip().lower()),
         "universal_facts": lambda x: (x.get("fact_key") or x.get("source_id"),),
-        "behaviors": lambda x: (x.get("subject_name", "").strip().lower(), x.get("description", "").strip().lower()),
-        "legacy_components": lambda x: (x.get("name", "").strip().lower(), x.get("part_number")),
+        "behaviors": lambda x: ((x.get("subject_name") or "").strip().lower(), (x.get("description") or "").strip().lower()),
+        "legacy_components": lambda x: ((x.get("name") or "").strip().lower(), x.get("part_number")),
         "legacy_relationships": lambda x: (x.get("from_component_id"), x.get("relation_type"), x.get("to_component_id")),
-        "procedures": lambda x: (x.get("name", "").strip().lower(), x.get("procedure_type")),
-        "failure_modes": lambda x: (x.get("symptom", "").strip().lower(), x.get("diagnostic_test", "").strip().lower()),
-        "schematic_nodes": lambda x: (x.get("label", "").strip().lower(), x.get("symbol_type")),
+        "procedures": lambda x: ((x.get("name") or "").strip().lower(), x.get("procedure_type")),
+        "failure_modes": lambda x: ((x.get("symptom") or "").strip().lower(), (x.get("diagnostic_test") or "").strip().lower()),
+        "schematic_nodes": lambda x: ((x.get("label") or "").strip().lower(), x.get("symbol_type")),
         "schematic_edges": lambda x: (x.get("from_node_id"), x.get("wire_type"), x.get("to_node_id")),
-        "expert_knowledge": lambda x: (x.get("title", "").strip().lower(), x.get("knowledge_type")),
+        "expert_knowledge": lambda x: ((x.get("title") or "").strip().lower(), x.get("knowledge_type")),
     }
     for ctx in contexts:
         for kind, rows in ctx.items():

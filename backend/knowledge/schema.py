@@ -49,11 +49,16 @@ class UniversalEntity(BaseModel):
 
 
 class UniversalRelation(BaseModel):
+    # Endpoints are Optional on purpose: the LLM returns a relation with
+    # a missing endpoint (null subject_name / object_name) often enough
+    # that rejecting the whole chunk at validation loses every other
+    # fact in it. _universal_model_from_result drops exactly those
+    # relations (with a logged warning) and keeps the rest.
     subject_id: str | None = None
-    subject_name: str
-    relation_type: str
+    subject_name: str | None = None
+    relation_type: str | None = None
     object_id: str | None = None
-    object_name: str
+    object_name: str | None = None
     description: str | None = None
     evidence: list[dict[str, Any]] = Field(default_factory=list)
 

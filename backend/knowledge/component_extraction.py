@@ -8,6 +8,9 @@ provenance remains exact at the chunk/page-range level.
 from __future__ import annotations
 
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy.orm import Session
 
@@ -390,7 +393,7 @@ def extract_chunk_knowledge_batch(chunks: list[tuple[str, str]]) -> dict[str, tu
     if not chunks:
         return {}
     if len(chunks) == 1:
-        result, model = extract_chunk_knowledge(chunks[0][1])
+        result, model = extract_chunk_knowledge(chunks[0][1], chunk_id=chunks[0][0])
         return {chunks[0][0]: (result, model)}
 
     excerpts = "\n\n".join(
@@ -456,8 +459,19 @@ def extract_chunk_knowledge_batch(chunks: list[tuple[str, str]]) -> dict[str, tu
             # as an ExtractionError so a batch splits to singles instead of
             # failing the job, and a single chunk fails visibly as an
             # ExtractionError rather than an unhandled validation error.
-            model = _universal_model_from_result(result) if _has_universal_facts(result) else _legacy_model(result)
-        except ValueError as exc:
+            model = _universal_model_from_result(result, chunk_id=chunk_id) if _has_universal_facts(result) else _legacy_model(result)
+        except (ValueError, AttributeError) as exc:
+            # AttributeError is the "'NoneType' object has no attribute
+            # 'strip'" class (21 Nov 2026): a relation/behavior/procedure
+            # with a missing endpoint/name reaching a .strip() in the
+            # merge. The filter in _universal_model_from_result drops
+            # those items first, but any residual one must still fail
+            # per-chunk as an ExtractionError (so the pipeline records
+            # it in the ledger and splits/continues) instead of escaping
+            # as an uncaught AttributeError that kills the whole job.
+            # Kept narrow on purpose: only the two exception classes
+            # this conversion is known to raise (pydantic ValidationError
+            # is a ValueError subclass). Anything else still propagates.
             raise ExtractionError(f"LLM batch extraction produced an unusable universal fact for {chunk_id}: {exc}") from exc
         out[chunk_id] = (legacy, model)
         seen.add(chunk_id)
@@ -476,18 +490,24 @@ def _legacy_result(result: MachineKnowledgeExtractionResult) -> ExtractionResult
     )
 
 
-def extract_chunk_knowledge(content: str) -> tuple[ExtractionResult, UniversalMachineModel]:
-    """Extract legacy Product Brain rows and universal facts in one provider call."""
+def extract_chunk_knowledge(content: str, chunk_id: str | None = None) -> tuple[ExtractionResult, UniversalMachineModel]:
+    """Extract legacy Product Brain rows and universal facts in one provider call.
+
+    ``chunk_id`` is only used to make dropped-item warnings attributable
+    (see _universal_model_from_result); it is None on the direct call path,
+    where the caller does not have a chunk id.
+    """
     result = _extract_result(content)
     legacy = _legacy_result(result)
     if _has_universal_facts(result):
         try:
-            return legacy, _universal_model_from_result(result)
-        except ValueError as exc:
-            # Same dict-collection validation gap as the batch path: turn
-            # an uncaught validation error into a handled ExtractionError
-            # so the pipeline records it for this chunk instead of failing
-            # with an unhandled exception.
+            return legacy, _universal_model_from_result(result, chunk_id=chunk_id)
+        except (ValueError, AttributeError) as exc:
+            # Same dict-collection validation gap as the batch path, plus
+            # the "'NoneType' has no attribute 'strip'" class: turn an
+            # uncaught validation/attribute error into a handled
+            # ExtractionError so the pipeline records it for this chunk
+            # instead of failing the job with an unhandled exception.
             raise ExtractionError(f"LLM extraction produced an unusable universal fact: {exc}") from exc
     return legacy, _legacy_model(result)
 
@@ -673,6 +693,18 @@ def _legacy_model(result: MachineKnowledgeExtractionResult) -> UniversalMachineM
             evidence=evidence,
         ))
     for rel in legacy.relationships:
+        # A3 audit (21 Nov 2026): the schema keeps from/to_component
+        # required, so None cannot arrive through validation -- but a
+        # blank endpoint would still build a junk "entity:" id, and a
+        # None (e.g. from a programmatically built result) would crash
+        # on .lower() below. Skip it visibly instead of either.
+        if not (rel.from_component or "").strip() or not (rel.to_component or "").strip():
+            logger.warning(
+                "dropping legacy relationship with missing endpoint "
+                "from_component=%r to_component=%r relation_type=%r",
+                rel.from_component, rel.to_component, rel.relation_type,
+            )
+            continue
         model.relations.append(MachineRelation(
             subject_id=f"entity:{rel.from_component.lower().replace(' ', '-')}",
             subject_name=rel.from_component,
@@ -688,6 +720,15 @@ def _legacy_model(result: MachineKnowledgeExtractionResult) -> UniversalMachineM
             )],
         ))
     for proc in legacy.procedures:
+        # Same guard as above: proc.name.lower() crashes on None, and a
+        # blank name builds a junk behavior id. Skip it visibly.
+        if not (proc.name or "").strip():
+            logger.warning(
+                "dropping legacy procedure with missing name "
+                "procedure_type=%r",
+                proc.procedure_type,
+            )
+            continue
         model.behaviors.append(MachineBehavior(
             id=f"behavior:{proc.name.lower().replace(' ', '-')}",
             subject_id="",
@@ -703,7 +744,12 @@ def _legacy_model(result: MachineKnowledgeExtractionResult) -> UniversalMachineM
     return model
 
 
-def _universal_model_from_result(result: MachineKnowledgeExtractionResult) -> UniversalMachineModel:
+def _is_blank_name(value: object) -> bool:
+    """True for a missing/blank required name or endpoint (None, non-str, "")."""
+    return value is None or not isinstance(value, str) or not value.strip()
+
+
+def _universal_model_from_result(result: MachineKnowledgeExtractionResult, chunk_id: str | None = None) -> UniversalMachineModel:
     """Convert the provider-neutral extraction contract into typed primitives.
 
     Legacy components/relationships/procedures are merged in when they
@@ -713,11 +759,57 @@ def _universal_model_from_result(result: MachineKnowledgeExtractionResult) -> Un
     model -- in crater-2.db, pages 39/42/43 produced 7/6/64 legacy
     components but 0 universal entities, while page 46 (no failure
     modes) took the legacy path and its 12 components became entities.
+
+    ``chunk_id`` (when the caller knows it) is only used to attribute
+    the dropped-item warning below; the direct single-chunk path passes
+    None and the warning still carries the counts.
     """
+    # --- A1 (21 Nov 2026): filter items with missing required
+    # endpoints/names BEFORE any .strip() can see them. A relation the
+    # LLM returns with a null endpoint used to reach the merge dedupe
+    # below and crash with "'NoneType' object has no attribute
+    # 'strip'", killing the whole job. A dropped item is VISIBLE, not
+    # silent: one warning carries the counts, the chunk id when known,
+    # and a short preview of what was dropped. The chunk's other facts
+    # are kept. Note the schema (UniversalRelation) deliberately
+    # tolerates null endpoints so a bad relation reaches this filter
+    # instead of failing the whole chunk at validation; a relation_type
+    # of None is NOT dropped -- the model normalizer records it as
+    # "unspecified", the established placeholder for an unstated type.
+    # Behaviors are dropped only on a missing subject (identity); a
+    # missing description keeps the normalizer's explicit placeholder,
+    # the same pattern used for quantities and states elsewhere.
+    dropped_relations = [r for r in result.relations
+                         if _is_blank_name(r.subject_name) or _is_blank_name(r.object_name)]
+    kept_relations = [r for r in result.relations if r not in dropped_relations]
+    dropped_behaviors = [b for b in result.behaviors
+                         if isinstance(b, dict) and _is_blank_name(b.get("subject_name"))]
+    kept_behaviors = [b for b in result.behaviors if b not in dropped_behaviors]
+    dropped_procedures = [p for p in result.procedures if _is_blank_name(p.name)]
+    kept_procedures = [p for p in result.procedures if p not in dropped_procedures]
+    dropped_legacy_relationships = [r for r in result.relationships
+                                    if _is_blank_name(r.from_component) or _is_blank_name(r.to_component)]
+    kept_legacy_relationships = [r for r in result.relationships if r not in dropped_legacy_relationships]
+    dropped = {
+        "relations": dropped_relations,
+        "behaviors": dropped_behaviors,
+        "procedures": dropped_procedures,
+        "legacy_relationships": dropped_legacy_relationships,
+    }
+    if any(dropped.values()):
+        previews = {kind: [str(item)[:120] for item in items[:3]]
+                    for kind, items in dropped.items() if items}
+        logger.warning(
+            "dropping extraction items with missing required endpoints/names "
+            "chunk_id=%s relations=%d behaviors=%d procedures=%d "
+            "legacy_relationships=%d previews=%s",
+            chunk_id, len(dropped_relations), len(dropped_behaviors),
+            len(dropped_procedures), len(dropped_legacy_relationships), previews,
+        )
     model = UniversalMachineModel()
     for item in result.entities:
         model.entities.append(MachineEntity.model_validate(item.model_dump()))
-    for item in result.relations:
+    for item in kept_relations:
         model.relations.append(MachineRelation.model_validate(item.model_dump()))
     for item in result.ports:
         model.ports.append(MachinePort.model_validate(item))
@@ -727,7 +819,7 @@ def _universal_model_from_result(result: MachineKnowledgeExtractionResult) -> Un
         model.states.append(MachineState.model_validate(item))
     for item in result.events:
         model.events.append(MachineEvent.model_validate(item))
-    for item in result.behaviors:
+    for item in kept_behaviors:
         model.behaviors.append(MachineBehavior.model_validate(item))
     for item in result.constraints:
         model.constraints.append(MachineConstraint.model_validate(item))
@@ -766,36 +858,43 @@ def _universal_model_from_result(result: MachineKnowledgeExtractionResult) -> Un
             _item.properties = dict(_item.properties or {})
             _item.properties["entity_name"] = _target
     # Merge legacy items that universal extraction did not already cover.
-    legacy_model = _legacy_model(result)
-    existing_entity_names = {e.name.strip().lower() for e in model.entities}
+    # The legacy projection gets the filtered copy, so a blank-named
+    # procedure / blank-endpoint relationship is dropped exactly once
+    # (and logged once, above) instead of also tripping _legacy_model's
+    # own guards. _legacy_model's guards stay for its standalone callers.
+    legacy_model = _legacy_model(result.model_copy(update={
+        "relationships": kept_legacy_relationships,
+        "procedures": kept_procedures,
+    }))
+    existing_entity_names = {(e.name or "").strip().lower() for e in model.entities}
     for entity in legacy_model.entities:
-        if entity.name.strip().lower() not in existing_entity_names:
+        if (entity.name or "").strip().lower() not in existing_entity_names:
             model.entities.append(entity)
-            existing_entity_names.add(entity.name.strip().lower())
-    existing_relations = {(r.subject_name.strip().lower(), r.relation_type, r.object_name.strip().lower()) for r in model.relations}
+            existing_entity_names.add((entity.name or "").strip().lower())
+    existing_relations = {((r.subject_name or "").strip().lower(), r.relation_type, (r.object_name or "").strip().lower()) for r in model.relations}
     for relation in legacy_model.relations:
-        key = (relation.subject_name.strip().lower(), relation.relation_type, relation.object_name.strip().lower())
+        key = ((relation.subject_name or "").strip().lower(), relation.relation_type, (relation.object_name or "").strip().lower())
         if key not in existing_relations:
             model.relations.append(relation)
             existing_relations.add(key)
-    existing_behaviors = {(b.subject_name.strip().lower(), b.description.strip().lower()) for b in model.behaviors}
+    existing_behaviors = {((b.subject_name or "").strip().lower(), (b.description or "").strip().lower()) for b in model.behaviors}
     for behavior in legacy_model.behaviors:
-        key = (behavior.subject_name.strip().lower(), behavior.description.strip().lower())
+        key = ((behavior.subject_name or "").strip().lower(), (behavior.description or "").strip().lower())
         if key not in existing_behaviors:
             model.behaviors.append(behavior)
             existing_behaviors.add(key)
     # Legacy procedures as typed procedures (in addition to the behavior
     # form _legacy_model produces), so they survive in universal facts.
-    existing_procedures = {p.name.strip().lower() for p in model.procedures}
-    for proc in result.procedures:
-        if proc.name.strip().lower() not in existing_procedures:
+    existing_procedures = {(p.name or "").strip().lower() for p in model.procedures}
+    for proc in kept_procedures:
+        if (proc.name or "").strip().lower() not in existing_procedures:
             from backend.knowledge.machine_model import MachineProcedure
             model.procedures.append(MachineProcedure(
                 id=f"procedure:{proc.name.lower().replace(' ', '-')}",
                 name=proc.name, procedure_type=proc.procedure_type or "maintenance",
                 steps=list(proc.steps or []), entity_ids=[],
             ))
-            existing_procedures.add(proc.name.strip().lower())
+            existing_procedures.add((proc.name or "").strip().lower())
     model.evidence.extend(result.evidence)
     return model
 
