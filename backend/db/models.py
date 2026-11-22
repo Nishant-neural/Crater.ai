@@ -237,7 +237,7 @@ class Procedure(Base):
 class DiagnosticStatus(str, enum.Enum):
     active = "active"          # still asking questions / gathering evidence
     concluded = "concluded"    # agent reached a grounded recommendation
-    escalated = "escalated"    # confidence too low / safety constraint hit
+    escalated = "escalated"    # LEGACY: sessions escalated before fix-3; the loop no longer sets it
 
 
 class DiagnosticSession(Base):

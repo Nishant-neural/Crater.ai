@@ -447,6 +447,7 @@ def select_discriminating_test(
     *,
     costs: dict[str, int] | None = None,
     safety: dict[str, int] | None = None,
+    exclude_tests: set[str] | None = None,
 ) -> dict[str, Any] | None:
     """Pick the test that splits the remaining signatures best.
 
@@ -456,6 +457,12 @@ def select_discriminating_test(
     back to asking for the most informative observation. "unmodelled"
     / "not_applicable" outcomes never split a pair — they are their
     own uninformative bucket.
+
+    ``exclude_tests`` (fix-3): test names already asked-and-answered in
+    this session. A discriminating test is never asked twice for the
+    same session — the caller passes the names from the timeline and
+    the next-best unasked test is returned instead (or None when every
+    splitting test was already asked).
     """
     costs = costs or TEST_COST
     safety = safety or TEST_SAFETY
@@ -477,7 +484,7 @@ def select_discriminating_test(
     test_ids: list[str] = []
     for sig in live:
         for test_id in sig.tests:
-            if test_id not in test_ids:
+            if test_id not in test_ids and test_id not in (exclude_tests or set()):
                 test_ids.append(test_id)
     best: dict[str, Any] | None = None
     for test_id in test_ids:

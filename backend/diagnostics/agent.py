@@ -3,7 +3,7 @@ DiagnosticAgent: runs one turn of the plan.md §6 workflow.
 
 A "turn" = technician provides a new symptom/observation/measurement ->
 agent retrieves evidence -> agent updates hypotheses -> agent picks the
-next step (question / action / conclusion / escalate).
+next step (question / action / conclusion).
 
 The agent does NOT decide product/revision identification (plan.md §6
 step 1-2) — that happens at session-start time via the API, where the
@@ -28,9 +28,28 @@ is now treated like extraction instead of trusting a bare json.loads:
 - a degraded turn asks the technician a question and keeps the
   session ACTIVE with the previous hypotheses intact — a parse failure
   is a model-output failure, not a diagnostic failure, so it must never
-  escalate the session or lose the hypotheses. Escalation stays for the
-  real guards only (turn limit, sustained low confidence, no provider
-  configured at all);
+  end the session or lose the hypotheses. There is no escalation any more
+  (removed fix-3, on Nishant's instruction): a turn that cannot be
+  reasoned about degrades to a question, and the session only ends with
+  a twin-validated conclusion or the ranked best guesses at the turn limit;
+- verify-before-conclusion (fix-3, the Phase 0 requirement): a conclusion
+  step is only accepted when the early tournament has run on this turn's
+  hypotheses and the cause the conclusion is about is VALIDATED in the
+  approved twin; otherwise the conclusion is demoted to a question and
+  the session stays active. The one exception is a concluded cause the
+  twin cannot express at all (no component in this twin can carry it --
+  the "Insufficient wire feed pressure" trap: an adjustment-type cause
+  with no entity_ids): that ends the session at once with the
+  unavailable-with-attempt and a plain statement, instead of demoting
+  and looping to the turn limit, because no observation can make the
+  twin express it. The tournament also runs BEFORE the LLM turn,
+  so the model reasons over the verified ranking (and over which causes /
+  tests were already asked-and-answered) before it picks its next step.
+  With no approved twin, a held conclusion is labelled UNVERIFIED in the
+  step content and on the timeline — verification is never silently absent.
+  A discriminating test / leading-cause question is never repeated for a
+  cause already asked-and-answered in the session: the next step says
+  what changed (or did not change) or moves to the next untested cause.
 - a malformed hypothesis is quarantined on its own (the good ones from
   the same turn are kept), the same per-fact rule as ingestion;
 - the prompt no longer carries the full text of every evidence chunk
@@ -48,17 +67,28 @@ import re
 from sqlalchemy.orm import Session as DBSession
 
 from backend.db.models import Component, DiagnosticSession, DiagnosticStatus, FailureMode
+from backend.diagnostics.backtracking import _texts_match, unavailable_with_attempt
 from backend.diagnostics.prompts import DIAGNOSTIC_SYSTEM_PROMPT
 from backend.diagnostics.schema import DiagnosticState, EvidenceRef, Hypothesis, NextStep, NextStepType
+from backend.diagnostics.twin_verification import (
+    cannot_express_cause,
+    conclusion_cause,
+    render_verification_block,
+    run_tournament_for_state,
+    verdict_for_cause,
+)
 from backend.diagnostics.downtime import start_downtime
 from backend.llm import gateway
 from backend.retrieval.hybrid import retrieve_revision_context
 
 logger = logging.getLogger(__name__)
 
-_MAX_TURNS_BEFORE_FORCED_ESCALATION = 8
-_LOW_CONFIDENCE_ESCALATION_THRESHOLD = 0.35
-_TURNS_BEFORE_LOW_CONFIDENCE_CHECK = 5
+# Turn bound (fix-3): the turn on which the loop stops asking new
+# diagnostic questions and ends with the unavailable-with-attempt
+# (ranked best guesses + what is missing) instead of an escalation.
+# Escalation was removed from the loop, but the bound stays so a loop
+# that cannot conclude still ends.
+_MAX_TURNS_BEFORE_UNAVAILABLE_ENDING = 8
 
 # Output ceiling for a diagnostic turn (config route). A real turn is
 # ~1k tokens of JSON; 8192 is a safety net, never a target — the model
@@ -105,7 +135,7 @@ _DIAGNOSIS_OUTPUT_SCHEMA: dict = {
         "next_step": {
             "type": "object",
             "properties": {
-                "type": {"type": "string", "enum": ["question", "action", "conclusion", "escalate"]},
+                "type": {"type": "string", "enum": ["question", "action", "conclusion"]},
                 "content": {"type": "string"},
                 "rationale": {"type": "string"},
                 "safety_notes": {"type": "array", "items": {"type": "string"}},
@@ -354,12 +384,74 @@ def _coerce_confidence(value, default: float) -> float:
     return max(0.0, min(1.0, number))
 
 
+# The default-question phrasing ("check the leading cause — X?"), so the
+# timeline can tell which cause a past question was about.
+_LEADING_CAUSE_RE = re.compile(r"leading cause\s*[—\-–]\s*(.+?)(?:\?|\.|$)", re.IGNORECASE)
+
+
+def _asked_causes_and_tests(state: DiagnosticState) -> tuple[set[str], set[str]]:
+    """(causes, discriminating tests) already asked-and-answered in this session.
+
+    Read off the timeline — the natural record, no new persistence layer.
+    A cause counts as asked when a previous turn's question/action step
+    mentioned it, or when an earlier early-tournament entry ran its
+    discriminating test; a test counts as asked when an earlier
+    early-tournament entry selected it. "Asked-and-answered" holds for a
+    previous turn because the technician's input this turn is the answer
+    to it (``run_turn`` only runs on a new input). Causes are returned as
+    the canonical strings of the session's current/eliminated hypotheses,
+    so callers can compare them exactly. The current turn's own entries
+    are not in the timeline yet when this runs, so they are never counted.
+    """
+    asked_causes: set[str] = set()
+    asked_tests: set[str] = set()
+    candidates = [h.cause for h in list(state.hypotheses) + list(state.eliminated_hypotheses)]
+    for entry in state.timeline:
+        if entry.get("kind") == "early_tournament":
+            discriminating = entry.get("discriminating_test") or {}
+            if discriminating.get("test"):
+                asked_tests.add(discriminating["test"])
+            if entry.get("cause"):
+                for candidate in candidates:
+                    if _texts_match(entry["cause"], candidate):
+                        asked_causes.add(candidate)
+        step = entry.get("step") or ""
+        if step and (entry.get("step_type") or "") in ("question", "action"):
+            match = _LEADING_CAUSE_RE.search(step)
+            if match:
+                for candidate in candidates:
+                    if _texts_match(match.group(1).strip(), candidate):
+                        asked_causes.add(candidate)
+            for candidate in candidates:
+                if candidate and _texts_match(step, candidate):
+                    asked_causes.add(candidate)
+    return asked_causes, asked_tests
+
+
 def _default_question_step(state: DiagnosticState, rationale: str) -> dict:
-    if state.hypotheses:
-        cause = state.hypotheses[0].cause
+    """The fallback question for a degraded turn — never a repeat.
+
+    Asks about the leading cause that has NOT been asked-and-answered yet;
+    when every live hypothesis was already checked and the fault persists,
+    it asks what changed instead of repeating the same question (fix-3:
+    Nishant's live session asked the same leading-cause question on two
+    consecutive turns).
+    """
+    asked, _tests = _asked_causes_and_tests(state)
+    unasked = [h for h in state.hypotheses if h.cause not in asked]
+    if unasked:
+        cause = unasked[0].cause
         content = (
             f"What do you observe when you check the leading cause — {cause}? "
             "Report the result and I will update the ranking."
+        )
+    elif state.hypotheses:
+        checked = "; ".join(h.cause for h in state.hypotheses)
+        content = (
+            f"You already checked {checked} and the fault is still present — "
+            "what changed since those checks? Report what is different now, "
+            "or what exactly the last test showed, and I will update the ranking "
+            "instead of re-asking the same question."
         )
     else:
         content = (
@@ -379,7 +471,7 @@ def _default_question_step(state: DiagnosticState, rationale: str) -> dict:
 def _degraded_result(state: DiagnosticState, reason: str) -> dict:
     """A turn that keeps the session alive: previous hypotheses intact,
     overall confidence unchanged, next step a question. A model-output
-    failure must never escalate the session or lose the hypotheses."""
+    failure must never end the session or lose the hypotheses."""
     return {
         "hypotheses": [h.model_dump() for h in state.hypotheses],
         "eliminated_hypotheses": [h.model_dump() for h in state.eliminated_hypotheses],
@@ -425,6 +517,15 @@ def _normalize_result(state: DiagnosticState, parsed: dict) -> dict | None:
         next_step = _default_question_step(
             state, "The model's next step was malformed, so asking for the most informative observation instead."
         )
+    if next_step.get("type") == NextStepType.escalate.value:
+        # Escalation was removed from the loop (fix-3): a model that still
+        # returns an escalate step — the schema no longer offers it — is
+        # degraded to a question, never honoured. NextStepType.escalate
+        # survives only so stored sessions still validate.
+        logger.warning("diagnosis: model returned an escalate step; degrading to a question")
+        next_step = _default_question_step(
+            state, "Escalation has been removed from the diagnosis loop, so asking for the most informative observation instead."
+        )
     return {
         "hypotheses": hypotheses,
         "eliminated_hypotheses": eliminated,
@@ -454,7 +555,8 @@ def _repair_json(raw: str) -> str | None:
         return None
 
 
-def _run_llm_turn(state: DiagnosticState, evidence: list[EvidenceRef], knowledge_block: str) -> dict:
+def _run_llm_turn(state: DiagnosticState, evidence: list[EvidenceRef], knowledge_block: str,
+                  verification_block: str = "") -> dict:
     evidence_block = "\n".join(
         f"[{e.chunk_id}] (p.{e.page_number}, {e.source_document}): {e.content[:800]}" for e in evidence
     ) or "(no relevant evidence retrieved)"
@@ -463,6 +565,7 @@ def _run_llm_turn(state: DiagnosticState, evidence: list[EvidenceRef], knowledge
         state_json=_compact_state_json(state),
         evidence_block=evidence_block,
         knowledge_block=knowledge_block,
+        verification_block=verification_block or "(twin verification unavailable for this turn)",
     )
     try:
         raw, truncated = gateway.complete_result(
@@ -480,26 +583,22 @@ def _run_llm_turn(state: DiagnosticState, evidence: list[EvidenceRef], knowledge
             f"The diagnostic model call failed ({exc}); no hypotheses were changed — please report the most informative observation and I will retry the reasoning.",
         )
     if not raw:
-        # No provider configured — degrade to a safe, honest escalation
-        # rather than fabricate reasoning. This is the one case where
-        # escalate is still the answer: there is no model to reason.
-        return {
-            "hypotheses": [h.model_dump() for h in state.hypotheses],
-            "eliminated_hypotheses": [h.model_dump() for h in state.eliminated_hypotheses],
-            "overall_confidence": state.confidence,
-            "next_step": {
-                "type": "escalate",
-                "content": "Diagnostic reasoning requires a configured LLM provider.",
-                "rationale": "No LLM configured to reason over evidence.",
-                "safety_notes": [],
-            },
-        }
+        # No provider configured — degrade to a question, never fabricate
+        # reasoning and never escalate (escalation was removed from the
+        # loop, fix-3). The session stays active with its hypotheses
+        # intact; the technician is told plainly what is missing.
+        return _degraded_result(
+            state,
+            "Diagnostic reasoning requires a configured LLM provider, and none is configured — "
+            "no hypotheses were changed. Configure a provider, or report the most informative "
+            "observation and I will retry the reasoning once one is available.",
+        )
 
     parsed = _parse_lenient_json(raw)
     if (parsed is None or truncated) and raw:
         # Truncated output (finish reason hit the ceiling) parses the
         # same way as malformed output, so it gets the same one repair
-        # attempt instead of an immediate escalation.
+        # attempt instead of ending the turn.
         if truncated:
             logger.warning("diagnosis: output truncated at the ceiling; attempting one JSON repair")
         repaired = _repair_json(raw)
@@ -526,31 +625,352 @@ def _run_llm_turn(state: DiagnosticState, evidence: list[EvidenceRef], knowledge
     return normalized
 
 
+def _render_unavailable_attempt(attempt: dict) -> str:
+    """Readable text for an unavailable-with-attempt ending: ranked best
+    guesses, the discriminating test when known, and what is missing."""
+    lines = [
+        "The diagnosis cannot be concluded from the evidence so far — the turn limit "
+        "was reached without a twin-validated conclusion. Best guesses, ranked:",
+    ]
+    for index, guess in enumerate(attempt.get("ranked_guesses") or [], 1):
+        lines.append(
+            f"{index}. {guess.get('cause')} "
+            f"(confidence {float(guess.get('confidence') or 0.0):.2f}) — "
+            f"{guess.get('evidence') or 'no evidence recorded'}")
+    test = attempt.get("discriminating_test") or None
+    if test:
+        lines.append(
+            f"Discriminating test: {test.get('test')} — {test.get('rationale') or ''}")
+    missing = attempt.get("missing") or []
+    if missing:
+        lines.append("What is missing: " + "; ".join(missing))
+    lines.append(
+        "What do you observe when you run the discriminating test above, or which "
+        "of these guesses matches what you see? Report it and the ranking will update.")
+    return "\n".join(lines)
+
+
+def _render_cannot_express_attempt(attempt: dict, cause: str, reason: str) -> str:
+    """Readable text for a cannot-express ending: a plain statement that
+    the twin cannot express the cause, ranked best guesses, the
+    discriminating test when known, and what is missing. It asks NO
+    further question (no "?" anywhere in the text): no observation can
+    make the twin express this cause, so asking for the next observation
+    would only loop. Shares the guesses/test/missing shape of
+    ``_render_unavailable_attempt`` with a different opening and closing.
+    """
+    lines = [
+        f"The twin cannot express this cause — {cause}. {reason}",
+        "No further observation can make the twin express it, so this diagnosis "
+        "ends here with the best available answer instead of asking for the next "
+        "observation or waiting for the turn limit. Best guesses, ranked:",
+    ]
+    for index, guess in enumerate(attempt.get("ranked_guesses") or [], 1):
+        lines.append(
+            f"{index}. {guess.get('cause')} "
+            f"(confidence {float(guess.get('confidence') or 0.0):.2f}) — "
+            f"{guess.get('evidence') or 'no evidence recorded'}")
+    test = attempt.get("discriminating_test") or None
+    if test:
+        lines.append(
+            f"Discriminating test: {test.get('test')} — {test.get('rationale') or ''}")
+    missing = attempt.get("missing") or []
+    if missing:
+        lines.append("What is missing: " + "; ".join(missing))
+    lines.append(
+        "The leading guess above is the best available answer, and it is not "
+        "twin-verified.")
+    return "\n".join(lines)
+
+
+def _cannot_express_ending(state: DiagnosticState, cause_text: str,
+                           row_reason: str) -> tuple[dict, str]:
+    """Build the ending step for a concluded cause the twin cannot
+    express, plus the reason string for the timeline.
+
+    The step keeps the loop's ending shape (a question-type step carrying
+    the unavailable-with-attempt, the same shape as the turn-bound
+    ending): there is no unavailable status in ``DiagnosticStatus``, and
+    a conclusion step would falsely mark the session concluded. The
+    content itself asks no question -- the ending is the answer.
+    The discriminating test is None here, as in the turn-bound ending:
+    no signature source exists in the agent layer, so the attempt
+    carries the ranked guesses and what is missing, and the test line
+    appears only when one is known.
+    """
+    hypotheses = state.hypotheses or []
+    guesses = [{"cause": h.cause, "confidence": h.confidence,
+                "evidence": h.rationale, "source": "session_hypothesis"}
+               for h in hypotheses]
+    reason = f"The twin cannot express this cause ({cause_text}): {row_reason}"
+    attempt = unavailable_with_attempt(
+        guesses, None,
+        [f"a twin that models {cause_text}",
+         "a check of this cause outside the twin (the manual's own test for it)"],
+        reason)
+    step = {
+        "type": NextStepType.question.value,
+        "content": _render_cannot_express_attempt(attempt, cause_text, row_reason),
+        "rationale": reason,
+        "safety_notes": [],
+        "evidence_chunk_ids": [],
+        "procedure_steps": [],
+    }
+    return step, reason
+
+
 def _apply_forced_safeguards(state: DiagnosticState, result: dict) -> dict:
+    """Deterministic guardrails around the diagnostic turn (plan.md §25
+    as amended by fix-3: escalation is removed from the loop entirely).
+
+    - An escalate step from the model (legacy / non-conforming output)
+      becomes a question — the loop never escalates.
+    - The turn bound still exists, but it now ends the loop with the
+      unavailable-with-attempt instead of an escalation: when the turn
+      about to run is the 8th, the next step is a question carrying the
+      ranked best guesses and what is missing — never a bare stop, and
+      the session stays active so the technician can still answer the
+      discriminating test. A validated conclusion is never overridden
+      by the bound (the gate runs before this, and a conclusion step is
+      left alone here). ``result["turn_bound_reached"]`` is set so
+      ``run_turn`` can record the ending on the timeline.
     """
-    Enforce plan.md §25 escalation rules even if the LLM's own judgement
-    doesn't: too many turns, or sustained low confidence, force an escalate
-    step. These are cheap, deterministic guardrails around a probabilistic
-    component — the agent can choose to escalate earlier, but not later
-    than these limits.
+    if result.get("cannot_express_ending"):
+        # The gate already ended the turn with the cannot-express
+        # attempt; the turn-bound guard must not overwrite it with the
+        # generic turn-limit text (not even on turn 8).
+        return result
+    step = result.get("next_step") or {}
+    if step.get("type") == NextStepType.escalate.value:
+        result["next_step"] = _default_question_step(
+            state, "Escalation has been removed from the diagnosis loop, so asking for the most informative observation instead.")
+        return result
+    if (state.turns_taken + 1 >= _MAX_TURNS_BEFORE_UNAVAILABLE_ENDING
+            and step.get("type") != NextStepType.conclusion.value):
+        hypotheses = state.hypotheses or [
+            Hypothesis.model_validate(h) for h in result.get("hypotheses", [])
+            if isinstance(h, dict) and h.get("cause")]
+        guesses = [{"cause": h.cause, "confidence": h.confidence,
+                    "evidence": h.rationale, "source": "session_hypothesis"}
+                   for h in hypotheses]
+        attempt = unavailable_with_attempt(
+            guesses, None,
+            ["a twin-validated conclusion within 8 turns",
+             "the outcome of the discriminating test for the leading cause"],
+            "Turn limit reached without a twin-validated conclusion")
+        result["next_step"] = {
+            "type": NextStepType.question.value,
+            "content": _render_unavailable_attempt(attempt),
+            "rationale": "Turn limit reached without a twin-validated conclusion.",
+            "safety_notes": [],
+            "evidence_chunk_ids": [],
+            "procedure_steps": [],
+        }
+        result["turn_bound_reached"] = True
+    return result
+
+
+def _verification_block_for_turn(db: DBSession, session: DiagnosticSession,
+                                 state: DiagnosticState) -> str:
+    """Run the early tournament on the ranking carried into this turn and
+    render the block the LLM reasons over before it picks its next step.
+
+    When the twin runs, the re-ranked hypotheses and a pre-turn
+    ``early_tournament`` timeline entry are recorded (turn = the turn
+    about to run), so the timeline shows the verdicts the model saw.
+    When the twin cannot run, the block says so plainly — the model is
+    told verification is unavailable instead of the turn silently
+    proceeding without it.
     """
-    if state.turns_taken + 1 >= _MAX_TURNS_BEFORE_FORCED_ESCALATION:
-        result["next_step"] = {
-            "type": NextStepType.escalate.value,
-            "content": "This case has run for many turns without a confident conclusion — escalating to a human expert.",
-            "rationale": "Turn limit reached without sufficient confidence.",
-            "safety_notes": [],
-        }
-    elif (
-        state.turns_taken + 1 >= _TURNS_BEFORE_LOW_CONFIDENCE_CHECK
-        and result.get("overall_confidence", 0.0) < _LOW_CONFIDENCE_ESCALATION_THRESHOLD
-    ):
-        result["next_step"] = {
-            "type": NextStepType.escalate.value,
-            "content": "Confidence remains low after several diagnostic turns — escalating to a human expert rather than guessing further.",
-            "rationale": f"Confidence {result.get('overall_confidence', 0.0):.2f} below threshold after {state.turns_taken + 1} turns.",
-            "safety_notes": [],
-        }
+    asked_causes, asked_tests = _asked_causes_and_tests(state)
+    summary = run_tournament_for_state(
+        db, session, state,
+        repair_name=(state.current_step.content if state.current_step else "") or "",
+        rerank=False)  # verdicts for the prompt only: the gate / post-turn
+    # run owns the authoritative re-rank, so one hypothesis set is never
+    # re-ranked twice in a turn (see run_tournament_for_state).
+    if summary.get("available"):
+        state.timeline.append({
+            "turn": state.turns_taken + 1, "kind": "early_tournament",
+            "input": "hypothesis tournament (early, pre-turn)",
+            "available": True, "counts": summary["counts"],
+            "results": [{"cause": r["cause"], "status": r["status"], "verdict": r["verdict"],
+                         "reason": r["reason"],
+                         "cannot_express": r.get("cannot_express", False)} for r in summary["results"]],
+            "step_type": "early_tournament",
+            "step": "Hypothesis tournament (early, pre-turn): " + ", ".join(
+                f"{k} {v}" for k, v in summary["counts"].items() if v),
+        })
+    return render_verification_block(summary, asked_causes=asked_causes,
+                                     asked_tests=asked_tests)
+
+
+def _demoted_conclusion_step(state: DiagnosticState, original_step: dict, why: str) -> dict:
+    """The question step a held conclusion becomes: labelled UNVERIFIED,
+    saying why it was held, and asking about the next untested cause
+    (or the most informative observation when every cause was checked)."""
+    asked, _tests = _asked_causes_and_tests(state)
+    unasked = [h for h in state.hypotheses if h.cause not in asked]
+    if unasked:
+        question = (
+            f"What do you observe when you check the next untested cause — {unasked[0].cause}? "
+            "Report the result and I will update the ranking.")
+    else:
+        question = (
+            "What is the single most informative observation you can report next "
+            "(what you see, hear, or measure)?")
+    return {
+        "type": NextStepType.question.value,
+        "content": (
+            f"UNVERIFIED — the conclusion \"{original_step.get('content') or ''}\" was held "
+            f"because {why}. It has not been verified in the twin, so it is not a "
+            f"recommendation to act on. {question}"),
+        "rationale": f"Conclusion held for lack of twin validation: {why}",
+        "safety_notes": [],
+        "evidence_chunk_ids": [],
+        "procedure_steps": [],
+    }
+
+
+def _apply_conclusion_gate(db: DBSession, session: DiagnosticSession,
+                           state: DiagnosticState, result: dict) -> dict:
+    """Verify-before-conclusion (the Phase 0 requirement, fix-3).
+
+    A conclusion step is only accepted when the tournament has run on
+    this turn's hypotheses and the cause the conclusion is about carries
+    a VALIDATED verdict. Otherwise the conclusion is demoted to a
+    question step and the session stays active — a conclusion never goes
+    out with its cause unvalidated or unverified. Escalation is not an
+    alternative: it was removed from the loop. The gate runs after the
+    LLM turn and before the turn-bound guard, so a validated conclusion
+    at the turn limit still concludes. Non-conclusion steps pass through
+    untouched. Appends a ``conclusion_verified`` or ``conclusion_held``
+    timeline entry (turn = the turn about to run).
+
+    The one exception is the cannot-express path: when the concluded
+    cause carries the tournament's ``cannot_express`` signal (no
+    component in this twin can carry it -- no matching component / no
+    entity_ids, or the reviewed RepairAction for it references
+    components this twin does not have, or the matched component has
+    no simulation rule describing a fault in it), the conclusion is NOT demoted
+    and the session does NOT wait for the turn limit. No observation can
+    make the twin express such a cause, so demoting would loop forever
+    waiting for a twin pass that cannot come. Instead the session ends
+    at once with the unavailable-with-attempt (ranked best guesses +
+    what is missing) and a plain "the twin cannot express this cause"
+    statement, with a ``conclusion_unexpressible`` timeline entry and
+    ``result["cannot_express_ending"]`` set so ``run_turn`` records the
+    ending and the later guards leave it alone.
+    """
+    step = result.get("next_step") or {}
+    if step.get("type") != NextStepType.conclusion.value:
+        return result
+    turn_no = state.turns_taken + 1
+    cause = conclusion_cause(state, step.get("content") or "")
+    summary = run_tournament_for_state(
+        db, session, state, repair_name=step.get("content") or "")
+    if not summary.get("available"):
+        reason = summary["reason"]
+        result["next_step"] = _demoted_conclusion_step(
+            state, step, f"the twin could not verify it ({reason})")
+        state.timeline.append({
+            "turn": turn_no, "kind": "conclusion_held",
+            "input": step.get("content") or "",
+            "cause": cause.cause if cause else None,
+            "available": False, "verdict": None, "reason": reason,
+            "step_type": "conclusion_held",
+            "step": f"Conclusion held as unverified: {reason}",
+        })
+        return result
+    verdict = verdict_for_cause(summary["results"], cause.cause) if cause else "unavailable"
+    if verdict == "validated":
+        state.timeline.append({
+            "turn": turn_no, "kind": "conclusion_verified",
+            "input": step.get("content") or "",
+            "cause": cause.cause if cause else None,
+            "available": True, "verdict": "validated",
+            "reason": None,
+            "step_type": "conclusion_verified",
+            "step": f"Conclusion verified in twin: {cause.cause} VALIDATED",
+        })
+        return result
+    row = next((r for r in summary["results"]
+                if cause is not None and _texts_match(cause.cause, r.get("cause", ""))), None)
+    if cause is not None and cannot_express_cause(summary["results"], cause.cause):
+        # The twin cannot express this cause at all: do NOT demote and
+        # ask about the next cause, do NOT ask for more observations,
+        # and do NOT wait for the turn limit -- none of those can make
+        # the twin express it. End at once with the attempt, plainly.
+        row_reason = (row or {}).get("reason") or "no component in this twin can carry it"
+        ending_step, attempt_reason = _cannot_express_ending(state, cause.cause, row_reason)
+        result["next_step"] = ending_step
+        result["cannot_express_ending"] = True
+        result["cannot_express_reason"] = attempt_reason
+        state.timeline.append({
+            "turn": turn_no, "kind": "conclusion_unexpressible",
+            "input": step.get("content") or "",
+            "cause": cause.cause,
+            "available": True, "verdict": "unavailable", "reason": attempt_reason,
+            "results": summary["results"], "counts": summary["counts"],
+            "step_type": "conclusion_unexpressible",
+            "step": f"Conclusion held: the twin cannot express {cause.cause} — {row_reason}",
+        })
+        return result
+    why = f"the twin returned {verdict} for {cause.cause if cause else 'the leading cause'}" + (
+        f" ({row['reason']})" if row and row.get("reason") else "")
+    result["next_step"] = _demoted_conclusion_step(state, step, why)
+    state.timeline.append({
+        "turn": turn_no, "kind": "conclusion_held",
+        "input": step.get("content") or "",
+        "cause": cause.cause if cause else None,
+        "available": True, "verdict": verdict, "reason": why,
+        "results": summary["results"], "counts": summary["counts"],
+        "step_type": "conclusion_held",
+        "step": f"Conclusion held: {why}",
+    })
+    return result
+
+
+def _apply_no_repeat_gate(state: DiagnosticState, result: dict) -> dict:
+    """Never ask the same discriminating question twice for one cause
+    (fix-3: Nishant's live session asked the same leading-cause question
+    on turns #3 and #4).
+
+    When the next step is a question/action whose every mentioned cause
+    was already asked-and-answered in an earlier turn, rewrite it: ask
+    about the next untested cause, or — when every live cause was
+    already checked — ask what changed since those checks. A step that
+    mentions a not-yet-asked cause is left alone.
+    """
+    step = result.get("next_step") or {}
+    if step.get("type") not in (NextStepType.question.value, NextStepType.action.value):
+        return result
+    content = step.get("content") or ""
+    mentioned = [h for h in list(state.hypotheses) + list(state.eliminated_hypotheses)
+                 if h.cause and _texts_match(content, h.cause)]
+    if not mentioned:
+        return result
+    asked, _tests = _asked_causes_and_tests(state)
+    if not all(h.cause in asked for h in mentioned):
+        return result
+    unasked = [h for h in state.hypotheses if h.cause not in asked]
+    if unasked:
+        new_content = (
+            f"What do you observe when you check the next untested cause — {unasked[0].cause}? "
+            "Report the result and I will update the ranking.")
+        rationale = (
+            f"{mentioned[0].cause} was already checked and the fault persists — moving to "
+            "the next untested cause instead of repeating the question.")
+    else:
+        checked = "; ".join(sorted(asked)) or "the leading causes"
+        new_content = (
+            f"You already checked {checked} and the fault is still present — what changed "
+            "since those checks? Report what is different now, or what exactly the last "
+            "test showed, and I will update the ranking instead of re-asking the same question.")
+        rationale = (
+            "All leading causes were already checked and the fault persists; asking what "
+            "changed instead of repeating the question.")
+    result["next_step"] = {**step, "content": new_content, "rationale": rationale}
     return result
 
 
@@ -602,14 +1022,56 @@ def run_turn(
     filter_query = query + " " + " ".join(h.cause for h in state.hypotheses)
     legacy_block = _load_product_knowledge(db, session.revision_id, filter_query)
     knowledge_block = legacy_block + "\n\nCanonical knowledge + graph retrieval:\n" + _knowledge_context(knowledge)
-    result = _run_llm_turn(state, evidence, knowledge_block)
-    result = _apply_forced_safeguards(state, result)
+    # Fix-3: the tournament runs BEFORE the LLM turn as well as after it,
+    # so the model reasons over the verified ranking (and over what was
+    # already asked) before it picks its next step — the concluding turn
+    # used to be the one turn whose verdicts the model never saw.
+    verification_block = _verification_block_for_turn(db, session, state)
+    result = _run_llm_turn(state, evidence, knowledge_block, verification_block)
 
     state.hypotheses = [Hypothesis.model_validate(h) for h in result.get("hypotheses", [])]
     state.eliminated_hypotheses = [Hypothesis.model_validate(h) for h in result.get("eliminated_hypotheses", [])]
     state.confidence = float(result.get("overall_confidence", 0.0))
     state.current_step = NextStep.model_validate(result["next_step"])
+    # Fix-3: verify-before-conclusion — a conclusion stands only when the
+    # tournament has run on this turn's hypotheses and its cause is
+    # VALIDATED; otherwise it is demoted to a question (unless the cause
+    # is one the twin cannot express at all, in which case the gate ends
+    # the session at once with the attempt). Then the deterministic
+    # guards (escalate-to-question mapping, turn-bound unavailable
+    # ending), then the no-repeat rewrite for questions that re-ask an
+    # already-checked cause. The turn-bound ending and the
+    # cannot-express ending are never rewritten: they are the ending,
+    # not a question to vary.
+    result = _apply_conclusion_gate(db, session, state, result)
+    result = _apply_forced_safeguards(state, result)
+    if not result.get("turn_bound_reached") and not result.get("cannot_express_ending"):
+        result = _apply_no_repeat_gate(state, result)
+    state.current_step = NextStep.model_validate(result["next_step"])
     state.turns_taken += 1
+
+    ending_reason = None
+    ending_step = None
+    if result.get("turn_bound_reached"):
+        ending_reason = "Turn limit reached without a twin-validated conclusion"
+        ending_step = ("Diagnosis ended without a twin-validated conclusion: ranked best "
+                       "guesses and what is missing were given instead.")
+    elif result.get("cannot_express_ending"):
+        ending_reason = (result.get("cannot_express_reason")
+                         or "The twin cannot express the concluded cause")
+        ending_step = ("Diagnosis ended: the twin cannot express the concluded cause; "
+                       "ranked best guesses and what is missing were given instead.")
+    if ending_reason:
+        state.timeline.append({
+            "turn": state.turns_taken,
+            "kind": "diagnosis_unavailable",
+            "input": latest_input,
+            "available": False,
+            "verdict": None,
+            "reason": ending_reason,
+            "step_type": "diagnosis_unavailable",
+            "step": ending_step,
+        })
 
     # A compact audit trail for the technician-facing timeline. This is
     # deliberately event-level, not chain-of-thought.
@@ -628,9 +1090,10 @@ def run_turn(
     session.state = state.model_dump(mode="json")
     if state.current_step.type == NextStepType.conclusion:
         session.status = DiagnosticStatus.concluded
-    elif state.current_step.type == NextStepType.escalate:
-        session.status = DiagnosticStatus.escalated
     else:
+        # No escalated transition any more (fix-3): the loop never sets
+        # DiagnosticStatus.escalated. The value survives only for sessions
+        # escalated before fix-3.
         session.status = DiagnosticStatus.active
 
     db.add(session)
