@@ -45,12 +45,15 @@ class NextStepType(str, Enum):
     question = "question"          # ask the technician a diagnostic question
     action = "action"               # ask the technician to perform a measurement/test
     conclusion = "conclusion"       # grounded recommendation, evidence-backed
-    escalate = "escalate"           # confidence too low / safety constraint — hand off to a human expert
+    escalate = "escalate"           # LEGACY only: stored sessions may still carry it (fix-3 removed
+                                    # escalation from the loop — it is never emitted, and a model
+                                    # returning it is degraded to a question). Kept so stored
+                                    # states still validate.
 
 
 class NextStep(BaseModel):
     type: NextStepType
-    content: str                                  # the question / action / recommendation / escalation message
+    content: str                                  # the question / action / recommendation
     rationale: str | None = None                   # why this is the most informative next step
     safety_notes: list[str] = Field(default_factory=list)
     evidence_chunk_ids: list[str] = Field(default_factory=list)

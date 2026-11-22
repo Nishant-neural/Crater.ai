@@ -18,11 +18,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import logging
 import re
 
 import pymupdf as fitz
 import pdfplumber
 from backend.ingestion.source_router import SourceType, classify_source_type
+
+logger = logging.getLogger(__name__)
 
 MIN_IMAGE_SIDE_PX = 200
 MIN_IMAGE_PIXELS = 60_000
@@ -155,6 +158,41 @@ def extract_tables_per_page(pdf_path: str | Path) -> dict[int, list[list[list[st
     return tables_by_page
 
 
+def _is_gray_or_rgb_colorspace(colorspace) -> bool:
+    """True when a pixmap colorspace is one fz_save_pixmap_as_png accepts."""
+    if colorspace is None:
+        return False
+    name = colorspace.name or ""
+    if name in ("DeviceGray", "DeviceRGB"):
+        return True
+    # ICC-based profiles whose base space is gray or RGB are also PNG-safe;
+    # ICCBased(CMYK, ...) is not and must be converted below.
+    return name.startswith("ICCBased(Gray") or name.startswith("ICCBased(RGB")
+
+
+def _to_saveable_pixmap(pix):
+    """Return a pixmap that pix.save() can write as PNG."""
+    colorspace = pix.colorspace
+    if colorspace is None:
+        # Stencil mask (no colorspace): MuPDF writes it as PNG as-is, while
+        # converting it raises ("source colorspace must not be None"), so
+        # leave it alone. (Miller manual: 8 of its 9 images are masks like
+        # this and extract fine unconverted.) Its single channel is the
+        # alpha channel, so there is no alpha to drop either.
+        return pix
+    if not _is_gray_or_rgb_colorspace(colorspace):
+        # CMYK, ICCBased(CMYK), Separation (spot colour), Lab, ... : the old
+        # guard only converted when n - alpha >= 4, which missed e.g. the
+        # Lincoln Separation(DeviceCMYK,Black) image (n=1). Convert on the
+        # colorspace, not the channel count, using PyMuPDF's own conversion.
+        pix = fitz.Pixmap(fitz.csRGB, pix)
+    if pix.alpha:
+        # Drop the alpha channel (Pixmap(pix, 0)); PNG output stays
+        # uniformly alpha-free, as every previously extracted image was.
+        pix = fitz.Pixmap(pix, 0)
+    return pix
+
+
 def extract_images_per_page(pdf_path: str | Path, out_dir: str | Path) -> dict[int, list[str]]:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -177,12 +215,16 @@ def extract_images_per_page(pdf_path: str | Path, out_dir: str | Path) -> dict[i
                 if xref in xref_to_path:
                     paths.append(xref_to_path[xref])
                     continue
-                img_index += 1
-                pix = fitz.Pixmap(doc, xref)
-                if pix.n - pix.alpha >= 4:
-                    pix = fitz.Pixmap(fitz.csRGB, pix)
-                out_path = out_dir / f"p{page_number:04d}_img{img_index}.png"
-                pix.save(out_path)
+                try:
+                    pix = _to_saveable_pixmap(fitz.Pixmap(doc, xref))
+                    img_index += 1
+                    out_path = out_dir / f"p{page_number:04d}_img{img_index}.png"
+                    pix.save(out_path)
+                except Exception as exc:
+                    # One unconvertible image must never kill an ingestion:
+                    # skip it, name the page/xref, and keep going.
+                    logger.warning("Skipping unconvertible image on page %s xref %s: %s", page_number, xref, exc)
+                    continue
                 xref_to_path[xref] = str(out_path)
                 paths.append(str(out_path))
             if paths:
