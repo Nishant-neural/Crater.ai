@@ -24,7 +24,16 @@ class ModelGateway:
     def route(self, task: str) -> ModelRoute:
         cfg = settings.model_routes.get(task, {}) if isinstance(settings.model_routes, dict) else {}
         provider = str(cfg.get("provider") or settings.llm_provider).lower()
-        model = str(cfg.get("model") or settings.llm_model or (settings.gemini_model if provider == "gemini" else settings.anthropic_model))
+        # Last-resort model default is per-provider: without this an
+        # openrouter route with no model configured silently asked for a
+        # Claude model id and got a 404 (fix5).
+        if provider == "gemini":
+            default_model = settings.gemini_model
+        elif provider == "openrouter":
+            default_model = settings.openrouter_model
+        else:
+            default_model = settings.anthropic_model
+        model = str(cfg.get("model") or settings.llm_model or default_model)
         max_tokens = int(cfg.get("max_tokens") or settings.task_max_tokens.get(task, 2000))
         return ModelRoute(task, provider, model, max_tokens)
 

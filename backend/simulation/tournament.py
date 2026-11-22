@@ -10,6 +10,17 @@ for the technician, not a state change.
 No new LLM calls: every row is a deterministic twin run on an isolated
 copy, reusing the single-cause verify-repair machinery exactly. No
 extraction, compiler, engine or integration change.
+
+Each row also carries ``cannot_express`` (bool): True only when the twin
+cannot express the cause at all -- either no component matches it, or
+the reviewed RepairAction for it references components this twin does
+not have, or (fix-3 extension) the cause matched exactly one component
+but no simulation rule describes a fault in it. That is the signal the
+verify-before-conclusion gate keys its "twin cannot express this cause"
+path on. It is NOT the same as status "unavailable", which also covers
+ambiguity, a missing RepairAction, and experiments the twin ran but
+could not complete -- those rows carry ``cannot_express`` False, and
+the verdict logic for them is unchanged.
 """
 from __future__ import annotations
 
@@ -54,6 +65,16 @@ def tournament_status(row: dict[str, Any]) -> str:
     if row.get("verdict") == "rejected":
         return "rejected"
     return "unavailable"
+
+
+def row_cannot_express(row: dict[str, Any]) -> bool:
+    """True only when the tournament row marks a cause no component in
+    this twin can carry (see the module docstring). False for every
+    other row, including evaluated-but-unavailable ones: a cause the
+    twin evaluated and rejected, or one whose experiment ran but could
+    not complete, is a different outcome from a cause it cannot express.
+    """
+    return bool(row.get("cannot_express"))
 
 
 def rank_tournament_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -116,6 +137,8 @@ def verify_single_cause(
                     "reason": f"The cause {cause!r} has a reviewed fault_injection "
                               f"({ref}) but no reviewed RepairAction yet; the twin can "
                               "express the fault but not the repair",
+                    # The reason says it: the twin CAN express this fault.
+                    "cannot_express": False,
                     "cause": cause, "repair_name": repair_name,
                     "fault_component_id": f2b.behaviour_owner_id,
                     "fault_component_name": f2b.behaviour_owner_instance,
@@ -133,9 +156,19 @@ def verify_single_cause(
                      "refs": [ref_item.model_dump(mode="json")
                               for ref_item in action.procedure_refs]}
         rules_used = list(outcome.fault_rules) + list(outcome.recovery_rules)
+        # Cannot-express, registry shape: the reviewed fault/repair
+        # references components this twin does not have, so the action
+        # does not resolve here ("The RepairAction does not resolve in
+        # this twin: ..." in backend/simulation/verification.py,
+        # run_verified_repair_action). Every later gate failure means
+        # the experiment ran -- the twin expressed the fault -- so those
+        # stay cannot_express False.
+        cannot_express = (not outcome.available
+                          and "does not resolve in this twin" in (outcome.reason or ""))
         return {
             "available": outcome.available,
             "verdict": outcome.verdict, "reason": outcome.reason,
+            "cannot_express": cannot_express,
             "cause": cause, "repair_name": repair_name,
             "fault_component_id": f2b.behaviour_owner_id,
             "fault_component_name": f2b.behaviour_owner_instance,
@@ -174,12 +207,20 @@ def verify_single_cause(
             return {"available": False, "verdict": None,
                     "reason": f"Could not match the cause {cause!r} to a component in this twin; "
                               "the twin cannot express this failure",
+                    # No entity_ids hit and no component name matches:
+                    # no component in this twin can carry this cause
+                    # (the adjustment-type trap: e.g. "Insufficient wire
+                    # feed pressure" carries no entity_ids at all).
+                    "cannot_express": True,
                     "cause": cause, "repair_name": repair_name,
                     "fault_component_id": None}
         else:
             return {"available": False, "verdict": None,
                     "reason": f"The cause {cause!r} matches {len(matches)} twin components "
                               f"({', '.join(c.name for c in matches[:5])}); ambiguous, so no guess was made",
+                    # Components exist for this cause; only the resolution
+                    # is ambiguous, so the twin is not unable to express it.
+                    "cannot_express": False,
                     "cause": cause, "repair_name": repair_name,
                     "fault_component_id": None}
 
@@ -203,9 +244,25 @@ def verify_single_cause(
 
     rules_used = list(outcome.fault_rules) + list(outcome.recovery_rules)
     result = outcome.result
+    # Cannot-express, matched-component-no-fault-rule shape (fix-3
+    # extension): the cause resolved to exactly one twin component, but
+    # no simulation rule describes a fault in it ("No simulation rule in
+    # this twin describes a fault in <component>" in
+    # backend/simulation/verification.py, build_verification_experiment),
+    # so the tournament can never VALIDATE a conclusion about a fault in
+    # it -- the same deadlock one layer down from the no-match shape.
+    # Every other unavailable reason here means the twin expressed the
+    # fault but could not complete the experiment, so those stay False.
+    # (String-keyed the same way as the registry shape above.)
+    cannot_express = (
+        not outcome.available
+        and (outcome.reason or "").startswith(
+            f"No simulation rule in this twin describes a fault in {fault_component_id}")
+    )
     return {
         "available": outcome.available,
         "verdict": outcome.verdict, "reason": outcome.reason,
+        "cannot_express": cannot_express,
         "cause": cause, "repair_name": repair_name,
         "fault_component_id": fault_component_id,
         "fault_component_name": fault_component_name,
@@ -245,6 +302,9 @@ def run_tournament(
             definition, twin_state, snapshot_model, state,
             hypothesis.cause, repair_name or hypothesis.cause)
         row["status"] = tournament_status(row)
+        # Every row carries the signal, so callers never have to infer
+        # it from the absence of a key: evaluated rows read False.
+        row["cannot_express"] = row_cannot_express(row)
         rows.append(row)
     ranked = rank_tournament_rows(rows)
     counts = {"validated": 0, "rejected": 0, "unavailable": 0}
