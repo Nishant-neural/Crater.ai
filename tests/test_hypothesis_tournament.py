@@ -292,11 +292,45 @@ def test_single_cause_result_keeps_the_v9_response_keys():
     row = verify_single_cause(definition, _initial_state(definition), _SNAPSHOT_MODEL,
                               state, TENSIONER_CAUSE, "Adjust the Feed Tensioner")
     assert _V9_SINGLE_CAUSE_KEYS <= set(row.keys())
-    # The unavailable no-match dict keeps the exact v9 small shape.
+    # The unavailable no-match dict keeps the exact v9 small shape,
+    # plus the cannot-express signal (fix-3 addition): a cause with no
+    # matching component is the canonical "twin cannot express this
+    # cause" row, so it carries ``cannot_express`` True.
     ghost = verify_single_cause(definition, _initial_state(definition), _SNAPSHOT_MODEL,
                                 state, GHOST_CAUSE, "Replace the control board")
     assert set(ghost.keys()) == {"available", "verdict", "reason", "cause",
-                                 "repair_name", "fault_component_id"}
+                                 "repair_name", "fault_component_id", "cannot_express"}
+    assert ghost["cannot_express"] is True
+
+
+def test_matched_component_with_no_fault_rule_carries_cannot_express():
+    # Fix-3 extension, third cannot-express shape: the motor cause
+    # resolves to exactly one twin component (Wire Feed Motor), but no
+    # simulation rule describes a fault in it, so the row is status
+    # "unavailable" with ``cannot_express`` True and a reason naming
+    # the component and the missing rule. The boundary: the ambiguous
+    # cause matches two components, so the twin could express it once
+    # resolved -- its row stays ``cannot_express`` False.
+    definition = _tournament_definition()
+    state = _state([MOTOR_CAUSE])
+    motor = verify_single_cause(definition, _initial_state(definition), _SNAPSHOT_MODEL,
+                                state, MOTOR_CAUSE, "Replace the wire feed motor")
+    assert motor["available"] is False
+    assert motor["verdict"] is None
+    assert motor["fault_component_id"] == "entity:wire-feed-motor"
+    assert motor["reason"] == (
+        "No simulation rule in this twin describes a fault in "
+        "entity:wire-feed-motor; the model cannot express this failure.")
+    assert motor["cannot_express"] is True
+
+    ranked, _counts = run_tournament(
+        definition, _initial_state(definition), _SNAPSHOT_MODEL,
+        _state([MOTOR_CAUSE, AMBIGUOUS_CAUSE]), "Replace the wire feed motor")
+    by_cause = {r["cause"]: r for r in ranked}
+    assert by_cause[MOTOR_CAUSE]["status"] == "unavailable"
+    assert by_cause[MOTOR_CAUSE]["cannot_express"] is True
+    assert by_cause[AMBIGUOUS_CAUSE]["status"] == "unavailable"
+    assert by_cause[AMBIGUOUS_CAUSE]["cannot_express"] is False
 
 
 def test_tournament_rows_carry_rule_evidence_with_manual_source_ids():

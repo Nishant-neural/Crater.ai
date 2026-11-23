@@ -276,10 +276,15 @@ def test_provider_exception_degrades_to_question(monkeypatch):
     assert result["hypotheses"][0]["cause"] == "Insufficient wire feed pressure"
 
 
-def test_no_provider_still_escalates_honestly(monkeypatch):
+def test_no_provider_returns_question_not_escalation(monkeypatch):
+    """Fix-3: the no-provider case used to return an escalate step.
+    Escalation is removed from the loop — it now returns a question step
+    (hypotheses intact) that says plainly no provider is configured."""
     _fake_gateway(monkeypatch, [(None, False)])
     result = diag_agent._run_llm_turn(_state_with_hypothesis(), _evidence(), "knowledge")
-    assert result["next_step"]["type"] == "escalate"
+    assert result["next_step"]["type"] == "question"
+    assert "provider" in result["next_step"]["rationale"].lower()
+    assert [h["cause"] for h in result["hypotheses"]] == ["Insufficient wire feed pressure"]
 
 
 def test_wrong_shape_is_normalized_not_crashed(monkeypatch):

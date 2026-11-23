@@ -79,10 +79,12 @@ def _exhausted_session(db, product, revision):
         current_step={"type": "question",
                       "content": "What do you observe?",
                       "rationale": "agent question"},
-        # 0.5, not 0.0: the v12 forced-escalation guard escalates a session
-        # whose confidence stays below 0.35 after 5 turns, and the degraded
-        # (stubbed-LLM) turns in these tests keep the confidence they are
-        # given. The walk loop needs 6 turns; 0.5 keeps it out of the guard.
+        # 0.5: the walk loop needs 6 turns and the degraded (stubbed-LLM)
+        # turns in these tests keep the confidence they are given.
+        # (Pre-fix-3 this also kept the session out of the
+        # forced-escalation guard for low confidence; that guard was
+        # removed in fix-3, so the 0.5 is now just the walk's working
+        # confidence, not a guard dodge.)
         confidence=0.5, turns_taken=1)
     session = DiagnosticSession(product_id=product.id, revision_id=revision.id,
                                 status=DiagnosticStatus.active,
