@@ -12,9 +12,10 @@ Guards:
    twin ran, and per-row evidence with manual source ids.
 5. Single-cause verify is unchanged by the refactor: the per-cause
    result carries every key the v9 verify-repair response carried.
-6. The HTTP endpoints: POST /diagnose/{id}/verify-hypotheses returns the
-   ranked leaderboard with exactly one timeline entry, and POST
-   /diagnose/{id}/verify-repair still returns the v9 response shape.
+6. The HTTP endpoints are removed in the Phase 3 extraction (§2.5):
+   POST /diagnose/{id}/verify-hypotheses and POST
+   /diagnose/{id}/verify-repair both 404 — the tournament runs inside
+   POST /respond instead.
 """
 import sys
 import types
@@ -383,54 +384,34 @@ def _endpoint_client():
     return TestClient(app), db
 
 
-def test_verify_hypotheses_endpoint_returns_ranked_leaderboard():
+def test_verify_hypotheses_endpoint_is_removed():
+    """Phase 3 extraction: POST /diagnose/{id}/verify-hypotheses is
+    removed (§2.5) — the tournament runs inside POST /respond. The
+    ranking itself is covered by the pure-function tests above."""
     client, db = _endpoint_client()
     res = client.post("/diagnose/session-tournament/verify-hypotheses")
-    assert res.status_code == 200, res.text
-    body = res.json()
-    assert body["available"] is True
-    assert body["unavailable_label"] == UNAVAILABLE_LABEL
-    assert [r["cause"] for r in body["results"]] == [
-        TENSIONER_CAUSE, WINGNUT_CAUSE, MOTOR_CAUSE]
-    assert [r["status"] for r in body["results"]] == [
-        "validated", "validated", "unavailable"]
-    assert body["counts"] == {"validated": 2, "rejected": 0, "unavailable": 1}
-    # Exactly one timeline entry for the tournament run, and the session's
-    # hypotheses are unchanged by it.
-    stored = db.get(DiagnosticSession, "session-tournament")
-    stored_state = DiagnosticState.model_validate(stored.state)
-    assert [t["kind"] for t in stored_state.timeline] == ["verify_hypotheses"]
-    assert [h.cause for h in stored_state.hypotheses] == [
-        MOTOR_CAUSE, TENSIONER_CAUSE, WINGNUT_CAUSE]
-    assert stored_state.eliminated_hypotheses == []
+    assert res.status_code == 404, res.text
 
 
-def test_verify_repair_endpoint_unchanged_after_refactor():
+def test_verify_repair_endpoint_is_removed():
+    """Phase 3 extraction: POST /diagnose/{id}/verify-repair is
+    removed (§2.5) — verification runs inside POST /respond via the
+    early tournament. The single-cause verify itself is covered by
+    the pure-function tests above."""
     client, db = _endpoint_client()
     res = client.post("/diagnose/session-tournament/verify-repair",
                       json={"cause": TENSIONER_CAUSE,
                             "repair_name": "Adjust the Feed Tensioner"})
-    assert res.status_code == 200, res.text
-    body = res.json()
-    assert body["available"] is True
-    assert body["verdict"] == "validated"
-    assert _V9_SINGLE_CAUSE_KEYS <= set(body.keys())
-    assert body["baseline_state"]["components"]["entity:welding-wire"]["feeding"] is True
-    assert body["fault_state"]["components"]["entity:welding-wire"]["feeding"] is False
-    assert body["final_state"]["components"]["entity:welding-wire"]["feeding"] is True
-    assert [r["id"] for r in body["rules_used"]] == [
-        "seed:feed-tension-too-tight", "seed:feed-tension-ok-restores-feed"]
-    stored = db.get(DiagnosticSession, "session-tournament")
-    stored_state = DiagnosticState.model_validate(stored.state)
-    assert [t["kind"] for t in stored_state.timeline] == ["verify_repair"]
-    assert stored_state.timeline[0]["step"] == "Repair verification: validated"
+    assert res.status_code == 404, res.text
 
 
 def test_verify_hypotheses_endpoint_errors():
+    """Phase 3 extraction: both removed endpoints 404 — including for
+    a missing session and a session with no hypotheses, which used to
+    get 404/409 respectively."""
     client, _db = _endpoint_client()
     res = client.post("/diagnose/no-such-session/verify-hypotheses")
     assert res.status_code == 404
-    # A session with no hypotheses gets a 409, like verify-repair.
     empty = DiagnosticState(symptoms=["x"])
     db = _db
     session = DiagnosticSession(
@@ -439,4 +420,4 @@ def test_verify_hypotheses_endpoint_errors():
     db.add(session)
     db.commit()
     res = client.post("/diagnose/session-empty/verify-hypotheses")
-    assert res.status_code == 409
+    assert res.status_code == 404

@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from backend.db.models import DigitalTwin, DigitalTwinEvent
 from backend.db.session import get_session
 from backend.simulation.schema import TwinCreate, TwinCommand, TwinView
-from backend.simulation.service import create_twin, create_demo_twin, execute, snapshot
+from backend.simulation.service import create_twin, execute, snapshot
 
 router = APIRouter(prefix="/digital-twins", tags=["digital twin"])
 
@@ -24,14 +24,6 @@ def _view(twin: DigitalTwin) -> TwinView:
 def create(payload: TwinCreate, db: Session = Depends(get_session)):
     try:
         return _view(create_twin(db, **payload.model_dump()))
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-
-@router.post("/demo/{product_id}/{revision_id}", response_model=TwinView)
-def demo(product_id: str, revision_id: str, db: Session = Depends(get_session)):
-    try:
-        return _view(create_demo_twin(db, product_id, revision_id))
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 

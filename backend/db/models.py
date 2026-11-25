@@ -168,6 +168,58 @@ class IngestionJob(Base):
     __table_args__ = (UniqueConstraint("revision_id", "idempotency_key", name="uq_ingestion_job_key"),)
 
 
+class IngestionJobProgress(Base):
+    """Postgres progress for one ingestion job (contracts README §3.2).
+
+    Replaces the filesystem checkpoint files (``backend/ingestion/
+    checkpoints.py`` used to write ``data/ingestion_checkpoints/
+    <job_id>.json``): progress is data in Postgres, so a job survives
+    a container restart and a second worker sees the same state.
+    ``job_id`` is a plain indexed key, not a foreign key — the worker
+    writes progress with its own session and must never fail a job
+    on FK ordering. ``progress`` is the checkpoint dict itself
+    (completed pages/chunks, knowledge failures, tier2 deferral,
+    integration flag), so the pipeline's resume logic is unchanged.
+    """
+
+    __tablename__ = "ingestion_job_progress"
+
+    job_id: Mapped[str] = mapped_column(String, primary_key=True)
+    progress: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class VerifyJob(Base):
+    """Durable verify-job state for POST /v1/verify (contracts README §5.2).
+
+    Replaces the monolith's in-memory ``_JOBS`` dict in
+    ``backend/api/routes/verify.py``: a job survives a restart because
+    its row is in Postgres, and the worker runs the tournament on an
+    isolated copy of the twin. ``status`` is ``queued | running |
+    succeeded | failed``; a job whose twin was unavailable still
+    SUCCEEDS, with every result NOT_VERIFIED and a reason — ``failed``
+    is reserved for the job itself erroring. ``request`` is the
+    ``VerifyRequest`` payload as received (used for the idempotency
+    comparison: same key + different payload -> 409); ``result`` is
+    the ``{job_id, status, twin_id, results, counts}`` job document.
+    """
+
+    __tablename__ = "verify_jobs"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    twin_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    revision_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    session_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String, default="queued")
+    request: Mapped[dict] = mapped_column(JSON, default=dict)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    counts: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class Chunk(Base):
     """
     An atomic retrievable unit produced by ingestion: a text passage, a

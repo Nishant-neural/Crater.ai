@@ -1,11 +1,55 @@
-// Thin fetch wrapper around the FastAPI backend.
-export const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+// Thin fetch wrapper around the gateway (contracts README §6: the
+// frontend talks ONLY to the gateway, all calls under /v1/).
+// Base URL is injected at RUNTIME, not baked in at build time
+// (frontend audit Step 5): /config.js, served with the static files,
+// may set window.__CRATER_CONFIG__.apiBase. Precedence: runtime
+// config > VITE_API_BASE (local-dev override) > http://localhost:8000/v1.
+// A runtime apiBase of "" means "unset" — it never overrides the env
+// fallback. In the container stack, compose mounts
+// docker/frontend/config.js over public/config.js with apiBase "/v1"
+// (same origin via Traefik/the gateway), so no rebuild per environment.
+function resolveApiBase() {
+  const runtime = globalThis.window?.__CRATER_CONFIG__?.apiBase;
+  if (typeof runtime === "string" && runtime.trim()) return runtime.replace(/\/$/, "");
+  const env = import.meta.env.VITE_API_BASE;
+  if (typeof env === "string" && env.trim()) return env.replace(/\/$/, "");
+  return "http://localhost:8000/v1";
+}
+export const API_BASE = resolveApiBase();
+
+// Contracts §1.2: explicit timeouts on every call (frontend audit
+// Step 2). A call that times out surfaces as a retryable error, not
+// a hang. Every request carries an X-Request-ID (generated per call;
+// the gateway echoes it in the error envelope).
+const REQUEST_TIMEOUT_MS = 10_000;
+
+function newRequestId() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  return `fe-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+async function fetchWithTimeout(path, init = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(`${API_BASE}${path}`, {
+      ...init,
+      signal: controller.signal,
+      headers: { "X-Request-ID": newRequestId(), ...(init.headers || {}) },
+    });
+  } catch (err) {
+    if (err?.name === "AbortError") throw new Error(`${path} -> timed out after ${REQUEST_TIMEOUT_MS}ms`);
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export async function getJson(path) {
-  const res = await fetch(`${API_BASE}${path}`);
+  const res = await fetchWithTimeout(path);
   if (!res.ok) {
     if (res.status === 404) return null;
-    throw new Error(`${path} -> ${res.status}`);
+    throw new Error(await errorText(res, path));
   }
   return res.json();
 }
@@ -16,21 +60,6 @@ export function diagramImageUrl(chunkId) { return `${API_BASE}/visualization/dia
 export function getProcedureVisualization(procedureId) { return getJson(`/visualization/procedures/${procedureId}`); }
 export function procedureFrameUrl(procedureId, frameIndex) { return `${API_BASE}/visualization/procedures/${procedureId}/frames/${frameIndex}`; }
 
-export async function createExpert(payload) { return postJson("/expert/experts", payload, "create expert"); }
-export async function listExperts() { return getJson("/expert/experts"); }
-export async function createExpertInterview(payload) { return postJson("/expert/interviews", payload, "create interview"); }
-export async function addExpertTurn(interviewId, payload) { return postJson(`/expert/interviews/${interviewId}/turns`, payload, "add turn"); }
-export async function completeExpertInterview(interviewId) { return postRequest(`/expert/interviews/${interviewId}/complete`, "complete interview"); }
-export async function extractExpertKnowledge(interviewId) { return postRequest(`/expert/interviews/${interviewId}/extract`, "extract knowledge"); }
-export async function reviewExpertKnowledge(versionId, payload) { return postJson(`/expert/knowledge/${versionId}/review`, payload, "review knowledge"); }
-export async function generateExpertGraph(versionId) { return postRequest(`/expert/knowledge/${versionId}/graph`, "generate graph"); }
-
-export async function createDigitalTwin(payload) { return postJson("/digital-twins", payload, "create digital twin"); }
-export async function createDemoDigitalTwin(productId, revisionId) { return postRequest(`/digital-twins/demo/${productId}/${revisionId}`, "create demo twin"); }
-export async function listDigitalTwins() { return getJson("/digital-twins"); }
-export async function getDigitalTwin(twinId) { return getJson(`/digital-twins/${twinId}`); }
-export async function runDigitalTwinCommand(twinId, payload) { return postJson(`/digital-twins/${twinId}/commands`, payload, "digital twin command"); }
-export async function getDigitalTwinEvents(twinId) { return getJson(`/digital-twins/${twinId}/events`); }
 
 export async function runSimulationExperiment(twinId, payload) { return postJson(`/simulation/twins/${twinId}/experiment`, payload, "simulation experiment"); }
 export async function runSimulationHypotheses(twinId, payload) { return postJson(`/simulation/twins/${twinId}/hypotheses`, payload, "simulation hypotheses"); }
@@ -39,6 +68,12 @@ export async function approveTwin(twinId) { return postRequest(`/simulation/twin
 export async function getRevisionSimulation(revisionId) { return getJson(`/simulation/revisions/${revisionId}/twin`); }
 export async function getSimulationContext(twinId) { return getJson(`/simulation/twins/${twinId}/context`); }
 export async function getTwinVisual(twinId) { return getJson(`/simulation/twins/${twinId}/visual`); }
+
+// NOTE (Phase 3 frontend step): the legacy /digital-twins client calls
+// (create/list/get/command) are deleted with the CUT demo panel
+// (frontend audit, Category 2). VisualTwin + TwinWorkspace remain
+// the twin surfaces and reach the twin only through the /simulation/*
+// calls above, via the gateway.
 
 export async function startDiagnostic(payload) { return postJson("/diagnose/start", payload, "start diagnostic"); }
 export async function getDiagnostic(sessionId) { return getJson(`/diagnose/${sessionId}`); }
@@ -54,13 +89,17 @@ export async function listDiagnostics(productId, revisionId) {
 export async function getDiagnosticContext(sessionId) { return getJson(`/diagnose/${sessionId}/context`); }
 export async function respondDiagnostic(sessionId, payload) { return postJson(`/diagnose/${sessionId}/respond`, payload, "diagnostic response"); }
 export async function recordDiagnosticOutcome(sessionId, payload) { return postJson(`/diagnose/${sessionId}/outcome`, payload, "record repair outcome"); }
-export async function verifyRepair(sessionId, payload) { return postJson(`/diagnose/${sessionId}/verify-repair`, payload, "verify repair in twin"); }
-export async function verifyHypotheses(sessionId) { return postRequest(`/diagnose/${sessionId}/verify-hypotheses`, "verify hypotheses in twin"); }
-export async function getMostInformativeTest(sessionId) { return getJson(`/diagnose/${sessionId}/next-test`); }
-export async function getGuidedPhysicalChecks(sessionId) { return getJson(`/diagnose/${sessionId}/guided-checks`); }
+
+// NOTE (Phase 3 frontend step): the section-2.5 client functions are
+// deleted with the backend endpoints (contracts section 2.5;
+// diagnosis notes section 3). The tournament and the upstream walk
+// run inside POST /diagnose/{id}/respond and their results arrive on
+// the session timeline (early_tournament entries); the discriminating
+// test arrives the same way. DiagnosticWorkspace reads them from the
+// session state — no separate call exists, and none is invented here.
 
 export async function postJson(path, payload, label = path) {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetchWithTimeout(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -70,7 +109,7 @@ export async function postJson(path, payload, label = path) {
 }
 
 async function postRequest(path, label = path) {
-  const res = await fetch(`${API_BASE}${path}`, { method: "POST" });
+  const res = await fetchWithTimeout(path, { method: "POST" });
   if (!res.ok) throw new Error(await errorText(res, label));
   return res.json();
 }
@@ -91,6 +130,7 @@ export function uploadManual({ revisionId, file, title, idempotencyKey, onUpload
     form.append("file", file);
 
     xhr.open("POST", `${API_BASE}/ingest`);
+    xhr.setRequestHeader("X-Request-ID", newRequestId());
     xhr.responseType = "json";
 
     xhr.upload.onprogress = (event) => {
@@ -127,13 +167,13 @@ export async function getRevisionIngestionStatus(revisionId) {
 }
 
 export async function retryIngestionJob(jobId) {
-  const res = await fetch(`${API_BASE}/ingest/jobs/${jobId}/retry`, { method: "POST" });
+  const res = await fetchWithTimeout(`/ingest/jobs/${jobId}/retry`, { method: "POST" });
   if (!res.ok) throw new Error(await errorText(res, "retry ingestion"));
   return res.json();
 }
 
 export async function integrateKnowledge(revisionId) {
-  const res = await fetch(`${API_BASE}/knowledge/revisions/${revisionId}/integrate`, { method: "POST" });
+  const res = await fetchWithTimeout(`/knowledge/revisions/${revisionId}/integrate`, { method: "POST" });
   if (!res.ok) throw new Error(await errorText(res, "knowledge integration"));
   return res.json();
 }
@@ -143,7 +183,11 @@ export async function getKnowledgeModel(revisionId) { return getJson(`/knowledge
 async function errorText(res, fallback) {
   try {
     const body = await res.json();
-    return `${fallback}: ${body.detail || res.status}`;
+    // The §1.3 error envelope carries the plain-sentence message;
+    // older handlers carry `detail`. Show the message, never a bare
+    // status code.
+    const message = body?.error?.message || body?.detail || res.status;
+    return `${fallback}: ${message}`;
   } catch {
     return `${fallback}: ${res.status}`;
   }

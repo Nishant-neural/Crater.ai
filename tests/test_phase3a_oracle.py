@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from backend.simulation.oracle import (
+from benchmark.oracle import (
     OracleRow,
     build_oracle_set,
     expand_cause_rows,
@@ -485,8 +485,9 @@ def test_harness_is_deterministic():
 
 def test_harness_makes_no_llm_calls():
     """The harness path imports no LLM client and opens no network:
-    its source references no provider SDK."""
-    source = (TREE / "backend" / "simulation" / "oracle.py").read_text(encoding="utf-8")
+    its source references no provider SDK. (Phase 3 twin split: the
+    oracle lives in harness-scorer now, at benchmark/oracle.py.)"""
+    source = (TREE / "benchmark" / "oracle.py").read_text(encoding="utf-8")
     for banned in ("anthropic", "google_genai", "google.genai", "openai",
                    "requests.", "httpx", "urllib"):
         assert banned not in source, banned

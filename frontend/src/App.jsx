@@ -22,7 +22,6 @@ export default function App() {
   const [revisionId, setRevisionId] = useState("");
   const [twinSubView, setTwinSubView] = useState("overview");
   const [simulationContext, setSimulationContext] = useState(null);
-  const [visualContext, setVisualContext] = useState(null);
   const [compileRequest, setCompileRequest] = useState(0);
   const [machines, setMachines] = useState([]);
   const [revisions, setRevisions] = useState([]);
@@ -40,28 +39,24 @@ export default function App() {
       .catch(() => setTwinStatus(null));
   }, [revisionId]);
 
-  // Deep links from the diagnostic workspace: verification and tournament
-  // playback route into the Twin workspace instead of a separate tab.
-  useEffect(() => {
-    const handler = (event) => {
-      setSimulationContext(event.detail || null);
-      if (event.detail?.revisionId) setRevisionId(event.detail.revisionId);
-      setTwinSubView("simulate");
-      setView(VIEWS.TWIN);
-    };
-    window.addEventListener("crater-open-simulation", handler);
-    return () => window.removeEventListener("crater-open-simulation", handler);
-  }, []);
-  useEffect(() => {
-    const openVisual = (event) => {
-      setVisualContext(event.detail || null);
-      if (event.detail?.revisionId) setRevisionId(event.detail.revisionId);
-      setTwinSubView("visual");
-      setView(VIEWS.TWIN);
-    };
-    window.addEventListener("crater-open-visual-twin", openVisual);
-    return () => window.removeEventListener("crater-open-visual-twin", openVisual);
-  }, []);
+  // Deep link from the diagnostic workspace into the Twin workspace,
+  // as a direct callback prop (audit Step 4: no CustomEvent bus).
+  // The visual-twin deep link is gone with the bus: the timeline
+  // tournament rows carry no playback state to open it with.
+  function openSimulationFor(detail) {
+    setSimulationContext(detail || null);
+    if (detail?.revisionId) setRevisionId(detail.revisionId);
+    setTwinSubView("simulate");
+    setView(VIEWS.TWIN);
+  }
+  // Audit Step 4: the machine/revision lists are owned by the shell
+  // and passed down to the views, not fetched once per view.
+  async function refreshMachines() {
+    try { setMachines((await listMachines()) || []); } catch { /* keep the last good list */ }
+    if (productId) {
+      try { setRevisions((await listRevisions(productId)) || []); } catch { /* keep the last good list */ }
+    }
+  }
 
   const selectedProduct = machines.find((m) => m.id === productId) || null;
   const selectedRevision = revisions.find((r) => r.id === revisionId) || null;
@@ -135,6 +130,10 @@ export default function App() {
           {view === VIEWS.DIAGNOSTIC && <DiagnosticWorkspace
             initialProductId={productId}
             initialRevisionId={revisionId}
+            machines={machines}
+            revisions={revisions}
+            onRefreshMachines={refreshMachines}
+            onOpenSimulation={openSimulationFor}
             onMachineReady={({ productId: pid, revisionId: rid }) => { selectMachine({ productId: pid, revisionId: rid }); setView(VIEWS.MACHINES); }}
           />}
           {view === VIEWS.MODEL && <MachineModelViewer productId={productId} revisionId={revisionId} onSelectMachine={selectMachine} />}
@@ -146,7 +145,6 @@ export default function App() {
             subView={twinSubView}
             onSubViewChange={setTwinSubView}
             diagnosticContext={simulationContext}
-            visualContext={visualContext}
             autoCompileRequest={compileRequest}
             onAutoCompileDone={() => setCompileRequest(0)}
           />}

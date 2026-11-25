@@ -45,16 +45,39 @@ FIELD_OUTCOME_MAP = {"fixed": "SUCCESSFUL", "not_fixed": "FAILED"}
 _HISTORY_OUTCOMES_CAP = 50
 
 
-def last_twin_verdict(state: dict[str, Any] | None) -> str | None:
-    """The last verify_repair verdict recorded on a session timeline
+def _cause_matches(cause: str | None, row_cause: str | None) -> bool:
+    """Exact normalized cause match (strip + casefold), for picking one
+    row out of an early-tournament results list."""
+    if cause is None:
+        return True
+    return (str(cause or "").strip().casefold()
+            == str(row_cause or "").strip().casefold())
+
+
+def last_twin_verdict(state: dict[str, Any] | None,
+                      cause: str | None = None) -> str | None:
+    """The last twin verdict recorded on a session timeline
     (VALIDATED / REJECTED / None). The timeline is the record of what
     the twin said; the outcome endpoint reads it, never re-runs verify.
     Twin verdicts are stored lowercase ("validated"); the field-outcome
     statuses are uppercase (VALIDATED/REJECTED) — normalize here so the
-    comparison in apply_field_outcome cannot silently miss."""
+    comparison in apply_field_outcome cannot silently miss.
+
+    Phase 3 diagnosis-agent extraction (contracts §2.5): the
+    verify-repair endpoint is deleted, so new verdicts arrive on
+    "early_tournament" entries written by the live loop (respond()
+    via _apply_early_tournament and the graph's pre-turn tournament
+    via the thin TwinVerifyClient), one result per cause — the
+    ``cause`` argument picks that cause's row. Legacy "verify_repair"
+    entries from sessions recorded before the cut are still read.
+    """
     for entry in reversed((state or {}).get("timeline") or []):
         if entry.get("kind") == "verify_repair" and entry.get("verdict"):
             return str(entry["verdict"]).upper()
+        if entry.get("kind") == "early_tournament":
+            for row in entry.get("results") or []:
+                if row.get("verdict") and _cause_matches(cause, row.get("cause")):
+                    return str(row["verdict"]).upper()
     return None
 
 
@@ -120,7 +143,8 @@ def apply_field_outcome(db: Any, outcome: DiagnosticOutcome,
     visible rather than silent.
     """
     field_outcome = FIELD_OUTCOME_MAP.get(outcome.outcome)
-    verdict = twin_verdict if twin_verdict is not None else last_twin_verdict(session_state)
+    verdict = twin_verdict if twin_verdict is not None else last_twin_verdict(
+        session_state, cause=outcome.confirmed_cause)
     verdict = verdict.upper() if verdict else None
     record = RepairRecord(repair_id=outcome.session_id,
                           case_id=(session_state or {}).get("case_id") or "",

@@ -1,11 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { listMachines } from "../api/machines";
-import { listRevisions } from "../api/revisions";
 import { getRevisionIngestionStatus } from "../api/client";
 import { startDiagnostic, getDiagnostic, listDiagnostics, getDiagnosticContext, respondDiagnostic,
-  recordDiagnosticOutcome, getMostInformativeTest, getGuidedPhysicalChecks, verifyRepair, verifyHypotheses } from "../api/diagnostics";
+  recordDiagnosticOutcome } from "../api/diagnostics";
 import MachineOnboarding from "./MachineOnboarding";
-import ExpertKnowledge from "./ExpertKnowledge";
 
 function Card({title, children, className=""}) {
   return <section className={`diag-card ${className}`}><div className="diag-card__title">{title}</div>{children}</section>;
@@ -14,7 +11,9 @@ function Card({title, children, className=""}) {
 function StatusPill({children, tone=""}) { return <span className={`status-pill ${tone}`}>{children}</span>; }
 
 function MachineGraph({components, relationships, focus}) {
-  const nodes = useMemo(() => components.slice(0, 18), [components]);
+  // Audit P-08: no slice cap — render every component; the container
+  // scrolls (.machine-graph in App.css) instead of truncating.
+  const nodes = useMemo(() => components, [components]);
   if (!nodes.length) return <div className="empty-state">No component topology is available for this revision.</div>;
   const width = 620, height = Math.max(250, Math.ceil(nodes.length / 4) * 100);
   const pos = Object.fromEntries(nodes.map((n,i) => [n.id, {x: 80+(i%4)*150, y: 55+Math.floor(i/4)*95}]));
@@ -33,12 +32,20 @@ function MachineGraph({components, relationships, focus}) {
   </div>;
 }
 
-export default function DiagnosticWorkspace({ onMachineReady, initialProductId = "", initialRevisionId = "" }) {
-  const [machines,setMachines]=useState([]);
-  const [revisions,setRevisions]=useState([]);
+export default function DiagnosticWorkspace({ onMachineReady, initialProductId = "", initialRevisionId = "",
+  machines: machinesProp = [], revisions: revisionsProp = [], onRefreshMachines,
+  onOpenSimulation }) {
+  const [machines,setMachines]=useState(machinesProp);
+  const [revisions,setRevisions]=useState(revisionsProp);
   const [productId,setProductId]=useState(initialProductId);
   const [revisionId,setRevisionId]=useState(initialRevisionId);
-  const [symptom,setSymptom]=useState("Motor M1 is overheating after 20 minutes.");
+  // Audit P-03: no hardcoded symptom — the technician types what is
+  // actually happening. Observations/measurements are real inputs too:
+  // StartDiagnosticRequest accepts none (contracts §4.1 — the schema
+  // change has not landed), so they are sent via the live /respond
+  // flow right after start (see begin()), never invented on start.
+  const [symptom,setSymptom]=useState("");
+  const [observations,setObservations]=useState("");
   const [session,setSession]=useState(null);
   const [context,setContext]=useState(null);
   const [answer,setAnswer]=useState("");
@@ -46,60 +53,30 @@ export default function DiagnosticWorkspace({ onMachineReady, initialProductId =
   const [error,setError]=useState("");
   const [selectedEvidence,setSelectedEvidence]=useState(null);
   const [showOnboarding,setShowOnboarding]=useState(false);
-  const [showExpert,setShowExpert]=useState(false);
   const [revisionIngestion,setRevisionIngestion]=useState(null);
   const [outcomeForm,setOutcomeForm]=useState({outcome:"fixed",confirmed_cause:"",repair_performed:"",technician_notes:"",submit_correction_for_review:false});
   const [outcomeResult,setOutcomeResult]=useState(null);
-  const [nextTest,setNextTest]=useState(null);
-  const [guidedChecks,setGuidedChecks]=useState(null);
   const [feedbackBusy,setFeedbackBusy]=useState(false);
-  const [verification,setVerification]=useState(null);
-  const [verifyBusy,setVerifyBusy]=useState(false);
-  const [tournament,setTournament]=useState(null);
-  const [tournamentBusy,setTournamentBusy]=useState(false);
   const [pastSessions,setPastSessions]=useState([]);
   const [pastLoading,setPastLoading]=useState(false);
 
-  async function loadMachines(selectProductId = null, selectRevisionId = null) {
-    try {
-      const rows = (await listMachines()) || [];
-      setMachines(rows);
-
-      if (selectProductId) {
-        setProductId(selectProductId);
-      } else if (!productId && rows.length) {
-        setProductId(rows[0].id);
-      }
-
-      if (selectRevisionId) {
-        setRevisionId(selectRevisionId);
-      }
-    } catch (e) {
-      setError(e.message || "Unable to load machines.");
-    }
-  }
-  useEffect(()=>{ loadMachines(); },[]);
+  // Audit Step 4: the machine/revision lists are owned by the shell
+  // (App.jsx) and passed down — this view no longer fetches them
+  // itself. It only picks the first revision when the current one is
+  // not in the shell's list.
+  useEffect(()=>{ setMachines(machinesProp); setProductId(current => current || machinesProp[0]?.id || ""); },[machinesProp]);
+  useEffect(()=>{ setRevisions(revisionsProp); },[revisionsProp]);
   // Follow the machine picked on the Machines view while no session is running.
   useEffect(()=>{ if(!session && initialProductId) setProductId(initialProductId); },[initialProductId, session]);
   useEffect(()=>{ if(!session && initialRevisionId) setRevisionId(initialRevisionId); },[initialRevisionId, session]);
   useEffect(()=>{
-    if(!productId){
-      setRevisions([]);
-      setRevisionId("");
-      return;
-    }
-    listRevisions(productId)
-      .then(rows=>{
-        const next = rows || [];
-        setRevisions(next);
-        setRevisionId(current =>
-          current && next.some(row => row.id === current)
-            ? current
-            : (next[0]?.id || "")
-        );
-      })
-      .catch(e=>setError(e.message || "Unable to load revisions."));
-  },[productId]);
+    if(!productId){ setRevisionId(""); return; }
+    setRevisionId(current =>
+      current && revisions.some(row => row.id === current)
+        ? current
+        : (revisions[0]?.id || "")
+    );
+  },[productId, revisions]);
 
   useEffect(()=>{
     if(!revisionId){ setRevisionIngestion(null); return; }
@@ -127,8 +104,7 @@ export default function DiagnosticWorkspace({ onMachineReady, initialProductId =
       if(!s) { setError("That session no longer exists."); return; }
       // Verification / tournament / outcome state is not persisted in
       // the session -- only the timeline is -- so clear it on restore.
-      setVerification(null); setTournament(null); setOutcomeResult(null);
-      setNextTest(null); setGuidedChecks(null);
+      setOutcomeResult(null);
       setProductId(s.product_id); setRevisionId(s.revision_id);
       setSession(s);
       setContext(await getDiagnosticContext(s.session_id));
@@ -137,10 +113,9 @@ export default function DiagnosticWorkspace({ onMachineReady, initialProductId =
   function backToSessions(){
     // Leave the session open on the backend; the past-sessions list
     // restores it. Clear only the per-session UI state that is not
-    // persisted (verification / tournament / outcome).
+    // persisted (outcome).
     setSession(null); setContext(null);
-    setVerification(null); setTournament(null); setOutcomeResult(null);
-    setNextTest(null); setGuidedChecks(null);
+    setOutcomeResult(null);
   }
 
   async function begin(){
@@ -150,6 +125,16 @@ export default function DiagnosticWorkspace({ onMachineReady, initialProductId =
       const s=await startDiagnostic({product_id:productId,revision_id:revisionId,symptom:symptom.trim()});
       setSession(s);
       setContext(await getDiagnosticContext(s.session_id));
+      // Observations/measurements go through the live /respond flow:
+      // the start schema accepts symptom only, so a real observation
+      // typed at setup is sent as the first observation turn, not
+      // dropped and not invented into the start payload.
+      const obs = observations.trim();
+      if (obs) {
+        const s2 = await respondDiagnostic(s.session_id, {input: obs, input_kind: "observation"});
+        setSession(s2);
+        setContext(await getDiagnosticContext(s2.session_id));
+      }
     } catch(e){setError(e.message)} finally{setBusy(false)}
   }
   async function sendAnswer(value=answer){
@@ -167,41 +152,25 @@ export default function DiagnosticWorkspace({ onMachineReady, initialProductId =
     catch(e){setError(e.message)}
   }
 
-  async function loadNextTest(){
-    if(!session) return;
-    setFeedbackBusy(true); setError("");
-    try { setNextTest(await getMostInformativeTest(session.session_id)); }
-    catch(e){setError(e.message)} finally{setFeedbackBusy(false)}
-  }
-  async function loadGuidedChecks(){
-    if(!session) return;
-    setFeedbackBusy(true); setError("");
-    try { setGuidedChecks(await getGuidedPhysicalChecks(session.session_id)); }
-    catch(e){setError(e.message)} finally{setFeedbackBusy(false)}
-  }
   async function submitOutcome(){
     if(!session) return;
     setFeedbackBusy(true); setError("");
     try { setOutcomeResult(await recordDiagnosticOutcome(session.session_id, outcomeForm)); }
     catch(e){setError(e.message)} finally{setFeedbackBusy(false)}
   }
-  async function verifyRepairInTwin(){
-    if(!session) return;
-    setVerifyBusy(true); setError("");
-    try { setVerification(await verifyRepair(session.session_id, {cause: leading?.cause || "", repair_name: step?.content || ""})); }
-    catch(e){setError(e.message)} finally{setVerifyBusy(false)}
-  }
-  async function runTournament(){
-    if(!session) return;
-    setTournamentBusy(true); setError("");
-    try { setTournament(await verifyHypotheses(session.session_id)); }
-    catch(e){setError(e.message)} finally{setTournamentBusy(false)}
-  }
-  function openTournamentPlayback(row){
-    window.dispatchEvent(new CustomEvent("crater-open-visual-twin", {detail:{revisionId, playback:{baseline_state:row.baseline_state, fault_state:row.fault_state, final_state:row.final_state, fault_trace:row.fault_trace, intervention_trace:row.intervention_trace, fault_component_id:row.fault_component_id, symptom_path:row.symptom_path, verdict:row.verdict}}}));
-  }
 
   const state=session?.state;
+  // Phase 3 frontend step: the tournament runs inside POST /respond
+  // (contracts §2.5) — there is no endpoint to call for it. Its
+  // results arrive on the session timeline as early_tournament entries
+  // (results: cause/status/verdict/reason, counts, discriminating_test)
+  // or as a twin_unavailable entry when no twin could run. The cards
+  // below read that timeline state; nothing here calls a deleted
+  // endpoint, and no verification is shown before a turn has run one.
+  const timeline = state?.timeline || [];
+  const latestTournament = [...timeline].reverse().find(t => t.kind === "early_tournament") || null;
+  const latestTwinEntry = [...timeline].reverse().find(t => t.kind === "early_tournament" || t.kind === "twin_unavailable") || null;
+  const discriminatingTest = latestTournament?.discriminating_test || null;
   const step=state?.current_step;
   const leading=state?.hypotheses?.[0];
   const isQuestion=step?.type==="question";
@@ -213,13 +182,8 @@ export default function DiagnosticWorkspace({ onMachineReady, initialProductId =
   const selectedMachine = machines.find(m => m.id === productId);
   const selectedRevision = revisions.find(r => r.id === revisionId);
   const machineLabel = selectedMachine ? `${selectedMachine.manufacturer} · ${selectedMachine.family} · ${selectedMachine.model}${selectedRevision ? ` — ${selectedRevision.label}` : ""}` : "";
-  const expertOverlay = showExpert && <div className="expert-overlay"><div className="expert-overlay__card">
-    <div className="expert-overlay__head"><b>Expert knowledge</b><button className="secondary-button" onClick={() => setShowExpert(false)}>Close</button></div>
-    <ExpertKnowledge initialProductId={productId} initialRevisionId={revisionId} machineLabel={machineLabel} />
-  </div></div>;
 
   if(!session) return <div className="diagnostic">
-    {expertOverlay}
     {showOnboarding && <MachineOnboarding
       initialProductId={productId}
       initialRevisionId={revisionId}
@@ -227,7 +191,9 @@ export default function DiagnosticWorkspace({ onMachineReady, initialProductId =
       onReady={async ({productId: readyProductId, revisionId: readyRevisionId, knowledgeWarning})=>{
         setShowOnboarding(false);
         setError(knowledgeWarning || "");
-        await loadMachines(readyProductId, readyRevisionId);
+        setProductId(readyProductId);
+        setRevisionId(readyRevisionId);
+        await onRefreshMachines?.();
         onMachineReady?.({ productId: readyProductId, revisionId: readyRevisionId });
       }}
     />}
@@ -258,7 +224,6 @@ export default function DiagnosticWorkspace({ onMachineReady, initialProductId =
           {revisionId && revisionIngestion?.status === "processing" && <div className="ready-check"><StatusPill tone="live">INGESTING</StatusPill> {revisionIngestion.completed_count} completed manual(s) · {revisionIngestion.active_count} still processing</div>}
           {revisionId && revisionIngestion?.status === "failed" && <div className="ready-check"><StatusPill tone="warn">INGESTION FAILED</StatusPill> No completed manual is available yet. Open onboarding to retry from the checkpoint.</div>}
           <button className="secondary-button full-width" onClick={()=>setShowOnboarding(true)}>+ Add manual to this revision</button>
-          <button className="quiet-button full-width" onClick={()=>setShowExpert(true)}>Add expert note</button>
         </> : <div className="onboarding-empty">
           <div className="empty-icon">＋</div>
           <h3>No machines onboarded</h3>
@@ -269,6 +234,9 @@ export default function DiagnosticWorkspace({ onMachineReady, initialProductId =
       <Card title="2 · Symptom">
         <label>What is happening with the machine?
           <textarea value={symptom} onChange={e=>setSymptom(e.target.value)} rows={5} placeholder="Describe the symptom..."/>
+        </label>
+        <label>Observations / measurements (optional)
+          <textarea value={observations} onChange={e=>setObservations(e.target.value)} rows={3} placeholder="What you have already seen or measured, e.g. voltage readings, sounds, smells..."/>
         </label>
         <button className="primary-button" disabled={busy||!productId||!revisionId||!symptom.trim()} onClick={begin}>
           {busy ? "Starting investigation…" : "Start investigation"}
@@ -288,13 +256,12 @@ export default function DiagnosticWorkspace({ onMachineReady, initialProductId =
   </div>;
 
   return <div className="diagnostic diagnostic--session">
-    {expertOverlay}
     <header className="diagnostic-header">
       <div>
         <div className="eyebrow">LIVE DIAGNOSTIC SESSION</div>
         <h2>{machine?.model || "Machine"} <span>/ {revision?.label || "Revision"}</span></h2>
       </div>
-      <div className="header-actions"><StatusPill tone={session.status==="active"?"live":session.status==="concluded"?"ok":"warn"}>{session.status}</StatusPill><button onClick={()=>setShowExpert(true)}>Add expert note</button><button onClick={backToSessions}>Sessions</button><button onClick={refresh} disabled={busy}>Refresh</button></div>
+      <div className="header-actions"><StatusPill tone={session.status==="active"?"live":session.status==="concluded"?"ok":"warn"}>{session.status}</StatusPill><button onClick={backToSessions}>Sessions</button><button onClick={refresh} disabled={busy}>Refresh</button></div>
     </header>
     {error && <div className="diag-error">{error}</div>}
     <div className="diagnostic-grid">
@@ -303,7 +270,7 @@ export default function DiagnosticWorkspace({ onMachineReady, initialProductId =
           <div className="context-stat"><b>{context?.knowledge?.entity_count ?? 0}</b><span>entities</span></div>
           <div className="context-stat"><b>{context?.knowledge?.relation_count ?? 0}</b><span>relationships</span></div>
           <div className="context-stat"><b>{context?.knowledge?.conflict_count ?? 0}</b><span>conflicts</span></div>
-          <div className="context-docs"><b>Sources</b>{docs.slice(0,5).map(d=><span key={d.id}>{d.title}</span>)}</div>
+          <div className="context-docs"><b>Sources</b>{docs.map(d=><span key={d.id}>{d.title}</span>)}</div>
         </Card>
         <Card title="MACHINE RELATIONSHIPS">
           <MachineGraph components={context?.components||[]} relationships={context?.relationships||[]} focus={leading?.cause}/>
@@ -352,76 +319,48 @@ export default function DiagnosticWorkspace({ onMachineReady, initialProductId =
             <StatusPill tone="ok">RECOMMENDATION READY</StatusPill>
             <h3>{step.content}</h3>
             <p>{step.rationale || "Grounded in the evidence shown in this session."}</p>
-            {evidence.slice(0,4).map(e=><div className="repair-source" key={e.chunk_id}>↳ {e.source_document}{e.page_number?` · p.${e.page_number}`:""}</div>)}
+            {evidence.map(e=><div className="repair-source" key={e.chunk_id}>↳ {e.source_document}{e.page_number?` · p.${e.page_number}`:""}</div>)}
           </div> : <div className="empty-state">A structured repair recommendation will appear after the diagnostic state reaches a grounded conclusion.</div>}
         </Card>
         <Card title="MOST INFORMATIVE NEXT TEST">
-          <p className="muted">Ranks documented tests that may separate the leading hypotheses. This is a heuristic, not calculated probabilistic information gain.</p>
-          <button onClick={loadNextTest} disabled={feedbackBusy}>{feedbackBusy ? "Working…" : "Find discriminating test"}</button>
-          {nextTest && (nextTest.tests?.length ? nextTest.tests.map((t,i)=><article className="guided-check" key={`${t.test}-${i}`}>
-            <b>{i+1}. {t.test}</b>
-            {t.expected_observation && <p>Expected observation: {t.expected_observation}</p>}
-            <small>May distinguish: {t.matched_hypotheses?.join(", ") || "not mapped to a current hypothesis"}</small>
-          </article>) : <p className="muted">{nextTest.reason || "No documented discriminating test found."}</p>)}
-        </Card>
-        <Card title="GUIDED PHYSICAL CHECKS">
-          <p className="muted">Only documented tests are presented. Verify the exact machine, connector and safety procedure before touching hardware.</p>
-          <button onClick={loadGuidedChecks} disabled={feedbackBusy}>{feedbackBusy ? "Working…" : "Prepare physical checks"}</button>
-          {guidedChecks?.checks?.map((c,i)=><article className="guided-check" key={`${c.instruction}-${i}`}>
-            <b>{i+1}. {c.instruction}</b>
-            {c.expected_observation && <p>Expected: {c.expected_observation}</p>}
-            {c.candidate_schematic_labels?.length>0 && <p>Candidate schematic labels: {c.candidate_schematic_labels.join(", ")} (not verified pin mapping)</p>}
-            <small>{c.safety_note}</small><p className="muted">{c.limits}</p>
-          </article>)}
-          {guidedChecks && !guidedChecks.checks?.length && <p className="muted">{guidedChecks.message} No stored documented test matched the current hypotheses.</p>}
+          <p className="muted">The discriminating test for the current hypotheses, picked by the turn itself (the early tournament runs inside each turn). This is a documented test that may separate the leading hypotheses — not calculated probabilistic information gain.</p>
+          {discriminatingTest ? <article className="guided-check">
+            <b>{discriminatingTest.test}</b>
+            {discriminatingTest.rationale && <p>{discriminatingTest.rationale}</p>}
+            {discriminatingTest.separates?.length > 0 && <small>May distinguish: {discriminatingTest.separates.join(", ")}</small>}
+          </article> : <p className="muted">No documented discriminating test separated the current hypotheses yet — answer the question above and the next turn picks one.</p>}
         </Card>
         <Card title="DID THE REPAIR WORK?">
-          {outcomeResult ? <div className="ready-check"><StatusPill tone="ok">RECORDED</StatusPill> Outcome saved · {outcomeResult.review_status}{outcomeResult.knowledge_version_id ? <p>Draft knowledge version: {outcomeResult.knowledge_version_id}. Review and approve it in Expert Knowledge before it influences diagnosis.</p> : null}</div> : <>
+          {outcomeResult ? <div className="ready-check"><StatusPill tone="ok">RECORDED</StatusPill> Outcome saved · {outcomeResult.review_status}{outcomeResult.knowledge_version_id ? <p>Draft knowledge version: {outcomeResult.knowledge_version_id}. It stays pending review and does not influence diagnosis until reviewed.</p> : null}</div> : <>
             <label>Repair outcome<select value={outcomeForm.outcome} onChange={e=>setOutcomeForm(v=>({...v,outcome:e.target.value}))}>
               <option value="fixed">Fixed</option><option value="not_fixed">Not fixed</option><option value="inconclusive">Inconclusive / not yet verified</option>
             </select></label>
             <label>Confirmed cause / correction<input value={outcomeForm.confirmed_cause} onChange={e=>setOutcomeForm(v=>({...v,confirmed_cause:e.target.value}))} placeholder="What was actually wrong?"/></label>
             <label>Repair performed<input value={outcomeForm.repair_performed} onChange={e=>setOutcomeForm(v=>({...v,repair_performed:e.target.value}))} placeholder="What did the technician change?"/></label>
             <label>Notes<textarea rows={2} value={outcomeForm.technician_notes} onChange={e=>setOutcomeForm(v=>({...v,technician_notes:e.target.value}))} placeholder="What happened after repair?"/></label>
-            <label className="feedback-checkbox"><input type="checkbox" checked={outcomeForm.submit_correction_for_review} onChange={e=>setOutcomeForm(v=>({...v,submit_correction_for_review:e.target.checked}))}/> Submit correction as draft expert knowledge for review</label>
+            <label className="feedback-checkbox"><input type="checkbox" checked={outcomeForm.submit_correction_for_review} onChange={e=>setOutcomeForm(v=>({...v,submit_correction_for_review:e.target.checked}))}/> Submit correction as draft knowledge for review</label>
             <button onClick={submitOutcome} disabled={feedbackBusy}>{feedbackBusy ? "Saving…" : "Save repair outcome"}</button>
           </>}
         </Card>
         <Card title="VERIFICATION">
-          {!isConclusion && <div className="verification-unavailable"><b>Simulation contract</b><p>Verification is only marked PASS/FAIL when a real digital-twin experiment is executed. No simulated success is shown here. Reach a grounded conclusion first, then verify its repair in the twin.</p></div>}
-          {isConclusion && !verification && <div className="verification-unavailable"><b>Simulation contract</b><p>Verification is only marked PASS/FAIL when a real digital-twin experiment is executed. No simulated success is shown here.</p><button onClick={verifyRepairInTwin} disabled={verifyBusy}>{verifyBusy ? "Running twin experiment…" : "Verify this repair in the twin"}</button><button onClick={runTournament} disabled={tournamentBusy || !state?.hypotheses?.length}>{tournamentBusy ? "Running tournament…" : "Run hypothesis tournament"}</button></div>}
-          {isConclusion && verification && !verification.available && <div className="verification-unavailable"><b>Cannot verify yet</b><p>{verification.reason}</p><button onClick={()=>window.dispatchEvent(new CustomEvent("crater-open-simulation", {detail:{revisionId, sessionId:session?.session_id, hypothesis:leading?.cause || ""}}))}>Open simulation workspace</button></div>}
-          {isConclusion && verification?.available && <div className="verification-result">
-            <StatusPill tone={verification.verdict==="validated"?"ok":"warn"}>{verification.verdict==="validated"?"VALIDATED":"REJECTED"}</StatusPill>
-            <p>{verification.explanation}</p>
-            {verification.checks?.map((c,i)=><div className="verification-check" key={i}><b>{c.path}</b><span>expected {String(c.expected)} · actual {String(c.actual)}</span><i>{c.passed?"✓":"✗"}</i></div>)}
-            {verification.rules_used?.length>0 && <div className="verification-rules"><b>Rules used</b>{verification.rules_used.map(r=><div key={r.id}>{r.name}{r.description?` — ${r.description}`:""}</div>)}</div>}
-            {verification.procedure?.steps?.length>0 && <div className="verification-procedure"><b>Procedure: {verification.procedure.name}</b>{verification.procedure.steps.map((x,i)=><p key={i}>{i+1}. {x}</p>)}</div>}
-            {verification.intervention_trace?.length>0 && <details><summary>Intervention trace</summary>{verification.intervention_trace.map((t,i)=><p key={i}>{t}</p>)}</details>}
-            <button onClick={()=>window.dispatchEvent(new CustomEvent("crater-open-visual-twin", {detail:{revisionId, playback:{baseline_state:verification.baseline_state, fault_state:verification.fault_state, final_state:verification.final_state, fault_trace:verification.fault_trace, intervention_trace:verification.intervention_trace, fault_component_id:verification.fault_component_id, symptom_path:verification.symptom_path, verdict:verification.verdict}}}))}>Open visual twin</button>
-            <button onClick={verifyRepairInTwin} disabled={verifyBusy}>{verifyBusy ? "Re-running…" : "Re-run verification"}</button>
-            <button onClick={runTournament} disabled={tournamentBusy || !state?.hypotheses?.length}>{tournamentBusy ? "Running tournament…" : "Run hypothesis tournament"}</button>
+          {!latestTwinEntry && <div className="verification-unavailable"><b>Simulation contract</b><p>Verification is only marked PASS/FAIL when a real digital-twin experiment is executed. No simulated success is shown here. The tournament runs inside each turn — answer the first question and its result appears here.</p></div>}
+          {latestTwinEntry?.kind === "twin_unavailable" && <div className="verification-unavailable"><b>Cannot verify yet</b><p>Twin verification unavailable: {latestTwinEntry.reason}</p><button onClick={()=>onOpenSimulation?.({revisionId, sessionId:session?.session_id, hypothesis:leading?.cause || ""})}>Open simulation workspace</button></div>}
+          {latestTwinEntry?.kind === "early_tournament" && <div className="verification-result">
+            <StatusPill tone={latestTournament.counts?.validated ? "ok" : "warn"}>{latestTournament.counts?.validated ? "VALIDATED" : "NOT VALIDATED"}</StatusPill>
+            <p className="muted">{latestTournament.counts?.validated || 0} validated · {latestTournament.counts?.rejected || 0} rejected · {latestTournament.counts?.unavailable || 0} unavailable — from the tournament that ran inside the latest turn. A rejected row is evidence, not an elimination.</p>
+            <button onClick={()=>onOpenSimulation?.({revisionId, sessionId:session?.session_id, hypothesis:leading?.cause || ""})}>Open simulation workspace</button>
           </div>}
         </Card>
-        {tournament && <Card title="HYPOTHESIS TOURNAMENT">
-          {!tournament.available && <div className="verification-unavailable"><b>Cannot run tournament yet</b><p>{tournament.reason}</p><button onClick={()=>window.dispatchEvent(new CustomEvent("crater-open-simulation", {detail:{revisionId, sessionId:session?.session_id, hypothesis:leading?.cause || ""}}))}>Open simulation workspace</button></div>}
-          {tournament.available && <div className="tournament">
-            <p className="muted">{tournament.counts.validated} validated · {tournament.counts.rejected} rejected · {tournament.counts.unavailable} unavailable</p>
-            {tournament.results.map((row,i)=><article className="tournament-row" key={`${row.cause}-${i}`}>
+        {latestTournament && <Card title="HYPOTHESIS TOURNAMENT">
+          <div className="tournament">
+            <p className="muted">{latestTournament.counts?.validated || 0} validated · {latestTournament.counts?.rejected || 0} rejected · {latestTournament.counts?.unavailable || 0} unavailable</p>
+            {(latestTournament.results || []).map((row,i)=><article className="tournament-row" key={`${row.cause}-${i}`}>
               <div className="hypothesis-top"><div><span className="rank">{String(i+1).padStart(2,"0")}</span><b>{row.cause}</b></div><StatusPill tone={row.status==="validated"?"ok":row.status==="rejected"?"warn":""}>{row.status==="validated"?"VALIDATED":row.status==="rejected"?"REJECTED":"UNAVAILABLE"}</StatusPill></div>
-              {row.status==="unavailable" && <p className="muted">{tournament.unavailable_label} — {row.reason}</p>}
-              {row.fault_component_name && <p className="muted">Fault component: {row.fault_component_name}</p>}
-              {row.symptom_path && <p className="muted">Symptom: {row.symptom_path}{row.symptom_expected !== undefined && row.symptom_expected !== null ? ` → ${String(row.symptom_expected)}` : ""}</p>}
-              {row.checks?.map((c,j)=><div className="verification-check" key={j}><b>{c.path}</b><span>expected {String(c.expected)} · actual {String(c.actual)}</span><i>{c.passed?"✓":"✗"}</i></div>)}
-              {row.rules_used?.length>0 && <div className="verification-rules"><b>Rules used</b>{row.rules_used.map(r=><div key={r.id}>{r.name}{r.description?` — ${r.description}`:""}
-                {r.evidence?.map((ev,k)=><p key={k} className="muted">↳ {typeof ev === "string" ? ev : ev.fact}{ev?.page ? ` · p.${ev.page}` : ""}</p>)}
-                {r.source_ids?.length>0 && <p className="muted">Sources: {r.source_ids.join(", ")}</p>}
-              </div>)}</div>}
-              {row.procedure?.steps?.length>0 && <div className="verification-procedure"><b>Procedure: {row.procedure.name}</b>{row.procedure.steps.map((x,k)=><p key={k}>{k+1}. {x}</p>)}</div>}
-              {row.baseline_state && <button onClick={()=>openTournamentPlayback(row)}>Open visual twin</button>}
+              {row.reason && <p className="muted">{row.reason}</p>}
+              {row.cannot_express && <p className="muted">The twin cannot express this cause — no further observation can make it verifiable; the session ends this line with ranked guesses and a manual test instead.</p>}
             </article>)}
             <p className="muted">A rejected row is evidence, not an elimination — no hypothesis was changed by this run. Unavailable means the twin cannot evaluate that cause.</p>
-          </div>}
+          </div>
         </Card>}
       </aside>
     </div>

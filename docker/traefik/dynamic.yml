@@ -1,0 +1,70 @@
+# Traefik v3 dynamic configuration (gateway audit §2/§7).
+# The gateway shim (backend/api/main.py) is the forwardAuth target and
+# owns request IDs, rate limiting (Redis token bucket), /health + /ready,
+# the error envelope, and metrics. Traefik owns routing, retries, and
+# circuit breaking — all as configuration.
+#
+# Rate limits are NOT in Traefik (its rateLimit middleware is per-second
+# only; the contract needs 10/min + 20 burst for diagnosis and 5/hour
+# for uploads) — they live in the shim (backend/api/rate_limit.py).
+http:
+  routers:
+    gateway:
+      rule: "PathPrefix(`/v1/`) || Path(`/health`) || Path(`/ready`) || Path(`/metrics`) || Path(`/auth/verify`)"
+      service: gateway
+      entryPoints: ["web"]
+      middlewares: ["gateway-retry", "gateway-breaker", "gateway-auth"]
+    # Legacy unversioned alias, migration only (audit §5): the same
+    # handlers are reachable without /v1/ until the alias is deleted.
+    gateway-legacy:
+      rule: "PathPrefix(`/diagnose`, `/ingest`, `/products`, `/knowledge`, `/query`, `/schematics`, `/visualization`, `/simulation`, `/digital-twins`, `/mode-b`, `/learning`)"
+      service: gateway
+      entryPoints: ["web"]
+      middlewares: ["gateway-retry", "gateway-breaker", "gateway-auth"]
+
+    # The UI itself, same origin as the API: any path the gateway
+    # routers do not match falls through to the frontend service
+    # (explicit low priority; the longer /v1/ + /health rules win).
+    # The browser then calls /v1/... on this same origin — the
+    # gateway — never a backend service directly.
+    frontend:
+      rule: "PathPrefix(`/`)"
+      priority: 1
+      service: frontend
+      entryPoints: ["web"]
+
+  middlewares:
+    gateway-retry:
+      retry:
+        attempts: 3
+    gateway-breaker:
+      circuitBreaker:
+        expression: "NetworkErrorRatio() > 0.5"
+    gateway-auth:
+      forwardAuth:
+        # The shim answers 200 while GATEWAY_AUTH_ENABLED is off
+        # (local dev) and 401 without a valid X-Api-Key once it is on.
+        address: "http://gateway:8000/auth/verify"
+        authResponseHeaders:
+          - "X-Request-ID"
+
+  services:
+    frontend:
+      loadBalancer:
+        servers:
+          - url: "http://frontend:80"
+        healthCheck:
+          path: /
+          interval: 10s
+          timeout: 3s
+    gateway:
+      loadBalancer:
+        servers:
+          - url: "http://gateway:8000"
+        healthCheck:
+          # Liveness only — /ready is the readiness signal, never the
+          # load-balancer check (a downstream outage must not restart
+          # or drain the gateway).
+          path: /health
+          interval: 10s
+          timeout: 3s

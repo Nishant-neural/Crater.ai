@@ -1,7 +1,12 @@
+import pytest
+
 from types import SimpleNamespace
 
 from backend.config import settings
-from backend.llm.provider import AnthropicProvider, GeminiProvider, _gemini_content, get_llm_provider
+from backend.llm.provider import (
+    AnthropicProvider, GeminiProvider, LLMKeyMissingError,
+    _gemini_content, get_llm_provider,
+)
 
 
 def test_anthropic_provider_forwards_text_messages_and_returns_text(monkeypatch):
@@ -51,8 +56,12 @@ def test_anthropic_provider_forwards_multimodal_messages_unchanged(monkeypatch):
     assert captured["messages"] == messages
 
 
-def test_anthropic_provider_without_credentials_does_not_import_or_call_sdk():
-    assert AnthropicProvider("", "test-model").complete([], 10) is None
+def test_anthropic_provider_without_credentials_raises_without_calling_sdk():
+    # Gateway audit §3: a missing key is an explicit error, never a silent
+    # (None, False). The raise happens before the SDK import, so no SDK
+    # call is made.
+    with pytest.raises(LLMKeyMissingError, match="anthropic"):
+        AnthropicProvider("", "test-model").complete([], 10)
 
 
 def test_gemini_content_translates_text_and_assistant_roles():
@@ -81,8 +90,11 @@ def test_gemini_content_translates_anthropic_image_content():
     }
 
 
-def test_gemini_provider_without_credentials_does_not_import_or_call_sdk():
-    assert GeminiProvider("", "test-model").complete([], 10) is None
+def test_gemini_provider_without_credentials_raises_without_calling_sdk():
+    # Gateway audit §3: a missing key is an explicit error, never a silent
+    # (None, False). The raise happens before the client is constructed.
+    with pytest.raises(LLMKeyMissingError, match="gemini"):
+        GeminiProvider("", "test-model").complete([], 10)
 
 
 def test_gemini_provider_keeps_client_open_during_generation_and_closes_it(monkeypatch):

@@ -1,0 +1,24 @@
+# Traefik v3 static configuration (gateway audit §2).
+# Routing, TLS, retry, and circuit-breaker middleware live here as
+# configuration — route/retry/breaker changes are YAML changes, never
+# a Crater code deploy. The dashboard is enabled for local use only;
+# do not expose :8080 on a shared deployment.
+entryPoints:
+  web:
+    address: ":80"
+
+api:
+  insecure: true
+  dashboard: true
+
+providers:
+  file:
+    filename: /etc/traefik/dynamic.yml
+    watch: true
+
+log:
+  level: INFO
+  format: json
+
+accessLog:
+  format: json

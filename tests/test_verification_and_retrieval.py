@@ -1,14 +1,6 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
-from backend.db.models import Base, MachineKnowledgeModelSnapshot, Product, Revision
 from backend.knowledge.machine_model import MachineEntity, MachineRelation, MachinePort, UniversalMachineModel
 from backend.knowledge.verification import verify_machine_model
 from backend.retrieval.knowledge import retrieve_machine_knowledge
-
-
-def db():
-    e=create_engine("sqlite:///:memory:"); Base.metadata.create_all(e); return sessionmaker(bind=e)()
 
 def test_topology_verification_catches_missing_reference():
     m=UniversalMachineModel(entities=[MachineEntity(id="a", name="A", entity_type="pump")], relations=[MachineRelation(subject_id="a",subject_name="A",relation_type="connected_to",object_id="missing",object_name="X")])
@@ -21,8 +13,39 @@ def test_spatial_verification_catches_bad_bbox():
     assert any(i.category=="spatial" and i.severity=="error" for i in issues)
 
 def test_retrieval_is_hard_revision_scoped():
-    s=db(); p=Product(manufacturer="A",family="F",model="M"); s.add(p); s.flush(); r=Revision(product_id=p.id,label="Rev A"); s.add(r); s.flush()
-    s.add(MachineKnowledgeModelSnapshot(revision_id=r.id,version=1,model={"entities":[{"id":"entity:p1","name":"Pump P1","entity_type":"pump"}]},source_counts={})); s.commit()
-    hits=retrieve_machine_knowledge(s,"pump",product_id=p.id,revision_id=r.id)
-    assert hits and hits[0].revision_id==r.id
-    assert retrieve_machine_knowledge(s,"pump",product_id="wrong",revision_id=r.id)==[]
+    """Phase 3 extraction: the canonical model comes from ingestion's
+    HTTP API, never the snapshot table. The product/revision scoping
+    is unchanged: a product mismatch returns no hits, and a revision
+    with no model returns no hits."""
+    import httpx
+
+    from backend.retrieval.ingestion_client import IngestionClient
+
+    model = {"entities": [{"id": "entity:p1", "name": "Pump P1",
+                           "entity_type": "pump"}]}
+    product_id = "prod-1"
+    revision_id = "rev-1"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == f"/v1/products/{product_id}/revisions":
+            return httpx.Response(200, json=[
+                {"id": revision_id, "product_id": product_id, "label": "Rev A"}])
+        if path == f"/v1/knowledge/revisions/{revision_id}/model":
+            return httpx.Response(200, json={
+                "revision_id": revision_id, "version": 1, "model": model,
+                "source_counts": {}})
+        return httpx.Response(404, json={"error": {"code": "not_found"}})
+
+    client = IngestionClient(base_url="http://ingestion-test",
+                             transport=httpx.MockTransport(handler))
+    hits = retrieve_machine_knowledge(
+        "pump", product_id=product_id, revision_id=revision_id, client=client)
+    assert hits and hits[0].revision_id == revision_id
+    assert retrieve_machine_knowledge(
+        "pump", product_id="wrong", revision_id=revision_id,
+        client=client) == []
+    # A revision with no integrated model returns no hits.
+    assert retrieve_machine_knowledge(
+        "pump", product_id=product_id, revision_id="rev-missing",
+        client=client) == []

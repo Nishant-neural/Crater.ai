@@ -95,7 +95,7 @@ export default function SimulationAgent({ initialRevisionId = "", diagnosticCont
           <div className="simulation-nodes">
             {components.map(c=><button key={c.id} className={selectedComponent===c.id?"simulation-node selected":"simulation-node"} onClick={()=>setSelectedComponent(c.id)}><b>{c.name}</b><span>{c.component_type}</span></button>)}
           </div>
-          <div className="simulation-relations">{relations.slice(0,24).map((r,i)=><div key={r.id || i}>{r.subject_name} <b>→ {r.relation_type} →</b> {r.object_name}</div>)}</div>
+          <div className="simulation-relations">{relations.map((r,i)=><div key={r.id || i}>{r.subject_name} <b>→ {r.relation_type} →</b> {r.object_name}</div>)}</div>
         </section>
         <section className="panel simulation-state"><h3>Virtual machine state</h3><pre>{JSON.stringify(state,null,2)}</pre><h4>Derived</h4><pre>{JSON.stringify(derived,null,2)}</pre></section>
       </div>

@@ -28,7 +28,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from backend.simulation.archetypes import ARCHETYPES
-from backend.simulation.oracle import load_fault_injections, normalize_text
+from backend.simulation.oracle_shared import load_fault_injections, normalize_text
 
 _DEFAULT_ACTIONS_PATH = Path(__file__).with_name("repair_actions_omnipro.json")
 _DEFAULT_REGISTRY_PATH = Path(__file__).resolve().parents[1] / "knowledge" / "repair_cases_omnipro.json"

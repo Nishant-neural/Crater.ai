@@ -1,279 +1,1494 @@
 {
- "actions": [
-  {
-   "case_id": "omni-01-wire-not-feeding",
-   "cause_letter": "a",
-   "expected_trace": {
-    "forbidden_state_changes": [
-     {
-      "path": "Wire Feed Motor.motion_out",
-      "transition_id": null,
-      "value": "absent"
-     }
-    ],
-    "required_state_changes": [
-     {
-      "path": "Wire Feed Mechanism.material_out",
-      "value": "normal",
-      "transition_id": "archetype:transmission.t1.feeding@wire-feed-mechanism"
-     },
-     {
-      "path": "liner assembly.material_out",
-      "value": "normal",
-      "transition_id": "archetype:conductor.c-nominal.ok@liner-assembly"
-     },
-     {
-      "path": "MIG Gun.material_out",
-      "value": "normal",
-      "transition_id": "archetype:conductor.c-nominal.ok@mig-gun"
-     },
-     {
-      "path": "Contact Tip.material_out",
-      "value": "normal",
-      "transition_id": "archetype:conductor.c-nominal.ok@contact-tip"
-     },
-     {
-      "path": "Welder.arc",
-      "value": "normal",
-      "transition_id": "link:edge:arc-to-welder:normal"
-     }
-    ],
-    "terminal_conditions": {
-     "Welder.arc": "normal"
-    }
-   },
-   "fault_injection_ref": "omni-01-wire-not-feeding:a",
-   "id": "repair:omni-01-a",
-   "name": "Increase wire feed pressure (adjust Feed Tensioner to correct pressure)",
-   "postconditions": {
-    "MIG Gun.material_out": "normal",
-    "Welder.arc": "normal",
-    "Wire Feed Mechanism.material_out": "normal"
-   },
-   "procedure_refs": [
+  "actions": [
     {
-     "page": 42,
-     "quote": "1. Increase wire feed pressure properly. Follow step 27 on page 17.",
-     "source": "owner-manual p42 troubleshooting, case 1 remedy 1"
+      "case_id": "omni-01-wire-not-feeding",
+      "cause_letter": "a",
+      "expected_trace": {
+        "forbidden_state_changes": [
+          {
+            "path": "Wire Feed Motor.motion_out",
+            "transition_id": null,
+            "value": "absent"
+          }
+        ],
+        "required_state_changes": [
+          {
+            "path": "Wire Feed Mechanism.material_out",
+            "transition_id": "archetype:transmission.t1.feeding@wire-feed-mechanism",
+            "value": "normal"
+          },
+          {
+            "path": "liner assembly.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@liner-assembly",
+            "value": "normal"
+          },
+          {
+            "path": "MIG Gun.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@mig-gun",
+            "value": "normal"
+          },
+          {
+            "path": "Contact Tip.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@contact-tip",
+            "value": "normal"
+          },
+          {
+            "path": "Welder.arc",
+            "transition_id": "link:edge:arc-to-welder:normal",
+            "value": "normal"
+          }
+        ],
+        "terminal_conditions": {
+          "Welder.arc": "normal"
+        }
+      },
+      "fault_injection_ref": "omni-01-wire-not-feeding:a",
+      "id": "repair:omni-01-a",
+      "name": "Increase wire feed pressure (adjust Feed Tensioner to correct pressure)",
+      "postconditions": {
+        "MIG Gun.material_out": "normal",
+        "Welder.arc": "normal",
+        "Wire Feed Mechanism.material_out": "normal"
+      },
+      "preconditions": [
+        "Welder is powered off and the gun trigger is released before touching the Feed Tensioner (procedure ref p42 remedy 1; step 27 p17).",
+        "Wire spool is seated and the feed path is clear (procedure ref p17 step 27)."
+      ],
+      "procedure_refs": [
+        {
+          "page": 42,
+          "quote": "1. Increase wire feed pressure properly. Follow step 27 on page 17.",
+          "source": "owner-manual p42 troubleshooting, case 1 remedy 1"
+        },
+        {
+          "page": 17,
+          "quote": "If the wire stops instead of bending, the Feed Tensioner needs adjustment; slightly tighten the Feed Tensioner.",
+          "source": "owner-manual p17 step 27"
+        }
+      ],
+      "required_tests": [
+        "step27_wood_test"
+      ],
+      "safety_requirements": [
+        "Follow your plant's lockout procedure before anyone works on this machine. This is not a safety assessment.",
+        "Keep hands clear of the feed mechanism while the welder is powered; the feeder moves without warning when the trigger is pulled."
+      ],
+      "state_effects": {
+        "Wire Feed Mechanism.tension": "normal"
+      }
     },
     {
-     "page": 17,
-     "quote": "If the wire stops instead of bending, the Feed Tensioner needs adjustment; slightly tighten the Feed Tensioner.",
-     "source": "owner-manual p17 step 27"
-    }
-   ],
-   "required_tests": [
-    "step27_wood_test"
-   ],
-   "state_effects": {
-    "Wire Feed Mechanism.tension": "normal"
-   }
-  },
-  {
-   "case_id": "omni-01-wire-not-feeding",
-   "cause_letter": "b",
-   "expected_trace": {
-    "forbidden_state_changes": [
-     {
-      "path": "Wire Feed Motor.motion_out",
-      "transition_id": null,
-      "value": "absent"
-     }
-    ],
-    "required_state_changes": [
-     {
-      "path": "Wire Feed Mechanism.material_out",
-      "value": "normal",
-      "transition_id": "archetype:transmission.t1.feeding@wire-feed-mechanism"
-     },
-     {
-      "path": "liner assembly.material_out",
-      "value": "normal",
-      "transition_id": "archetype:conductor.c-nominal.ok@liner-assembly"
-     },
-     {
-      "path": "MIG Gun.material_out",
-      "value": "normal",
-      "transition_id": "archetype:conductor.c-nominal.ok@mig-gun"
-     },
-     {
-      "path": "Contact Tip.material_out",
-      "value": "normal",
-      "transition_id": "archetype:conductor.c-nominal.ok@contact-tip"
-     },
-     {
-      "path": "Welder.arc",
-      "value": "normal",
-      "transition_id": "link:edge:arc-to-welder:normal"
-     }
-    ],
-    "terminal_conditions": {
-     "Welder.arc": "normal"
-    }
-   },
-   "fault_injection_ref": "omni-01-wire-not-feeding:b",
-   "id": "repair:omni-01-b",
-   "name": "Fit the correct Feed Roller groove size",
-   "postconditions": {
-    "MIG Gun.material_out": "normal",
-    "Welder.arc": "normal",
-    "Wire Feed Mechanism.material_out": "normal"
-   },
-   "procedure_refs": [
-    {
-     "page": 42,
-     "quote": "2. Flip roll to correct size. Follow the Feed Roller instructions on page 12.",
-     "source": "owner-manual p42 troubleshooting, case 1 remedy 2"
+      "case_id": "omni-01-wire-not-feeding",
+      "cause_letter": "b",
+      "expected_trace": {
+        "forbidden_state_changes": [
+          {
+            "path": "Wire Feed Motor.motion_out",
+            "transition_id": null,
+            "value": "absent"
+          }
+        ],
+        "required_state_changes": [
+          {
+            "path": "Wire Feed Mechanism.material_out",
+            "transition_id": "archetype:transmission.t1.feeding@wire-feed-mechanism",
+            "value": "normal"
+          },
+          {
+            "path": "liner assembly.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@liner-assembly",
+            "value": "normal"
+          },
+          {
+            "path": "MIG Gun.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@mig-gun",
+            "value": "normal"
+          },
+          {
+            "path": "Contact Tip.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@contact-tip",
+            "value": "normal"
+          },
+          {
+            "path": "Welder.arc",
+            "transition_id": "link:edge:arc-to-welder:normal",
+            "value": "normal"
+          }
+        ],
+        "terminal_conditions": {
+          "Welder.arc": "normal"
+        }
+      },
+      "fault_injection_ref": "omni-01-wire-not-feeding:b",
+      "id": "repair:omni-01-b",
+      "name": "Fit the correct Feed Roller groove size",
+      "postconditions": {
+        "MIG Gun.material_out": "normal",
+        "Welder.arc": "normal",
+        "Wire Feed Mechanism.material_out": "normal"
+      },
+      "preconditions": [
+        "Welder is powered off before opening the feed compartment (procedure ref p42 remedy 2; p12 feed roller).",
+        "The wire size on the spool is known, so the matching groove can be selected (procedure ref p12)."
+      ],
+      "procedure_refs": [
+        {
+          "page": 42,
+          "quote": "2. Flip roll to correct size. Follow the Feed Roller instructions on page 12.",
+          "source": "owner-manual p42 troubleshooting, case 1 remedy 2"
+        },
+        {
+          "page": 12,
+          "quote": "The groove on the Feed Roller must match the wire size marked on the spool.",
+          "source": "owner-manual p12 feed roller"
+        }
+      ],
+      "required_tests": [
+        "groove_check",
+        "step27_wood_test"
+      ],
+      "safety_requirements": [
+        "Follow your plant's lockout procedure before anyone works on this machine. This is not a safety assessment.",
+        "Keep hands clear of the feed mechanism while the welder is powered."
+      ],
+      "state_effects": {
+        "Wire Feed Mechanism.groove_matches": true
+      }
     },
     {
-     "page": 12,
-     "quote": "The groove on the Feed Roller must match the wire size marked on the spool.",
-     "source": "owner-manual p12 feed roller"
-    }
-   ],
-   "required_tests": [
-    "groove_check",
-    "step27_wood_test"
-   ],
-   "state_effects": {
-    "Wire Feed Mechanism.groove_matches": true
-   }
-  },
-  {
-   "case_id": "omni-01-wire-not-feeding",
-   "cause_letter": "c",
-   "expected_trace": {
-    "forbidden_state_changes": [
-     {
-      "path": "Wire Feed Motor.motion_out",
-      "transition_id": null,
-      "value": "absent"
-     }
-    ],
-    "required_state_changes": [
-     {
-      "path": "Wire Feed Mechanism.material_out",
-      "value": "normal",
-      "transition_id": "archetype:transmission.t1.feeding@wire-feed-mechanism"
-     },
-     {
-      "path": "liner assembly.material_out",
-      "value": "normal",
-      "transition_id": "archetype:conductor.c-nominal.ok@liner-assembly"
-     },
-     {
-      "path": "MIG Gun.material_out",
-      "value": "normal",
-      "transition_id": "archetype:conductor.c-nominal.ok@mig-gun"
-     },
-     {
-      "path": "Contact Tip.material_out",
-      "value": "normal",
-      "transition_id": "archetype:conductor.c-nominal.ok@contact-tip"
-     },
-     {
-      "path": "Welder.arc",
-      "value": "normal",
-      "transition_id": "link:edge:arc-to-welder:normal"
-     }
-    ],
-    "terminal_conditions": {
-     "Welder.arc": "normal"
-    }
-   },
-   "fault_injection_ref": "omni-01-wire-not-feeding:c",
-   "id": "repair:omni-01-c",
-   "name": "Replace the damaged MIG Gun, cable, or liner assembly",
-   "postconditions": {
-    "MIG Gun.material_out": "normal",
-    "Welder.arc": "normal",
-    "Wire Feed Mechanism.material_out": "normal"
-   },
-   "procedure_refs": [
-    {
-     "page": 42,
-     "quote": "3. Replace damaged MIG Gun, cable, or liner assembly.",
-     "source": "owner-manual p42 troubleshooting, case 1 remedy 3"
-    }
-   ],
-   "required_tests": [
-    "step27_wood_test"
-   ],
-   "state_effects": {
-    "MIG Gun.fault": "none"
-   }
-  },
-  {
-   "case_id": "omni-01-wire-not-feeding",
-   "cause_letter": "d",
-   "expected_trace": {
-    "forbidden_state_changes": [
-     {
-      "path": "Wire Feed Motor.motion_out",
-      "transition_id": null,
-      "value": "absent"
-     }
-    ],
-    "required_state_changes": [
-     {
-      "path": "Wire Feed Mechanism.material_out",
-      "value": "normal",
-      "transition_id": "archetype:transmission.t1.feeding@wire-feed-mechanism"
-     },
-     {
-      "path": "liner assembly.material_out",
-      "value": "normal",
-      "transition_id": "archetype:conductor.c-nominal.ok@liner-assembly"
-     },
-     {
-      "path": "MIG Gun.material_out",
-      "value": "normal",
-      "transition_id": "archetype:conductor.c-nominal.ok@mig-gun"
-     },
-     {
-      "path": "Contact Tip.material_out",
-      "value": "normal",
-      "transition_id": "archetype:conductor.c-nominal.ok@contact-tip"
-     },
-     {
-      "path": "Welder.arc",
-      "value": "normal",
-      "transition_id": "link:edge:arc-to-welder:normal"
-     }
-    ],
-    "terminal_conditions": {
-     "Welder.arc": "normal"
-    }
-   },
-   "fault_injection_ref": "omni-01-wire-not-feeding:d",
-   "id": "repair:omni-01-d",
-   "name": "Loosen the Feed Tensioner to correct pressure",
-   "postconditions": {
-    "MIG Gun.material_out": "normal",
-    "Welder.arc": "normal",
-    "Wire Feed Mechanism.material_out": "normal"
-   },
-   "procedure_refs": [
-    {
-     "page": 42,
-     "quote": "4. Loosen Feed Tensioner so it applies only enough pressure to prevent continued spinning after the Gun Trigger is released.",
-     "source": "owner-manual p42 troubleshooting, case 1 remedy 4"
+      "case_id": "omni-01-wire-not-feeding",
+      "cause_letter": "c",
+      "expected_trace": {
+        "forbidden_state_changes": [
+          {
+            "path": "Wire Feed Motor.motion_out",
+            "transition_id": null,
+            "value": "absent"
+          }
+        ],
+        "required_state_changes": [
+          {
+            "path": "Wire Feed Mechanism.material_out",
+            "transition_id": "archetype:transmission.t1.feeding@wire-feed-mechanism",
+            "value": "normal"
+          },
+          {
+            "path": "liner assembly.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@liner-assembly",
+            "value": "normal"
+          },
+          {
+            "path": "MIG Gun.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@mig-gun",
+            "value": "normal"
+          },
+          {
+            "path": "Contact Tip.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@contact-tip",
+            "value": "normal"
+          },
+          {
+            "path": "Welder.arc",
+            "transition_id": "link:edge:arc-to-welder:normal",
+            "value": "normal"
+          }
+        ],
+        "terminal_conditions": {
+          "Welder.arc": "normal"
+        }
+      },
+      "fault_injection_ref": "omni-01-wire-not-feeding:c",
+      "id": "repair:omni-01-c",
+      "name": "Replace the damaged MIG Gun, cable, or liner assembly",
+      "postconditions": {
+        "MIG Gun.material_out": "normal",
+        "Welder.arc": "normal",
+        "Wire Feed Mechanism.material_out": "normal"
+      },
+      "preconditions": [
+        "Welder is powered off and disconnected before replacing the gun, cable, or liner (procedure ref p42 remedy 3).",
+        "Replacement gun, cable, or liner matches the OMNIPRO 220 (procedure ref p42 remedy 3)."
+      ],
+      "procedure_refs": [
+        {
+          "page": 42,
+          "quote": "3. Replace damaged MIG Gun, cable, or liner assembly.",
+          "source": "owner-manual p42 troubleshooting, case 1 remedy 3"
+        }
+      ],
+      "required_tests": [
+        "step27_wood_test"
+      ],
+      "safety_requirements": [
+        "Follow your plant's lockout procedure before anyone works on this machine. This is not a safety assessment.",
+        "Disconnect power before handling the gun, cable, or liner \u2014 a damaged cable can expose live conductors."
+      ],
+      "state_effects": {
+        "MIG Gun.fault": "none"
+      }
     },
     {
-     "page": 17,
-     "quote": "If the wire stops instead of bending, the Feed Tensioner needs adjustment; slightly tighten the Feed Tensioner.",
-     "source": "owner-manual p17 step 27"
+      "case_id": "omni-01-wire-not-feeding",
+      "cause_letter": "d",
+      "expected_trace": {
+        "forbidden_state_changes": [
+          {
+            "path": "Wire Feed Motor.motion_out",
+            "transition_id": null,
+            "value": "absent"
+          }
+        ],
+        "required_state_changes": [
+          {
+            "path": "Wire Feed Mechanism.material_out",
+            "transition_id": "archetype:transmission.t1.feeding@wire-feed-mechanism",
+            "value": "normal"
+          },
+          {
+            "path": "liner assembly.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@liner-assembly",
+            "value": "normal"
+          },
+          {
+            "path": "MIG Gun.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@mig-gun",
+            "value": "normal"
+          },
+          {
+            "path": "Contact Tip.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@contact-tip",
+            "value": "normal"
+          },
+          {
+            "path": "Welder.arc",
+            "transition_id": "link:edge:arc-to-welder:normal",
+            "value": "normal"
+          }
+        ],
+        "terminal_conditions": {
+          "Welder.arc": "normal"
+        }
+      },
+      "fault_injection_ref": "omni-01-wire-not-feeding:d",
+      "id": "repair:omni-01-d",
+      "name": "Loosen the Feed Tensioner to correct pressure",
+      "postconditions": {
+        "MIG Gun.material_out": "normal",
+        "Welder.arc": "normal",
+        "Wire Feed Mechanism.material_out": "normal"
+      },
+      "preconditions": [
+        "Welder is powered off and the gun trigger is released before touching the Feed Tensioner (procedure ref p42 remedy 4; step 27 p17).",
+        "Wire spool is seated and the feed path is clear (procedure ref p17 step 27)."
+      ],
+      "procedure_refs": [
+        {
+          "page": 42,
+          "quote": "4. Loosen Feed Tensioner so it applies only enough pressure to prevent continued spinning after the Gun Trigger is released.",
+          "source": "owner-manual p42 troubleshooting, case 1 remedy 4"
+        },
+        {
+          "page": 17,
+          "quote": "If the wire stops instead of bending, the Feed Tensioner needs adjustment; slightly tighten the Feed Tensioner.",
+          "source": "owner-manual p17 step 27"
+        }
+      ],
+      "required_tests": [
+        "post_release_spin",
+        "step27_wood_test"
+      ],
+      "safety_requirements": [
+        "Follow your plant's lockout procedure before anyone works on this machine. This is not a safety assessment.",
+        "Keep hands clear of the feed mechanism while the welder is powered; the spool spins freely when the wingnut is loose."
+      ],
+      "state_effects": {
+        "Wire Feed Mechanism.tension": "normal"
+      }
+    },
+    {
+      "case_id": "omni-02-wire-stops",
+      "cause_letter": "a",
+      "expected_trace": {
+        "forbidden_state_changes": [
+          {
+            "path": "Wire Feed Motor.motion_out",
+            "transition_id": null,
+            "value": "absent"
+          }
+        ],
+        "required_state_changes": [
+          {
+            "path": "MIG Gun.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@mig-gun",
+            "value": "normal"
+          },
+          {
+            "path": "Contact Tip.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@contact-tip",
+            "value": "normal"
+          },
+          {
+            "path": "Welder.arc",
+            "transition_id": "link:edge:arc-to-welder:normal",
+            "value": "normal"
+          }
+        ],
+        "terminal_conditions": {
+          "Welder.arc": "normal"
+        }
+      },
+      "fault_injection_ref": "omni-02-wire-stops:a",
+      "id": "repair:omni-02-wire-stops-a",
+      "name": "Straighten the bent gun cable",
+      "postconditions": {
+        "Contact Tip.material_out": "normal",
+        "MIG Gun.material_out": "normal",
+        "Welder.arc": "normal"
+      },
+      "preconditions": [
+        "Welder is powered off and the gun trigger is released before straightening the cable (procedure ref p42 remedy 1).",
+        "The cable path is clear of obstructions before the wire is fed again (procedure ref p42 remedy 1)."
+      ],
+      "procedure_refs": [
+        {
+          "page": 42,
+          "quote": "Straighten Gun cable.",
+          "source": "owner-manual p42 troubleshooting, case 2 remedy 1"
+        }
+      ],
+      "required_tests": [
+        "cable_check",
+        "step27_wood_test"
+      ],
+      "safety_requirements": [
+        "Follow your plant's lockout procedure before anyone works on this machine. This is not a safety assessment.",
+        "A severely bent cable can have damaged conductors inside; if the insulation is cut or the cable is kinked, replace it instead of straightening it."
+      ],
+      "state_effects": {
+        "MIG Gun.fault": "none"
+      }
+    },
+    {
+      "case_id": "omni-02-wire-stops",
+      "cause_letter": "d",
+      "expected_trace": {
+        "forbidden_state_changes": [
+          {
+            "path": "Wire Feed Motor.motion_out",
+            "transition_id": null,
+            "value": "absent"
+          }
+        ],
+        "required_state_changes": [
+          {
+            "path": "Wire Spool.material_out",
+            "transition_id": "archetype:storage.s-nominal.normal@wire-spool",
+            "value": "normal"
+          },
+          {
+            "path": "Wire Feed Mechanism.material_out",
+            "transition_id": "archetype:transmission.t1.feeding@wire-feed-mechanism",
+            "value": "normal"
+          },
+          {
+            "path": "liner assembly.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@liner-assembly",
+            "value": "normal"
+          },
+          {
+            "path": "MIG Gun.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@mig-gun",
+            "value": "normal"
+          },
+          {
+            "path": "Contact Tip.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@contact-tip",
+            "value": "normal"
+          },
+          {
+            "path": "Welder.arc",
+            "transition_id": "link:edge:arc-to-welder:normal",
+            "value": "normal"
+          }
+        ],
+        "terminal_conditions": {
+          "Welder.arc": "normal"
+        }
+      },
+      "fault_injection_ref": "omni-02-wire-stops:d",
+      "id": "repair:omni-02-wire-stops-d",
+      "name": "Untangle the wire spool",
+      "postconditions": {
+        "Contact Tip.material_out": "normal",
+        "Welder.arc": "normal",
+        "Wire Feed Mechanism.material_out": "normal",
+        "Wire Spool.state": "normal"
+      },
+      "preconditions": [
+        "Welder is powered off before the spool is handled (procedure ref p42 remedy 4).",
+        "The spool is seated and the feed path is clear before the wire is fed again (procedure ref p42 remedy 4)."
+      ],
+      "procedure_refs": [
+        {
+          "page": 42,
+          "quote": "Check wire for cross winding or tangled spool.",
+          "source": "owner-manual p42 troubleshooting, case 2 remedy 4"
+        }
+      ],
+      "required_tests": [
+        "spool_check",
+        "step27_wood_test"
+      ],
+      "safety_requirements": [
+        "Follow your plant's lockout procedure before anyone works on this machine. This is not a safety assessment.",
+        "Keep hands clear of the spool and feed mechanism while the welder is powered; the spool spins freely when the wingnut is loose."
+      ],
+      "state_effects": {
+        "Wire Spool.fault": "none"
+      }
+    },
+    {
+      "case_id": "omni-02-wire-stops",
+      "cause_letter": "e",
+      "expected_trace": {
+        "forbidden_state_changes": [
+          {
+            "path": "Wire Feed Motor.motion_out",
+            "transition_id": null,
+            "value": "absent"
+          }
+        ],
+        "required_state_changes": [
+          {
+            "path": "Wire Feed Mechanism.material_out",
+            "transition_id": "archetype:transmission.t1.feeding@wire-feed-mechanism",
+            "value": "normal"
+          },
+          {
+            "path": "liner assembly.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@liner-assembly",
+            "value": "normal"
+          },
+          {
+            "path": "MIG Gun.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@mig-gun",
+            "value": "normal"
+          },
+          {
+            "path": "Contact Tip.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@contact-tip",
+            "value": "normal"
+          },
+          {
+            "path": "Welder.arc",
+            "transition_id": "link:edge:arc-to-welder:normal",
+            "value": "normal"
+          }
+        ],
+        "terminal_conditions": {
+          "Welder.arc": "normal"
+        }
+      },
+      "fault_injection_ref": "omni-02-wire-stops:e",
+      "id": "repair:omni-02-wire-stops-e",
+      "name": "Fit the correct Feed Roller groove size",
+      "postconditions": {
+        "MIG Gun.material_out": "normal",
+        "Welder.arc": "normal",
+        "Wire Feed Mechanism.material_out": "normal"
+      },
+      "preconditions": [
+        "Welder is powered off before opening the feed compartment (procedure ref p42 remedy 5; p12 feed roller).",
+        "The wire size on the spool is known, so the matching groove can be selected (procedure ref p12)."
+      ],
+      "procedure_refs": [
+        {
+          "page": 42,
+          "quote": "Check Feed Rollers and ensure correct groove for wire diameter is being used.",
+          "source": "owner-manual p42 troubleshooting, case 2 remedy 5"
+        },
+        {
+          "page": 12,
+          "quote": "The groove on the Feed Roller must match the wire size marked on the spool.",
+          "source": "owner-manual p12 feed roller"
+        }
+      ],
+      "required_tests": [
+        "groove_check",
+        "step27_wood_test"
+      ],
+      "safety_requirements": [
+        "Follow your plant's lockout procedure before anyone works on this machine. This is not a safety assessment.",
+        "Keep hands clear of the feed mechanism while the welder is powered."
+      ],
+      "state_effects": {
+        "Wire Feed Mechanism.groove_matches": true
+      }
+    },
+    {
+      "case_id": "omni-02-wire-stops",
+      "cause_letter": "f",
+      "expected_trace": {
+        "forbidden_state_changes": [
+          {
+            "path": "Wire Feed Motor.motion_out",
+            "transition_id": null,
+            "value": "absent"
+          }
+        ],
+        "required_state_changes": [
+          {
+            "path": "Wire Feed Mechanism.material_out",
+            "transition_id": "archetype:transmission.t1.feeding@wire-feed-mechanism",
+            "value": "normal"
+          },
+          {
+            "path": "liner assembly.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@liner-assembly",
+            "value": "normal"
+          },
+          {
+            "path": "MIG Gun.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@mig-gun",
+            "value": "normal"
+          },
+          {
+            "path": "Contact Tip.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@contact-tip",
+            "value": "normal"
+          },
+          {
+            "path": "Welder.arc",
+            "transition_id": "link:edge:arc-to-welder:normal",
+            "value": "normal"
+          }
+        ],
+        "terminal_conditions": {
+          "Welder.arc": "normal"
+        }
+      },
+      "fault_injection_ref": "omni-02-wire-stops:f",
+      "id": "repair:omni-02-wire-stops-f",
+      "name": "Adjust the Feed Tensioner to correct pressure",
+      "postconditions": {
+        "MIG Gun.material_out": "normal",
+        "Welder.arc": "normal",
+        "Wire Feed Mechanism.material_out": "normal"
+      },
+      "preconditions": [
+        "Welder is powered off and the gun trigger is released before touching the Feed Tensioner (procedure ref p42 remedy 6; step 27 p17).",
+        "Wire spool is seated and the feed path is clear (procedure ref p17 step 27)."
+      ],
+      "procedure_refs": [
+        {
+          "page": 42,
+          "quote": "Check Feed Tensioner and ensure it is set properly.",
+          "source": "owner-manual p42 troubleshooting, case 2 remedy 6"
+        },
+        {
+          "page": 17,
+          "quote": "If the wire stops instead of bending, the Feed Tensioner needs adjustment; slightly tighten the Feed Tensioner.",
+          "source": "owner-manual p17 step 27"
+        }
+      ],
+      "required_tests": [
+        "step27_wood_test"
+      ],
+      "safety_requirements": [
+        "Follow your plant's lockout procedure before anyone works on this machine. This is not a safety assessment.",
+        "Keep hands clear of the feed mechanism while the welder is powered; the feeder moves without warning when the trigger is pulled."
+      ],
+      "state_effects": {
+        "Wire Feed Mechanism.tension": "normal"
+      }
+    },
+    {
+      "case_id": "omni-03-birds-nest",
+      "cause_letter": "a",
+      "expected_trace": {
+        "forbidden_state_changes": [
+          {
+            "path": "Wire Feed Motor.motion_out",
+            "transition_id": null,
+            "value": "absent"
+          }
+        ],
+        "required_state_changes": [
+          {
+            "path": "Wire Feed Mechanism.material_out",
+            "transition_id": "archetype:transmission.t1.feeding@wire-feed-mechanism",
+            "value": "normal"
+          },
+          {
+            "path": "liner assembly.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@liner-assembly",
+            "value": "normal"
+          },
+          {
+            "path": "MIG Gun.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@mig-gun",
+            "value": "normal"
+          },
+          {
+            "path": "Contact Tip.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@contact-tip",
+            "value": "normal"
+          },
+          {
+            "path": "Welder.arc",
+            "transition_id": "link:edge:arc-to-welder:normal",
+            "value": "normal"
+          }
+        ],
+        "terminal_conditions": {
+          "Welder.arc": "normal"
+        }
+      },
+      "fault_injection_ref": "omni-03-birds-nest:a",
+      "id": "repair:omni-03-birds-nest-a",
+      "name": "Reduce wire feed pressure (adjust Feed Tensioner to correct pressure)",
+      "postconditions": {
+        "Contact Tip.material_out": "normal",
+        "MIG Gun.material_out": "normal",
+        "Welder.arc": "normal",
+        "Wire Feed Mechanism.material_out": "normal",
+        "liner assembly.material_out": "normal"
+      },
+      "preconditions": [
+        "Welder is powered off and the gun trigger is released before touching the Feed Tensioner (procedure ref p42 remedy 1; step 27 p17).",
+        "Wire spool is seated and the feed path is clear (procedure ref p17 step 27)."
+      ],
+      "procedure_refs": [
+        {
+          "page": 42,
+          "quote": "Adjust wire feed pressure properly. Follow step 27 on page 17.",
+          "source": "owner-manual p42 troubleshooting, case 3 remedy 1"
+        },
+        {
+          "page": 17,
+          "quote": "If the wire stops instead of bending, the Feed Tensioner needs adjustment; slightly tighten the Feed Tensioner.",
+          "source": "owner-manual p17 step 27"
+        }
+      ],
+      "required_tests": [
+        "step27_wood_test"
+      ],
+      "safety_requirements": [
+        "Follow your plant's lockout procedure before anyone works on this machine. This is not a safety assessment.",
+        "Keep hands clear of the feed mechanism while the welder is powered; the spool spins freely when the wingnut is loose."
+      ],
+      "state_effects": {
+        "Wire Feed Mechanism.tension": "normal"
+      }
+    },
+    {
+      "case_id": "omni-04-arc-not-stable",
+      "cause_letter": "b",
+      "expected_trace": {
+        "forbidden_state_changes": [
+          {
+            "path": "Wire Feed Motor.motion_out",
+            "transition_id": null,
+            "value": "absent"
+          }
+        ],
+        "required_state_changes": [
+          {
+            "path": "Contact Tip.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@contact-tip",
+            "value": "normal"
+          },
+          {
+            "path": "Welder.arc",
+            "transition_id": "link:edge:arc-to-welder:normal",
+            "value": "normal"
+          }
+        ],
+        "terminal_conditions": {
+          "Welder.arc": "normal"
+        }
+      },
+      "fault_injection_ref": "omni-04-arc-not-stable:b",
+      "id": "repair:omni-04-arc-not-stable-b",
+      "name": "Replace the worn or wrong-size Contact Tip",
+      "postconditions": {
+        "Contact Tip.material_out": "normal",
+        "Welder.arc": "normal"
+      },
+      "preconditions": [
+        "Welder is powered off before the tip is touched (procedure ref p42 remedy 2).",
+        "The replacement tip matches the wire diameter in use (procedure ref p42 remedy 2)."
+      ],
+      "procedure_refs": [
+        {
+          "page": 42,
+          "quote": "Replace with the proper tip or liner size for wire used.",
+          "source": "owner-manual p42 troubleshooting, case 4 remedy 2"
+        }
+      ],
+      "required_tests": [
+        "tip_size_check",
+        "tip_condition"
+      ],
+      "safety_requirements": [
+        "Follow your plant's lockout procedure before anyone works on this machine. This is not a safety assessment.",
+        "Let the tip cool before touching it; the contact tip is hot after welding."
+      ],
+      "state_effects": {
+        "Contact Tip.fault": "none"
+      }
+    },
+    {
+      "case_id": "omni-04-arc-not-stable",
+      "cause_letter": "e",
+      "expected_trace": {
+        "forbidden_state_changes": [
+          {
+            "path": "Wire Feed Motor.motion_out",
+            "transition_id": null,
+            "value": "absent"
+          }
+        ],
+        "required_state_changes": [
+          {
+            "path": "MIG Gun.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@mig-gun",
+            "value": "normal"
+          },
+          {
+            "path": "Contact Tip.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@contact-tip",
+            "value": "normal"
+          },
+          {
+            "path": "Welder.arc",
+            "transition_id": "link:edge:arc-to-welder:normal",
+            "value": "normal"
+          }
+        ],
+        "terminal_conditions": {
+          "Welder.arc": "normal"
+        }
+      },
+      "fault_injection_ref": "omni-04-arc-not-stable:e",
+      "id": "repair:omni-04-arc-not-stable-e",
+      "name": "Replace the damaged MIG Gun or repair its loose connection",
+      "postconditions": {
+        "Contact Tip.material_out": "normal",
+        "MIG Gun.material_out": "normal",
+        "Welder.arc": "normal"
+      },
+      "preconditions": [
+        "Welder is powered off and disconnected before the gun is handled (procedure ref p42 remedy 5).",
+        "A qualified technician does the inspection and replacement (procedure ref p42 remedy 5)."
+      ],
+      "procedure_refs": [
+        {
+          "page": 42,
+          "quote": "Have a qualified technician inspect and repair/replace as necessary.",
+          "source": "owner-manual p42 troubleshooting, case 4 remedy 5"
+        }
+      ],
+      "required_tests": [
+        "cable_check"
+      ],
+      "safety_requirements": [
+        "Follow your plant's lockout procedure before anyone works on this machine. This is not a safety assessment.",
+        "Disconnect power before handling the gun, cable, or liner \u2014 a damaged cable can expose live conductors."
+      ],
+      "state_effects": {
+        "MIG Gun.fault": "none"
+      }
+    },
+    {
+      "case_id": "omni-04-arc-not-stable",
+      "cause_letter": "g",
+      "expected_trace": {
+        "forbidden_state_changes": [
+          {
+            "path": "MIG Gun.material_out",
+            "transition_id": null,
+            "value": "absent"
+          }
+        ],
+        "required_state_changes": [
+          {
+            "path": "MIG Gun.gas_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@mig-gun",
+            "value": "normal"
+          },
+          {
+            "path": "Welder.arc",
+            "transition_id": "link:edge:arc-to-welder:normal",
+            "value": "normal"
+          }
+        ],
+        "terminal_conditions": {
+          "Welder.arc": "normal"
+        }
+      },
+      "fault_injection_ref": "omni-04-arc-not-stable:g",
+      "id": "repair:omni-04-arc-not-stable-g",
+      "name": "Set the shielding-gas flow to the Settings Chart rate",
+      "postconditions": {
+        "MIG Gun.gas_out": "normal",
+        "Welder.arc": "normal"
+      },
+      "preconditions": [
+        "Welder is powered off before the gas flow is adjusted (procedure ref p42 remedy 7).",
+        "The Gun Cable Connector is fully inserted with no O-Rings exposed (procedure ref p42 remedy 7; p13 steps 13-14)."
+      ],
+      "procedure_refs": [
+        {
+          "page": 42,
+          "quote": "Ensure gas flow rate is set according to Settings Chart. Make sure MIG Gun Cable Connector is fully inserted into Wire Feed mechanism with no O-Rings exposed.",
+          "source": "owner-manual p42 troubleshooting, case 4 remedy 7"
+        },
+        {
+          "page": 13,
+          "quote": "Gun Cable Connector fully inserted into the socket on the Wire Feed mechanism",
+          "source": "owner-manual p13 steps 13-14"
+        }
+      ],
+      "required_tests": [
+        "gas_flow_check"
+      ],
+      "safety_requirements": [
+        "Follow your plant's lockout procedure before anyone works on this machine. This is not a safety assessment.",
+        "Check gas flow with the gun pointed away from yourself and others."
+      ],
+      "state_effects": {
+        "MIG Gun.gas_flow": "normal"
+      }
+    },
+    {
+      "case_id": "omni-04-arc-not-stable",
+      "cause_letter": "h",
+      "expected_trace": {
+        "forbidden_state_changes": [
+          {
+            "path": "Wire Feed Motor.motion_out",
+            "transition_id": null,
+            "value": "absent"
+          }
+        ],
+        "required_state_changes": [
+          {
+            "path": "Ground Clamp.ground_path",
+            "transition_id": "archetype:conductor.c-nominal.ok@ground-clamp",
+            "value": "good"
+          },
+          {
+            "path": "Welder.arc",
+            "transition_id": "link:edge:arc-to-welder:normal",
+            "value": "normal"
+          }
+        ],
+        "terminal_conditions": {
+          "Welder.arc": "normal"
+        }
+      },
+      "fault_injection_ref": "omni-04-arc-not-stable:h",
+      "id": "repair:omni-04-arc-not-stable-h",
+      "name": "Reseat the ground clamp connection",
+      "postconditions": {
+        "Ground Clamp.ground_path": "good",
+        "Welder.arc": "normal"
+      },
+      "preconditions": [
+        "Welder is powered off before the ground clamp is handled (procedure ref p42 remedy 8).",
+        "The workpiece surface near the clamp is clean bare metal (procedure ref p42 remedy 8)."
+      ],
+      "procedure_refs": [
+        {
+          "page": 42,
+          "quote": "Check the ground clamp connection to the workpiece and machine. Ensure the MIG Gun is properly secured.",
+          "source": "owner-manual p42 troubleshooting, case 4 remedy 8"
+        }
+      ],
+      "required_tests": [
+        "ground_check"
+      ],
+      "safety_requirements": [
+        "Follow your plant's lockout procedure before anyone works on this machine. This is not a safety assessment.",
+        "Disconnect power before reseating the ground clamp."
+      ],
+      "state_effects": {
+        "Ground Clamp.fault": "none"
+      }
+    },
+    {
+      "case_id": "omni-05-does-not-function",
+      "cause_letter": "b",
+      "expected_trace": {
+        "forbidden_state_changes": [
+          {
+            "path": "Welder.power_in",
+            "transition_id": null,
+            "value": "absent"
+          }
+        ],
+        "required_state_changes": [
+          {
+            "path": "Welder.power_out",
+            "transition_id": "archetype:source.s1.on@welder",
+            "value": "normal"
+          },
+          {
+            "path": "Trigger.power_out",
+            "transition_id": "archetype:switch.r1.closed@trigger",
+            "value": "normal"
+          },
+          {
+            "path": "Wire Feed Motor.motion_out",
+            "transition_id": "archetype:converter.m1.running@wire-feed-motor",
+            "value": "normal"
+          },
+          {
+            "path": "Wire Feed Mechanism.material_out",
+            "transition_id": "archetype:transmission.t1.feeding@wire-feed-mechanism",
+            "value": "normal"
+          },
+          {
+            "path": "liner assembly.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@liner-assembly",
+            "value": "normal"
+          },
+          {
+            "path": "MIG Gun.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@mig-gun",
+            "value": "normal"
+          },
+          {
+            "path": "Contact Tip.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@contact-tip",
+            "value": "normal"
+          },
+          {
+            "path": "Welder.arc",
+            "transition_id": "link:edge:arc-to-welder:normal",
+            "value": "normal"
+          }
+        ],
+        "terminal_conditions": {
+          "Trigger.power_out": "normal",
+          "Welder.arc": "normal"
+        }
+      },
+      "fault_injection_ref": "omni-05-does-not-function:b",
+      "id": "repair:omni-05-does-not-function-b",
+      "name": "Restore the input supply voltage and amperage",
+      "postconditions": {
+        "LCD Display.display_out": "lit",
+        "Trigger.power_out": "normal",
+        "Welder.arc": "normal"
+      },
+      "preconditions": [
+        "The welder's Power Switch is OFF while the supply is checked (procedure ref p43 remedy 2).",
+        "The outlet and breaker state are known before the supply is restored (procedure ref p43 remedy 2; p7 specifications)."
+      ],
+      "procedure_refs": [
+        {
+          "page": 43,
+          "quote": "Check the input voltage and amperage against the Specifications table on page 7.",
+          "source": "owner-manual p43 troubleshooting, case 5 remedy 2"
+        },
+        {
+          "page": 7,
+          "quote": "Power Input 120/240 VAC",
+          "source": "owner-manual p7 specifications"
+        }
+      ],
+      "required_tests": [
+        "input_voltage_check"
+      ],
+      "safety_requirements": [
+        "Follow your plant's lockout procedure before anyone works on this machine. This is not a safety assessment.",
+        "Supply-side faults are remedied by a licensed electrician; this repair only checks the supply against the specifications."
+      ],
+      "state_effects": {
+        "Welder.input_voltage": "normal"
+      }
+    },
+    {
+      "case_id": "omni-05-does-not-function",
+      "cause_letter": "c",
+      "expected_trace": {
+        "forbidden_state_changes": [
+          {
+            "path": "Welder.power_in",
+            "transition_id": null,
+            "value": "absent"
+          }
+        ],
+        "required_state_changes": [
+          {
+            "path": "Trigger.power_out",
+            "transition_id": "archetype:switch.r1.closed@trigger",
+            "value": "normal"
+          },
+          {
+            "path": "Wire Feed Motor.motion_out",
+            "transition_id": "archetype:converter.m1.running@wire-feed-motor",
+            "value": "normal"
+          },
+          {
+            "path": "Wire Feed Mechanism.material_out",
+            "transition_id": "archetype:transmission.t1.feeding@wire-feed-mechanism",
+            "value": "normal"
+          },
+          {
+            "path": "liner assembly.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@liner-assembly",
+            "value": "normal"
+          },
+          {
+            "path": "MIG Gun.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@mig-gun",
+            "value": "normal"
+          },
+          {
+            "path": "Contact Tip.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@contact-tip",
+            "value": "normal"
+          },
+          {
+            "path": "Welder.arc",
+            "transition_id": "link:edge:arc-to-welder:normal",
+            "value": "normal"
+          }
+        ],
+        "terminal_conditions": {
+          "Trigger.power_out": "normal",
+          "Welder.arc": "normal"
+        }
+      },
+      "fault_injection_ref": "omni-05-does-not-function:c",
+      "id": "repair:omni-05-does-not-function-c",
+      "name": "Reseat or replace the faulty Trigger",
+      "postconditions": {
+        "Trigger.power_out": "normal",
+        "Welder.arc": "normal",
+        "Wire Feed Motor.motion_out": "normal"
+      },
+      "preconditions": [
+        "Welder is powered off and disconnected before the Trigger is touched (procedure ref p43 remedy 3).",
+        "The gun connection is seated before the Trigger is tested (procedure ref p43 remedy 3)."
+      ],
+      "procedure_refs": [
+        {
+          "page": 43,
+          "quote": "Check that the gun connection is seated; a qualified technician checks, secures, or replaces the Trigger.",
+          "source": "owner-manual p43 troubleshooting, case 5 remedy 3"
+        }
+      ],
+      "required_tests": [
+        "trigger_check"
+      ],
+      "safety_requirements": [
+        "Follow your plant's lockout procedure before anyone works on this machine. This is not a safety assessment.",
+        "Disconnect power before replacing the Trigger."
+      ],
+      "state_effects": {
+        "Trigger.fault": "none"
+      }
+    },
+    {
+      "case_id": "omni-06-lcd-dark",
+      "cause_letter": "a",
+      "expected_trace": {
+        "forbidden_state_changes": [
+          {
+            "path": "Welder.power_in",
+            "transition_id": null,
+            "value": "absent"
+          }
+        ],
+        "required_state_changes": [
+          {
+            "path": "Input Power Cord.power_out",
+            "transition_id": "archetype:source.s1.on@input-power-cord",
+            "value": "normal"
+          },
+          {
+            "path": "Reset Button.power_out",
+            "transition_id": "archetype:switch.r1.closed@reset-button",
+            "value": "normal"
+          },
+          {
+            "path": "Welder.power_in",
+            "transition_id": "link:edge:button-to-welder:normal",
+            "value": "normal"
+          },
+          {
+            "path": "LCD Display.display_out",
+            "transition_id": "archetype:interface.i-nominal.lit@lcd-display",
+            "value": "lit"
+          },
+          {
+            "path": "Wire Feed Mechanism.material_out",
+            "transition_id": "archetype:transmission.t1.feeding@wire-feed-mechanism",
+            "value": "normal"
+          },
+          {
+            "path": "Contact Tip.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@contact-tip",
+            "value": "normal"
+          },
+          {
+            "path": "Welder.arc",
+            "transition_id": "link:edge:arc-to-welder:normal",
+            "value": "normal"
+          }
+        ],
+        "terminal_conditions": {
+          "LCD Display.display_out": "lit",
+          "Welder.arc": "normal"
+        }
+      },
+      "fault_injection_ref": "omni-06-lcd-dark:a",
+      "id": "repair:omni-06-lcd-dark-a",
+      "name": "Connect the unit to the outlet properly",
+      "postconditions": {
+        "LCD Display.display_out": "lit",
+        "Welder.arc": "normal",
+        "Welder.power_in": "normal"
+      },
+      "preconditions": [
+        "The welder's Power Switch is OFF before the plug is handled (procedure ref p43 remedy 1).",
+        "The outlet and breaker state are known before the unit is reconnected (procedure ref p43 remedy 1)."
+      ],
+      "procedure_refs": [
+        {
+          "page": 43,
+          "quote": "Connect the unit to the outlet properly.",
+          "source": "owner-manual p43 troubleshooting, case 6 remedy 1"
+        }
+      ],
+      "required_tests": [
+        "outlet_connection_check",
+        "outlet_power_check"
+      ],
+      "safety_requirements": [
+        "Follow your plant's lockout procedure before anyone works on this machine. This is not a safety assessment.",
+        "Do not force a plug into an outlet it does not fit; a damaged outlet is replaced, not worked around."
+      ],
+      "state_effects": {
+        "Input Power Cord.fault": "none"
+      }
+    },
+    {
+      "case_id": "omni-06-lcd-dark",
+      "cause_letter": "c",
+      "expected_trace": {
+        "forbidden_state_changes": [
+          {
+            "path": "Welder.power_in",
+            "transition_id": null,
+            "value": "absent"
+          }
+        ],
+        "required_state_changes": [
+          {
+            "path": "Input Power Cord.power_out",
+            "transition_id": "archetype:source.s1.on@input-power-cord",
+            "value": "normal"
+          },
+          {
+            "path": "Reset Button.power_out",
+            "transition_id": "archetype:switch.r1.closed@reset-button",
+            "value": "normal"
+          },
+          {
+            "path": "Welder.power_in",
+            "transition_id": "link:edge:button-to-welder:normal",
+            "value": "normal"
+          },
+          {
+            "path": "LCD Display.display_out",
+            "transition_id": "archetype:interface.i-nominal.lit@lcd-display",
+            "value": "lit"
+          },
+          {
+            "path": "Wire Feed Mechanism.material_out",
+            "transition_id": "archetype:transmission.t1.feeding@wire-feed-mechanism",
+            "value": "normal"
+          },
+          {
+            "path": "Contact Tip.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@contact-tip",
+            "value": "normal"
+          },
+          {
+            "path": "Welder.arc",
+            "transition_id": "link:edge:arc-to-welder:normal",
+            "value": "normal"
+          }
+        ],
+        "terminal_conditions": {
+          "LCD Display.display_out": "lit",
+          "Welder.arc": "normal"
+        }
+      },
+      "fault_injection_ref": "omni-06-lcd-dark:c",
+      "id": "repair:omni-06-lcd-dark-c",
+      "name": "Fit the correctly rated plug",
+      "postconditions": {
+        "LCD Display.display_out": "lit",
+        "Welder.arc": "normal",
+        "Welder.power_in": "normal"
+      },
+      "preconditions": [
+        "The welder's Power Switch is OFF before the plug is handled (procedure ref p43 remedy 3).",
+        "The plug rating is checked against the Specifications table on page 7 (procedure ref p43 remedy 3; p7 specifications)."
+      ],
+      "procedure_refs": [
+        {
+          "page": 43,
+          "quote": "Check the plug rating against the Specifications table on page 7.",
+          "source": "owner-manual p43 troubleshooting, case 6 remedy 3"
+        },
+        {
+          "page": 7,
+          "quote": "Power Input 120/240 VAC",
+          "source": "owner-manual p7 specifications"
+        }
+      ],
+      "required_tests": [
+        "plug_rating_check"
+      ],
+      "safety_requirements": [
+        "Follow your plant's lockout procedure before anyone works on this machine. This is not a safety assessment.",
+        "Use only a plug rated for the OMNIPRO 220 supply (p7 specifications); an under-rated plug overheats."
+      ],
+      "state_effects": {
+        "Input Power Cord.plug_rating": "correct"
+      }
+    },
+    {
+      "case_id": "omni-06-lcd-dark",
+      "cause_letter": "e",
+      "expected_trace": {
+        "forbidden_state_changes": [
+          {
+            "path": "Welder.power_in",
+            "transition_id": null,
+            "value": "absent"
+          }
+        ],
+        "required_state_changes": [
+          {
+            "path": "Input Power Cord.power_out",
+            "transition_id": "archetype:source.s1.on@input-power-cord",
+            "value": "normal"
+          },
+          {
+            "path": "Reset Button.power_out",
+            "transition_id": "archetype:switch.r1.closed@reset-button",
+            "value": "normal"
+          },
+          {
+            "path": "Welder.power_in",
+            "transition_id": "link:edge:button-to-welder:normal",
+            "value": "normal"
+          },
+          {
+            "path": "LCD Display.display_out",
+            "transition_id": "archetype:interface.i-nominal.lit@lcd-display",
+            "value": "lit"
+          },
+          {
+            "path": "Wire Feed Mechanism.material_out",
+            "transition_id": "archetype:transmission.t1.feeding@wire-feed-mechanism",
+            "value": "normal"
+          },
+          {
+            "path": "Contact Tip.material_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@contact-tip",
+            "value": "normal"
+          },
+          {
+            "path": "Welder.arc",
+            "transition_id": "link:edge:arc-to-welder:normal",
+            "value": "normal"
+          }
+        ],
+        "terminal_conditions": {
+          "LCD Display.display_out": "lit",
+          "Welder.arc": "normal"
+        }
+      },
+      "fault_injection_ref": "omni-06-lcd-dark:e",
+      "id": "repair:omni-06-lcd-dark-e",
+      "name": "Secure the Input Power Cord twist-lock",
+      "postconditions": {
+        "LCD Display.display_out": "lit",
+        "Welder.arc": "normal",
+        "Welder.power_in": "normal"
+      },
+      "preconditions": [
+        "The welder's Power Switch is OFF before the cord is handled (procedure ref p43 remedy 5).",
+        "The outlet and breaker state are known before the unit is reconnected (procedure ref p43 remedy 5)."
+      ],
+      "procedure_refs": [
+        {
+          "page": 43,
+          "quote": "Ensure the twist-lock is fully secured.",
+          "source": "owner-manual p43 troubleshooting, case 6 remedy 5"
+        }
+      ],
+      "required_tests": [
+        "cord_check",
+        "outlet_power_check"
+      ],
+      "safety_requirements": [
+        "Follow your plant's lockout procedure before anyone works on this machine. This is not a safety assessment.",
+        "Disconnect power before reseating the twist-lock; do not defeat the twist-lock."
+      ],
+      "state_effects": {
+        "Input Power Cord.fault": "none"
+      }
+    },
+    {
+      "case_id": "omni-08-porosity",
+      "cause_letter": "a",
+      "expected_trace": {
+        "forbidden_state_changes": [
+          {
+            "path": "MIG Gun.material_out",
+            "transition_id": null,
+            "value": "absent"
+          }
+        ],
+        "required_state_changes": [
+          {
+            "path": "Shielding Gas Bottle.supply_out",
+            "transition_id": "archetype:storage.s-nominal.normal@shielding-gas-bottle",
+            "value": "normal"
+          },
+          {
+            "path": "Gas Valve.fluid_out",
+            "transition_id": "archetype:valve.v-open.open@gas-valve",
+            "value": "normal"
+          },
+          {
+            "path": "MIG Gun.gas_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@mig-gun",
+            "value": "normal"
+          },
+          {
+            "path": "Welding Arc.weld_quality",
+            "transition_id": "archetype:load.l-nominal.normal@welding-arc",
+            "value": "normal"
+          },
+          {
+            "path": "Welder.arc",
+            "transition_id": "link:edge:arc-to-welder:normal",
+            "value": "normal"
+          }
+        ],
+        "terminal_conditions": {
+          "Welder.arc": "normal",
+          "Welding Arc.weld_quality": "normal"
+        }
+      },
+      "fault_injection_ref": "omni-08-porosity:a",
+      "id": "repair:omni-08-porosity-a",
+      "name": "Replace or refill the shielding-gas bottle",
+      "postconditions": {
+        "MIG Gun.gas_out": "normal",
+        "Shielding Gas Bottle.level": "normal",
+        "Welder.arc": "normal",
+        "Welding Arc.weld_quality": "normal"
+      },
+      "preconditions": [
+        "Welder is powered off before the bottle is changed (procedure ref p43 remedy 1).",
+        "The replacement bottle matches the OMNIPRO 220 shielding-gas fitting (procedure ref p43 remedy 1)."
+      ],
+      "procedure_refs": [
+        {
+          "page": 43,
+          "quote": "Replace or refill the shielding-gas bottle.",
+          "source": "owner-manual p43 troubleshooting, case 8 remedy 1"
+        }
+      ],
+      "required_tests": [
+        "bottle_level_check",
+        "gas_flow_check"
+      ],
+      "safety_requirements": [
+        "Follow your plant's lockout procedure before anyone works on this machine. This is not a safety assessment.",
+        "Keep the gas bottle secured upright and away from heat."
+      ],
+      "state_effects": {
+        "Shielding Gas Bottle.level": "normal"
+      }
+    },
+    {
+      "case_id": "omni-08-porosity",
+      "cause_letter": "b",
+      "expected_trace": {
+        "forbidden_state_changes": [
+          {
+            "path": "MIG Gun.material_out",
+            "transition_id": null,
+            "value": "absent"
+          }
+        ],
+        "required_state_changes": [
+          {
+            "path": "MIG Gun.gas_out",
+            "transition_id": "archetype:conductor.c-nominal.ok@mig-gun",
+            "value": "normal"
+          },
+          {
+            "path": "Welding Arc.weld_quality",
+            "transition_id": "archetype:load.l-nominal.normal@welding-arc",
+            "value": "normal"
+          },
+          {
+            "path": "Welder.arc",
+            "transition_id": "link:edge:arc-to-welder:normal",
+            "value": "normal"
+          }
+        ],
+        "terminal_conditions": {
+          "Welder.arc": "normal",
+          "Welding Arc.weld_quality": "normal"
+        }
+      },
+      "fault_injection_ref": "omni-08-porosity:b",
+      "id": "repair:omni-08-porosity-b",
+      "name": "Adjust the regulator to the correct gas flow",
+      "postconditions": {
+        "MIG Gun.gas_out": "normal",
+        "Welder.arc": "normal",
+        "Welding Arc.weld_quality": "normal"
+      },
+      "preconditions": [
+        "Welder is powered off before the regulator is adjusted (procedure ref p43 remedy 2).",
+        "The bottle is not empty \u2014 an empty bottle is replaced first (procedure ref p43 remedy 1)."
+      ],
+      "procedure_refs": [
+        {
+          "page": 43,
+          "quote": "Adjust the regulator to the correct gas flow.",
+          "source": "owner-manual p43 troubleshooting, case 8 remedy 2"
+        }
+      ],
+      "required_tests": [
+        "gas_flow_check",
+        "bottle_level_check"
+      ],
+      "safety_requirements": [
+        "Follow your plant's lockout procedure before anyone works on this machine. This is not a safety assessment.",
+        "Check gas flow with the gun pointed away from yourself and others."
+      ],
+      "state_effects": {
+        "MIG Gun.gas_flow": "normal"
+      }
     }
-   ],
-   "required_tests": [
-    "post_release_spin",
-    "step27_wood_test"
-   ],
-   "state_effects": {
-    "Wire Feed Mechanism.tension": "normal"
-   }
-  }
- ],
- "note": "Minimal RepairAction schema (design v3, third Amendments item 1). v2 (3C): the ExpectedTrace required chain is feeder -> liner -> gun -> tip -> arc (the 3B feeder->gun link fault-override and gun->arc threshold link are retired; the A8 conductor rows and A7 load rows carry the gun/tip/arc path), and the transition ids carry the component (archetype:{row}@{component}) so multi-instance archetypes are unambiguous. Full preconditions/safety is Phase 5 \u2014 deliberately NOT built here. Only case 1 has reviewed actions; cases 2-9 get actions only when their archetypes and trace contracts are reviewed.",
- "version": "repair-actions-omnipro-v2"
+  ],
+  "note": "Minimal RepairAction schema (design v3, third Amendments item 1). v3 (readiness follow-up, 14 Nov 2026): reviewed RepairActions for the oracle-passing rows of cases 2-9 (16 new: case 2 a/d/e/f, case 3 a, case 4 b/e/g/h, case 5 b/c, case 6 a/c/e, case 8 a/b), each with the case-1 pattern (procedure refs + page evidence, ExpectedTrace required chain from the measured intervention trace, forbidden guard, terminal conditions). Rows the oracle does not pass carry NO RepairAction: a RepairAction on a failing row would certify a repair the twin cannot reproduce. Only case 1 had reviewed actions before v3. Full preconditions/safety is Phase 5 \u2014 deliberately NOT built here.",
+  "version": "repair-actions-omnipro-v3"
 }

@@ -14,7 +14,13 @@ def test_query_request_requires_revision_id():
         QueryRequest(question="What should I inspect?")
 
 
-def test_hybrid_retrieval_uses_bm25_when_semantic_search_fails(monkeypatch):
+def test_hybrid_retrieval_fails_loudly_when_semantic_search_fails(monkeypatch):
+    """Phase 1 Step 2 (infra P-06): the silent BM25-only fallback is
+    deleted. A Qdrant failure raises RetrievalUnavailableError (the
+    API maps it to HTTP 503) and BM25 is never consulted as a
+    fallback -- a dead Qdrant must not look like a valid run.
+    (BM25 stays a leg of the normal fusion path; only the fallback
+    on semantic failure is gone.)"""
     class Row:
         id = "chunk-1"
         content = "Terminal X12 should read 24 V."
@@ -31,20 +37,23 @@ def test_hybrid_retrieval_uses_bm25_when_semantic_search_fails(monkeypatch):
         def all(self):
             return [Row()]
 
-    class Session:
-        def query(self, *_args):
-            return Query()
-
     def unavailable(*_args, **_kwargs):
         raise ConnectionError("Qdrant is unavailable")
 
+    import pytest as _pytest
+
+    def _bm25_must_not_run(*_args, **_kwargs):
+        raise AssertionError("BM25 must not run as a fallback when semantic search fails")
+
     monkeypatch.setattr(hybrid, "semantic_search", unavailable)
-    monkeypatch.setattr(hybrid, "bm25_search", lambda *_args, **_kwargs: [("chunk-1", 1.0)])
+    monkeypatch.setattr(hybrid, "bm25_search", _bm25_must_not_run)
     monkeypatch.setattr(hybrid, "rerank", lambda _query, candidates, _top_k: [cid for cid, _ in candidates])
 
-    results = hybrid.hybrid_retrieve(Session(), "What voltage is expected at X12?", revision_id="rev-1")
+    with _pytest.raises(hybrid.RetrievalUnavailableError) as excinfo:
+        hybrid.hybrid_retrieve("What voltage is expected at X12?", revision_id="rev-1")
 
-    assert [result.chunk_id for result in results] == ["chunk-1"]
+    assert "semantic retrieval unavailable" in str(excinfo.value)
+    assert "Qdrant is unavailable" in excinfo.value.reason
 
 
 def test_ingest_pdf_accepts_existing_document_id_for_retry_resume(tmp_path, monkeypatch):

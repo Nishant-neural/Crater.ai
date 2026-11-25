@@ -246,7 +246,12 @@ def test_safety_evidence_comes_from_state():
     assert check_safety(evidence)["safety_flagged"] is True
 
 
-def test_safety_endpoint_flags_and_lockout_leads_in_respond():
+def test_safety_endpoint_is_removed_and_respond_still_flags():
+    """Phase 3 extraction: GET /diagnose/{id}/safety is removed (§2.5)
+    — safety still runs as the first node of every turn in run_turn,
+    and the check_safety / safety_evidence_from_state pure functions
+    are covered by the tests above. This test proves the route is
+    gone from the router."""
     from backend.api.routes import diagnostics as diagnostics_routes
     from backend.db.session import get_session
     db = _db()
@@ -264,7 +269,4 @@ def test_safety_endpoint_flags_and_lockout_leads_in_respond():
     app.dependency_overrides[get_session] = _override
     client = TestClient(app)
     resp = client.get(f"/diagnose/{session.id}/safety")
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["safety_flagged"] is True
-    assert body["triggers"][0]["trigger"] == "guard_or_interlock_defeated"
+    assert resp.status_code == 404, resp.text

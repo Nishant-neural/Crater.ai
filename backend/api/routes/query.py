@@ -9,12 +9,11 @@ unsourced claim.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
-from backend.db.models import Document, DocType, Revision
-from backend.db.session import get_session
+from backend.db.models import DocType
+from backend.retrieval import ingestion_client as ingestion_client_mod
 from backend.retrieval.hybrid import retrieve_revision_context
 
 router = APIRouter(prefix="/query", tags=["query"])
@@ -27,37 +26,44 @@ class QueryRequest(BaseModel):
 
 
 @router.post("")
-def query(payload: QueryRequest, session: Session = Depends(get_session)):
-    revision = session.get(Revision, payload.revision_id)
-    if not revision:
+def query(payload: QueryRequest):
+    # Phase 3 diagnosis-agent extraction: the revision check and the
+    # evidence both come from ingestion's HTTP API — no Revision /
+    # Document DB reads here. An ingestion failure raises
+    # IngestionUnavailableError (503, ingestion named).
+    client = ingestion_client_mod.get_ingestion_client()
+    summary = client.get_revision_summary(payload.revision_id)
+    if summary is None:
         raise HTTPException(404, "Revision not found")
 
     results, knowledge = retrieve_revision_context(
-        session=session, query=payload.question, product_id=revision.product_id,
+        query=payload.question, product_id=summary.get("product_id"),
         revision_id=payload.revision_id, doc_type=payload.doc_type.value if payload.doc_type else None,
+        client=client,
     )
 
     evidence = []
     for r in results:
-        doc = session.get(Document, r.document_id)
+        # Source document title / doc_type ride on the chunk row
+        # ingestion's API returned — no Document DB read.
         evidence.append(
             {
                 "chunk_id": r.chunk_id,
                 "chunk_type": r.chunk_type,
                 "content": r.content,
                 "page_number": r.page_number,
-                "source_document": doc.title if doc else None,
-                "doc_type": doc.doc_type.value if doc else None,
-                "revision_id": revision.id,
-                "revision_label": revision.label,
+                "source_document": r.source_document,
+                "doc_type": r.doc_type,
+                "revision_id": payload.revision_id,
+                "revision_label": summary.get("revision_label"),
             }
         )
 
     return {
         "question": payload.question,
-        "product_id": revision.product_id,
-        "revision_id": revision.id,
-        "revision_label": revision.label,
+        "product_id": summary.get("product_id"),
+        "revision_id": payload.revision_id,
+        "revision_label": summary.get("revision_label"),
         "evidence": evidence,
         "machine_knowledge": [
             {"kind": k.kind, "item_id": k.item_id, "score": k.score, "payload": k.payload,

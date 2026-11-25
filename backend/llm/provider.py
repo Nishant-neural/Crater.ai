@@ -4,9 +4,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import time
-import urllib.error
-import urllib.request
 from typing import Any, Protocol
+
+import httpx
 
 from backend.config import settings
 
@@ -22,6 +22,29 @@ LLMMessage = dict[str, Any]
 _RETRYABLE_STATUS = (429, 503)
 _MAX_ATTEMPTS = 3
 _RETRY_AFTER_CAP_SECONDS = 120.0
+
+# Gateway audit §3: every provider call carries an explicit timeout.
+# 180s for LLM providers (inter-service HTTP is 10s, contracts §1.2).
+LLM_PROVIDER_TIMEOUT_SECONDS = 180.0
+
+
+class LLMKeyMissingError(RuntimeError):
+    """No API key is configured for the requested LLM provider.
+
+    Gateway audit §3: a missing key is an explicit error, never a silent
+    (None, False). Callers already treat a raised error as a loud,
+    logged failure (extraction raises ExtractionError, diagnosis
+    degrades the turn); /ready reports it via the llm_keys check
+    (backend/api/readiness.py) so a misconfigured deploy is visible
+    before any diagnosis is attempted.
+    """
+
+    def __init__(self, provider_name: str):
+        super().__init__(
+            f"No API key configured for LLM provider {provider_name!r}: "
+            "set the provider's API key environment variable"
+        )
+        self.provider_name = provider_name
 
 
 def _retry_after_seconds(value: Any) -> float | None:
@@ -62,7 +85,7 @@ def _status_of_error(exc: Exception) -> int | None:
 
 
 def _retry_after_of_error(exc: Exception) -> float | None:
-    """Best-effort Retry-After for an exception: urllib HTTPError headers,
+    """Best-effort Retry-After for an exception: httpx response headers,
     or a google-genai error carrying a response object."""
     for source in (getattr(exc, "headers", None),
                    getattr(getattr(exc, "response", None), "headers", None)):
@@ -115,7 +138,7 @@ class AnthropicProvider:
         forced tool use is the structured-output mechanism); without one,
         this is the plain text reply exactly as before."""
         if not self.api_key:
-            return None, False
+            raise LLMKeyMissingError("anthropic")
 
         from anthropic import Anthropic
 
@@ -166,7 +189,7 @@ class GeminiProvider:
         exactly as before. Truncation is read off the first candidate's
         finish reason."""
         if not self.api_key:
-            return None, False
+            raise LLMKeyMissingError("gemini")
 
         from google import genai
         from google.genai import types
@@ -216,9 +239,9 @@ class OpenRouterProvider:
     a json_schema is given, plain text otherwise. 429/503 retry 3x with
     exponential backoff honouring Retry-After; any other HTTP failure
     raises with the status in the message, never a silent None. Transport
-    is stdlib urllib: no HTTP client exists anywhere in backend code,
-    pyproject declares httpx only under dev optional-deps and does not
-    declare requests at all, so this adds zero new dependencies.
+    is httpx with an explicit 180s timeout (gateway audit §3: no
+    provider call without a stated timeout; urllib is gone).
+    A missing key raises LLMKeyMissingError, never a silent (None, False).
     """
 
     api_key: str
@@ -237,7 +260,7 @@ class OpenRouterProvider:
         temperature: float | None = None,
     ) -> tuple[str | None, bool]:
         if not self.api_key:
-            return None, False
+            raise LLMKeyMissingError("openrouter")
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": [_openrouter_message(m) for m in messages],
@@ -248,35 +271,46 @@ class OpenRouterProvider:
         if json_schema is not None:
             payload["response_format"] = {"type": "json_object"}
         url = self.base_url.rstrip("/") + "/chat/completions"
-        body = json.dumps(payload).encode("utf-8")
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
         data: dict[str, Any] = {}
-        for attempt in range(_MAX_ATTEMPTS):
-            request = urllib.request.Request(
-                url,
-                data=body,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                method="POST",
-            )
-            try:
-                with urllib.request.urlopen(request, timeout=180) as response:
-                    data = json.loads(response.read().decode("utf-8"))
-            except urllib.error.HTTPError as exc:
-                if exc.code in _RETRYABLE_STATUS and attempt < _MAX_ATTEMPTS - 1:
-                    _sleep_before_retry(attempt, _retry_after_of_error(exc))
-                    continue
-                detail = ""
+        with httpx.Client(timeout=LLM_PROVIDER_TIMEOUT_SECONDS) as client:
+            for attempt in range(_MAX_ATTEMPTS):
                 try:
-                    detail = exc.read().decode("utf-8", "replace")[:500]
-                except Exception:
-                    detail = ""
-                raise RuntimeError(
-                    f"OpenRouter request failed: HTTP {exc.code} for model "
-                    f"{self.model}: {detail or exc.reason}"
-                ) from exc
-            break
+                    response = client.post(url, json=payload, headers=headers)
+                except httpx.TimeoutException as exc:
+                    raise RuntimeError(
+                        f"OpenRouter request timed out after "
+                        f"{LLM_PROVIDER_TIMEOUT_SECONDS:.0f}s for model "
+                        f"{self.model}: {exc}"
+                    ) from exc
+                except httpx.HTTPError as exc:
+                    raise RuntimeError(
+                        f"OpenRouter request failed for model "
+                        f"{self.model}: {exc}"
+                    ) from exc
+                if (
+                    response.status_code in _RETRYABLE_STATUS
+                    and attempt < _MAX_ATTEMPTS - 1
+                ):
+                    _sleep_before_retry(
+                        attempt,
+                        _retry_after_seconds(
+                            response.headers.get("Retry-After")
+                        ),
+                    )
+                    continue
+                if response.status_code >= 400:
+                    detail = response.text[:500]
+                    raise RuntimeError(
+                        f"OpenRouter request failed: HTTP {response.status_code} "
+                        f"for model {self.model}: "
+                        f"{detail or response.reason_phrase}"
+                    )
+                data = response.json()
+                break
         choice = (data.get("choices") or [{}])[0]
         message = choice.get("message") or {}
         content = message.get("content")

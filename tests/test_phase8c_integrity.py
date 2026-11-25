@@ -35,9 +35,29 @@ def test_revision_inheritance_is_effective(monkeypatch):
     assert result.model.entities[0].id == "entity:pump-p1"
     assert result.model.entities[0].source_ids == [e.id]
 def test_graph_expansion_retrieves_related_failure_and_procedure():
-    s=db(); p=Product(manufacturer="A",family="F",model="M"); s.add(p); s.flush(); r=Revision(product_id=p.id,label="A"); s.add(r); s.flush()
-    model={"entities":[{"id":"entity:p101","name":"P-101","entity_type":"pump"},{"id":"entity:m1","name":"Motor M1","entity_type":"motor"}],"relations":[{"id":"rel:1","subject_id":"entity:p101","subject_name":"P-101","relation_type":"driven_by","object_id":"entity:m1","object_name":"Motor M1"}],"failure_modes":[{"id":"failure:overheat","name":"Pump overheating","entity_ids":["entity:p101"]}],"procedures":[{"id":"procedure:cool","name":"Inspect cooling","entity_ids":["entity:p101"]}]}
-    s.add(MachineKnowledgeModelSnapshot(revision_id=r.id,version=1,model=model,source_counts={})); s.commit()
-    hits=retrieve_machine_knowledge(s,"P-101",product_id=p.id,revision_id=r.id,top_k=10,graph_hops=1)
-    kinds={h.kind for h in hits}
+    """Phase 3 extraction: the canonical model comes from ingestion's
+    HTTP API, never the snapshot table. The 2-hop graph expansion
+    itself is unchanged."""
+    import httpx
+
+    from backend.retrieval.ingestion_client import IngestionClient
+
+    model = {"entities": [{"id": "entity:p101", "name": "P-101", "entity_type": "pump"}, {"id": "entity:m1", "name": "Motor M1", "entity_type": "motor"}], "relations": [{"id": "rel:1", "subject_id": "entity:p101", "subject_name": "P-101", "relation_type": "driven_by", "object_id": "entity:m1", "object_name": "Motor M1"}], "failure_modes": [{"id": "failure:overheat", "name": "Pump overheating", "entity_ids": ["entity:p101"]}], "procedures": [{"id": "procedure:cool", "name": "Inspect cooling", "entity_ids": ["entity:p101"]}]}
+    product_id = "prod-1"
+    revision_id = "rev-1"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/v1/products/{product_id}/revisions":
+            return httpx.Response(200, json=[
+                {"id": revision_id, "product_id": product_id, "label": "A"}])
+        if request.url.path == f"/v1/knowledge/revisions/{revision_id}/model":
+            return httpx.Response(200, json={
+                "revision_id": revision_id, "version": 1, "model": model,
+                "source_counts": {}})
+        return httpx.Response(404, json={"error": {"code": "not_found"}})
+
+    client = IngestionClient(base_url="http://ingestion-test",
+                             transport=httpx.MockTransport(handler))
+    hits = retrieve_machine_knowledge("P-101", product_id=product_id, revision_id=revision_id, top_k=10, graph_hops=1, client=client)
+    kinds = {h.kind for h in hits}
     assert "failure_modes" in kinds and "procedures" in kinds and "relations" in kinds

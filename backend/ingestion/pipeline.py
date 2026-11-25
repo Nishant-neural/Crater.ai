@@ -1,4 +1,4 @@
-"""Resumable PDF ingestion pipeline with durable filesystem checkpoints."""
+"""Resumable PDF ingestion pipeline with durable Postgres progress."""
 from __future__ import annotations
 from pathlib import Path
 from typing import Callable
@@ -52,14 +52,20 @@ def _phase1_deterministic_model(chunk):
     """Deterministic model for a table chunk, or None = LLM fallback.
 
     Only table chunks with a router label the deterministic parser
-    handles (troubleshooting_table / spec_table) are parsed here.
-    Malformed tables return None from the parser and fall back to the
-    LLM path -- never silently dropped.
+    handles (troubleshooting_table / troubleshooting_table_2col /
+    spec_table / alarm_table) are parsed here. Malformed tables
+    return None from the parser and fall back to the LLM path --
+    never silently dropped.
     """
     if getattr(chunk.chunk_type, "value", None) != "table":
         return None
     source_type = (chunk.extra or {}).get("source_type") or chunk.chunk_type.value
-    if source_type not in {"troubleshooting_table", "spec_table"}:
+    if source_type not in {
+        "troubleshooting_table",
+        "troubleshooting_table_2col",
+        "spec_table",
+        "alarm_table",
+    }:
         return None
     try:
         return parse_table_chunk(

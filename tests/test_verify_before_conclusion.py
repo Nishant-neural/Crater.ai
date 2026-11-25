@@ -48,6 +48,7 @@ from backend.diagnostics import agent as diag_agent
 from backend.diagnostics.backtracking import FaultSignature, select_discriminating_test
 from backend.diagnostics.schema import DiagnosticState
 from backend.simulation.schema import DigitalTwinDefinition
+from tests.twin_testkit import make_twin_client
 
 
 # ---------------------------------------------------------------------------
@@ -133,12 +134,31 @@ def _install_twin(db, revision_id="r1"):
 
 @pytest.fixture()
 def db():
-    engine = create_engine("sqlite:///:memory:")
+    # StaticPool + check_same_thread False: the twin-verifier app runs
+    # in a TestClient worker thread and shares this session (see the
+    # autouse twin-client fixture below).
+    from sqlalchemy.pool import StaticPool
+    engine = create_engine("sqlite:///:memory:",
+                           connect_args={"check_same_thread": False},
+                           poolclass=StaticPool)
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine)
     session = factory()
     yield session
     session.close()
+
+
+@pytest.fixture(autouse=True)
+def _twin_verifier_client(monkeypatch, db):
+    """run_turn builds its own TwinVerifyClient; point it at the real
+    twin-verifier app over this test DB (inline dispatch, no broker) --
+    the HTTP equivalent of the LocalVerifyBackend removed in the Phase 3
+    twin split. Twin present -> real verdicts; twin absent -> the
+    service's own "no approved twin" NOT_VERIFIED."""
+    from tests.twin_testkit import make_twin_client
+    monkeypatch.setattr(
+        diag_agent, "TwinVerifyClient",
+        lambda **kwargs: make_twin_client(db, monkeypatch))
 
 
 def _make_session(db, revision_id="r1", turns_taken=0, hypotheses=None):
@@ -172,27 +192,49 @@ def _fake_gateway(monkeypatch, script):
 
 @pytest.fixture(autouse=True)
 def _stub_retrieve(monkeypatch):
+    # Phase 1 Step 3: run_turn retrieves evidence only, via
+    # hybrid_retrieve — the canonical-knowledge leg no longer feeds
+    # the prompt, so there is no retrieve_revision_context call to stub.
     monkeypatch.setattr(
-        diag_agent, "retrieve_revision_context", lambda *a, **k: ([], []))
+        diag_agent, "hybrid_retrieve", lambda *a, **k: [])
 
 
-def _turn(hypotheses, step_type, step_content, confidence=0.9):
+# Phase 1 Step 4: the turn is two structured-output calls — the rank call
+# returns hypotheses + eliminations, the ask call returns overall
+# confidence + the next step. _rank pads every ranking to 3 hypotheses
+# (the server enforces 3-5); the third cause is one the twin cannot
+# express, so it never changes a gate verdict.
+def _rank(*causes):
     return {
-        "hypotheses": [{"cause": c, "rationale": "test", "confidence": 0.5}
-                       for c in hypotheses],
+        "hypotheses": [{"cause": c, "rationale": "test", "confidence": 0.5,
+                        "supporting_evidence_chunk_ids": ["c1"]} for c in causes],
         "eliminated_hypotheses": [],
+    }
+
+
+def _ask(step_type, step_content, confidence=0.9):
+    return {
         "overall_confidence": confidence,
         "next_step": {"type": step_type, "content": step_content,
                       "rationale": "test", "safety_notes": []},
     }
 
 
+def _turn_script(*turns):
+    """(rank, ask) pairs -> the flat gateway script (rank, ask, rank, ask, ...)."""
+    script = []
+    for rank, ask in turns:
+        script.append((json.dumps(rank), False))
+        script.append((json.dumps(ask), False))
+    return script
+
+
 def _question_turn(cause):
-    return _turn(
-        [PRESSURE_CAUSE, TIGHT_CAUSE], "question",
-        f"What do you observe when you check the leading cause — {cause}? "
-        "Report the result and I will update the ranking.",
-        confidence=0.5)
+    return (_rank(PRESSURE_CAUSE, TIGHT_CAUSE, MOTOR_CAUSE),
+            _ask("question",
+                 f"What do you observe when you check the leading cause — {cause}? "
+                 "Report the result and I will update the ranking.",
+                 confidence=0.5))
 
 
 # ---------------------------------------------------------------------------
@@ -212,9 +254,9 @@ def _question_turn(cause):
 
 def test_conclusion_about_matched_component_with_no_fault_rule_ends_session_plainly(monkeypatch, db):
     _install_twin(db)
-    _fake_gateway(monkeypatch, [(json.dumps(_turn(
-        [MOTOR_CAUSE, TENSIONER_CAUSE], "conclusion",
-        "Wire Feed Motor is overheating — replace it")), False)])
+    _fake_gateway(monkeypatch, _turn_script((
+        _rank(MOTOR_CAUSE, TENSIONER_CAUSE, WINGNUT_CAUSE),
+        _ask("conclusion", "Wire Feed Motor is overheating — replace it"))))
     session = _make_session(db)
     state = diag_agent.run_turn(db, session, "motor is hot to the touch")
 
@@ -249,9 +291,9 @@ def test_conclusion_with_ambiguous_cause_is_still_demoted(monkeypatch, db):
     # made) is held as UNVERIFIED and the session asks about the next
     # untested cause -- more observation could disambiguate it.
     _install_twin(db)
-    _fake_gateway(monkeypatch, [(json.dumps(_turn(
-        [AMBIGUOUS_CAUSE, TENSIONER_CAUSE], "conclusion",
-        "Feed Tensioner and Welding Wire fault — replace both")), False)])
+    _fake_gateway(monkeypatch, _turn_script((
+        _rank(AMBIGUOUS_CAUSE, TENSIONER_CAUSE, WINGNUT_CAUSE),
+        _ask("conclusion", "Feed Tensioner and Welding Wire fault — replace both"))))
     session = _make_session(db)
     state = diag_agent.run_turn(db, session, "feed and wire both look wrong")
 
@@ -273,8 +315,9 @@ def test_conclusion_with_ambiguous_cause_is_still_demoted(monkeypatch, db):
 
 def test_conclusion_with_validated_top_hypothesis_stands(monkeypatch, db):
     _install_twin(db)
-    _fake_gateway(monkeypatch, [(json.dumps(_turn(
-        [TENSIONER_CAUSE], "conclusion", "Adjust the Feed Tensioner")), False)])
+    _fake_gateway(monkeypatch, _turn_script((
+        _rank(TENSIONER_CAUSE, MOTOR_CAUSE, WINGNUT_CAUSE),
+        _ask("conclusion", "Adjust the Feed Tensioner"))))
     session = _make_session(db)
     state = diag_agent.run_turn(db, session, "wire still not feeding")
 
@@ -291,9 +334,9 @@ def test_conclusion_with_validated_top_hypothesis_stands(monkeypatch, db):
 
 def test_conclusion_without_twin_is_labelled_unverified(monkeypatch, db):
     # No twin installed: the session's revision has no approved twin.
-    _fake_gateway(monkeypatch, [(json.dumps(_turn(
-        [MOTOR_CAUSE, TENSIONER_CAUSE], "conclusion",
-        "Wire Feed Motor is overheating — replace it")), False)])
+    _fake_gateway(monkeypatch, _turn_script((
+        _rank(MOTOR_CAUSE, TENSIONER_CAUSE, WINGNUT_CAUSE),
+        _ask("conclusion", "Wire Feed Motor is overheating — replace it"))))
     session = _make_session(db)
     state = diag_agent.run_turn(db, session, "motor is hot to the touch")
 
@@ -311,23 +354,25 @@ def test_conclusion_without_twin_is_labelled_unverified(monkeypatch, db):
 
 def test_tournament_verdicts_visible_to_llm_before_conclusion(monkeypatch, db):
     _install_twin(db)
-    calls = _fake_gateway(monkeypatch, [
-        (json.dumps(_turn(
-            [TENSIONER_CAUSE, MOTOR_CAUSE], "question",
-            "What do you observe when you check the leading cause — "
-            "Wire Feed Motor Runs but Wire Does Not Feed Properly? "
-            "Report the result and I will update the ranking.",
-            confidence=0.5)), False),
-        (json.dumps(_turn([TENSIONER_CAUSE], "conclusion",
-                          "Adjust the Feed Tensioner")), False),
-    ])
+    calls = _fake_gateway(monkeypatch, _turn_script(
+        (_rank(TENSIONER_CAUSE, MOTOR_CAUSE, WINGNUT_CAUSE),
+         _ask("question",
+              "What do you observe when you check the leading cause — "
+              "Wire Feed Motor Runs but Wire Does Not Feed Properly? "
+              "Report the result and I will update the ranking.",
+              confidence=0.5)),
+        (_rank(TENSIONER_CAUSE, MOTOR_CAUSE, WINGNUT_CAUSE),
+         _ask("conclusion", "Adjust the Feed Tensioner")),
+    ))
     session = _make_session(db)
     diag_agent.run_turn(db, session, "wire not feeding")
     state = diag_agent.run_turn(db, session, "tensioner looks tight")
 
-    # Turn 2's prompt — what the model saw before picking the conclusion —
-    # carries the pre-turn tournament's verdicts.
-    prompt = calls["messages"][1][0]["content"]
+    # Turn 2's rank prompt — what the model saw before picking the
+    # conclusion — carries the pre-turn tournament's verdicts. (Two
+    # calls per turn now, so it is messages[2]: turn-1 rank, turn-1
+    # ask, turn-2 rank, turn-2 ask.)
+    prompt = calls["messages"][2][0]["content"]
     assert "Twin verification" in prompt
     assert "VALIDATED" in prompt
     assert TENSIONER_CAUSE in prompt
@@ -350,9 +395,9 @@ def test_start_session_first_turn_conclusion_is_gated(monkeypatch, db):
     # demotion this test previously pinned -- the gate applies on the
     # start-session first turn too, and this cause can never validate.
     _install_twin(db)
-    _fake_gateway(monkeypatch, [(json.dumps(_turn(
-        [MOTOR_CAUSE, TENSIONER_CAUSE], "conclusion",
-        "Wire Feed Motor is overheating — replace it")), False)])
+    _fake_gateway(monkeypatch, _turn_script((
+        _rank(MOTOR_CAUSE, TENSIONER_CAUSE, WINGNUT_CAUSE),
+        _ask("conclusion", "Wire Feed Motor is overheating — replace it"))))
     session = diag_agent.start_session(
         db, "p1", "r1", "Wire Feed Motor Runs but Wire Does Not Feed Properly")
 
@@ -370,10 +415,10 @@ def test_start_session_first_turn_conclusion_is_gated(monkeypatch, db):
 # ---------------------------------------------------------------------------
 
 def test_same_cause_is_not_asked_twice_in_one_session(monkeypatch, db):
-    _fake_gateway(monkeypatch, [
-        (json.dumps(_question_turn(PRESSURE_CAUSE)), False),
-        (json.dumps(_question_turn(PRESSURE_CAUSE)), False),
-    ])
+    _fake_gateway(monkeypatch, _turn_script(
+        _question_turn(PRESSURE_CAUSE),
+        _question_turn(PRESSURE_CAUSE),
+    ))
     session = _make_session(db)
     first = diag_agent.run_turn(db, session, "wire not feeding")
     assert PRESSURE_CAUSE in first.current_step.content
@@ -387,18 +432,23 @@ def test_same_cause_is_not_asked_twice_in_one_session(monkeypatch, db):
 
 
 def test_all_causes_checked_asks_what_changed(monkeypatch, db):
-    _fake_gateway(monkeypatch, [
-        (json.dumps(_question_turn(PRESSURE_CAUSE)), False),
-        (json.dumps(_question_turn(TIGHT_CAUSE)), False),
-        (json.dumps(_question_turn(PRESSURE_CAUSE)), False),
-    ])
+    # Phase 1 Step 4: the ranking carries 3 live hypotheses (the
+    # server enforces 3-5), so "all causes checked" takes 3 turns and
+    # the what-changed question comes on the 4th.
+    _fake_gateway(monkeypatch, _turn_script(
+        _question_turn(PRESSURE_CAUSE),
+        _question_turn(TIGHT_CAUSE),
+        _question_turn(MOTOR_CAUSE),
+        _question_turn(PRESSURE_CAUSE),
+    ))
     session = _make_session(db)
     diag_agent.run_turn(db, session, "wire not feeding")
     diag_agent.run_turn(db, session, "pressure looks fine")
-    third = diag_agent.run_turn(db, session, "tensioner looks fine too")
+    diag_agent.run_turn(db, session, "tensioner looks fine too")
+    fourth = diag_agent.run_turn(db, session, "motor looks fine too")
 
-    assert third.current_step.type.value == "question"
-    assert "what changed" in third.current_step.content.lower()
+    assert fourth.current_step.type.value == "question"
+    assert "what changed" in fourth.current_step.content.lower()
 
 
 def _two_test_signatures():
@@ -448,7 +498,9 @@ def test_early_tournament_does_not_repeat_discriminating_test(monkeypatch, db):
     db.add(session)
     db.commit()
 
-    summary = diagnostics_routes._apply_early_tournament(db, session, state)
+    summary = diagnostics_routes._apply_early_tournament(
+        db, session, state,
+        twin_client=make_twin_client(db, monkeypatch))
     assert summary is not None
     assert summary["discriminating_test"]["test"] == "Check wire spool"
     assert state.current_step.content.startswith(
@@ -460,9 +512,9 @@ def test_early_tournament_does_not_repeat_discriminating_test(monkeypatch, db):
 # ---------------------------------------------------------------------------
 
 def test_llm_escalate_step_becomes_a_question(monkeypatch, db):
-    _fake_gateway(monkeypatch, [(json.dumps(_turn(
-        [TENSIONER_CAUSE], "escalate", "Handing off to a human expert.",
-        confidence=0.1)), False)])
+    _fake_gateway(monkeypatch, _turn_script((
+        _rank(TENSIONER_CAUSE, MOTOR_CAUSE, WINGNUT_CAUSE),
+        _ask("escalate", "Handing off to a human expert.", confidence=0.1))))
     session = _make_session(db)
     state = diag_agent.run_turn(db, session, "wire not feeding")
 
@@ -472,11 +524,12 @@ def test_llm_escalate_step_becomes_a_question(monkeypatch, db):
 
 
 def test_turn_limit_ends_with_unavailable_attempt(monkeypatch, db):
-    _fake_gateway(monkeypatch, [(json.dumps(_turn(
-        [PRESSURE_CAUSE, TIGHT_CAUSE], "question",
-        "What do you observe when you check the leading cause — "
-        "Insufficient wire feed pressure.? Report the result and I will update the ranking.",
-        confidence=0.5)), False)])
+    _fake_gateway(monkeypatch, _turn_script((
+        _rank(PRESSURE_CAUSE, TIGHT_CAUSE, MOTOR_CAUSE),
+        _ask("question",
+             "What do you observe when you check the leading cause — "
+             "Insufficient wire feed pressure.? Report the result and I will update the ranking.",
+             confidence=0.5))))
     session = _make_session(db, turns_taken=7,
                             hypotheses=[PRESSURE_CAUSE, TIGHT_CAUSE])
     state = diag_agent.run_turn(db, session, "still not feeding")
@@ -493,8 +546,9 @@ def test_turn_limit_ends_with_unavailable_attempt(monkeypatch, db):
 def test_validated_conclusion_at_turn_limit_still_concludes(monkeypatch, db):
     """The turn bound must not override a conclusion the gate validated."""
     _install_twin(db)
-    _fake_gateway(monkeypatch, [(json.dumps(_turn(
-        [TENSIONER_CAUSE], "conclusion", "Adjust the Feed Tensioner")), False)])
+    _fake_gateway(monkeypatch, _turn_script((
+        _rank(TENSIONER_CAUSE, MOTOR_CAUSE, WINGNUT_CAUSE),
+        _ask("conclusion", "Adjust the Feed Tensioner"))))
     session = _make_session(db, turns_taken=7)
     state = diag_agent.run_turn(db, session, "wire still not feeding")
 
@@ -529,13 +583,12 @@ def test_validated_conclusion_at_turn_limit_still_concludes(monkeypatch, db):
 
 def test_conclusion_about_cause_twin_cannot_express_ends_session_plainly(monkeypatch, db):
     _install_twin(db)
-    pressure_conclusion = _turn(
-        [PRESSURE_CAUSE, TIGHT_CAUSE], "conclusion",
-        "Insufficient wire feed pressure — increase the feed pressure properly")
-    _fake_gateway(monkeypatch, [
-        (json.dumps(pressure_conclusion), False),
-        (json.dumps(pressure_conclusion), False),
-    ])
+    pressure_conclusion = (
+        _rank(PRESSURE_CAUSE, TIGHT_CAUSE, MOTOR_CAUSE),
+        _ask("conclusion",
+             "Insufficient wire feed pressure — increase the feed pressure properly"))
+    _fake_gateway(monkeypatch, _turn_script(
+        pressure_conclusion, pressure_conclusion))
     session = _make_session(db)
     state = diag_agent.run_turn(db, session, "wire not feeding")
 

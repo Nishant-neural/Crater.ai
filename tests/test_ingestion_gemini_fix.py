@@ -213,13 +213,18 @@ def test_verification_does_not_crash_on_none_entity_name():
 
 
 def test_background_job_failure_logs_traceback(monkeypatch, caplog):
-    # Logging patch (21 Nov 2026): _run_job_background used to store only
+    # Logging patch (21 Nov 2026): the ingestion job used to store only
     # str(exc) on the job row and log nothing, so a background-job crash
     # left no traceback anywhere except the uvicorn console -- and only if
     # something logged it. A stubbed ingest_pdf raising must leave a logged
     # traceback (with the job id) while the job row keeps exactly the
     # stored error_message behaviour it had before.
-    import backend.api.routes.ingestion as ingestion_routes
+    # Phase 3 ingestion step: the job body moved from
+    # backend.api.routes.ingestion._run_job_background to the Celery task
+    # backend.ingestion.tasks.run_ingestion_job; the same assertions now
+    # target the task, run once via .apply() (the tracer reports the
+    # autoretry as state RETRY; the worker redelivers it in production).
+    import backend.ingestion.tasks as ingestion_tasks
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy.pool import StaticPool
@@ -244,16 +249,22 @@ def test_background_job_failure_logs_traceback(monkeypatch, caplog):
     db.add(job)
     db.commit()
 
-    monkeypatch.setattr(ingestion_routes, "SessionLocal", Session)
-    monkeypatch.setattr(ingestion_routes, "load_checkpoint", lambda job_id: {"ingest_tier2": True})
+    monkeypatch.setattr(ingestion_tasks, "SessionLocal", Session)
+    monkeypatch.setattr(ingestion_tasks, "load_checkpoint", lambda job_id: {"ingest_tier2": True})
 
     def _boom(**kwargs):
         raise RuntimeError("simulated ingestion failure")
 
-    monkeypatch.setattr(ingestion_routes, "ingest_pdf", _boom)
+    monkeypatch.setattr(ingestion_tasks, "ingest_pdf", _boom)
 
-    with caplog.at_level(logging.ERROR, logger="backend.api.routes.ingestion"):
-        ingestion_routes._run_job_background(job.id)
+    with caplog.at_level(logging.ERROR, logger="backend.ingestion.tasks"):
+        result = ingestion_tasks.run_ingestion_job.apply(args=[job.id])
+
+    # Autoretry engaged: .apply() runs the body eagerly, so the 3
+    # retries execute inline (4 logged tracebacks total) and the
+    # exhausted task ends FAILURE with the original exception.
+    assert result.state == "FAILURE"
+    assert caplog.text.count("Background ingestion job") == 4
 
     # The traceback is logged (logger.exception), with the job id.
     assert job.id in caplog.text

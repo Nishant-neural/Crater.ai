@@ -17,7 +17,6 @@ from backend.db.models import (
     PMDraft,
 )
 from backend.db.session import get_session
-from backend.diagnostics.closeout import mine_closeout_notes
 from backend.diagnostics.downtime import bad_actor_ranking, downtime_report
 from backend.diagnostics.learning import (
     clear_row_flag, learned_cases, review_learning_entry,
@@ -119,14 +118,6 @@ def review_pm(draft_id: str, payload: ReviewRequest, db: DBSession = Depends(get
     except ValueError as exc:
         raise HTTPException(409, str(exc))
     return {"id": draft.id, "status": draft.status, "reviewer": draft.reviewer}
-
-
-@router.get("/closeout")
-def closeout(symptom: str | None = None, product_id: str | None = None,
-             db: DBSession = Depends(get_session)):
-    """Close-out-note mining (steal item 5): groups, templates, fleet
-    patterns, unresolved flags, and honest coverage."""
-    return mine_closeout_notes(db, symptom=symptom, product_id=product_id)
 
 
 @router.get("/bad-actors")

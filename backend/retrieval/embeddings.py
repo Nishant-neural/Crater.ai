@@ -21,6 +21,13 @@ class EmbeddingProvider:
 
 class SentenceTransformerEmbeddings(EmbeddingProvider):
     def __init__(self, model_name: str | None = None):
+        # Same proxy-env quirk as the reranker: this VM's NO_PROXY
+        # holds bracketed IPv6 literals that huggingface_hub's httpx
+        # client cannot parse, so the load fails before the cache is
+        # even consulted. See backend/retrieval/_proxy_env.py.
+        from backend.retrieval._proxy_env import sanitize_proxy_env_for_httpx
+
+        sanitize_proxy_env_for_httpx()
         from sentence_transformers import SentenceTransformer  # lazy import: heavy dependency
 
         self.model_name = model_name or settings.embedding_model

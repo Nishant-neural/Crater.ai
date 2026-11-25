@@ -66,3 +66,52 @@ def test_cross_page_chunk_rule_first_label_plus_list():
     assert first == "procedure"
     assert all_labels == ["procedure", "troubleshooting_table"]
     assert merge_page_source_types([]) == ("other", ["other"])
+
+
+# ---------------------------------------------------------------------------
+# Step 1 (Phase 1, P-01): 2-column troubleshooting tables must route to
+# the deterministic parser, never to `other` (the LLM fallback that
+# truncated Miller §6-5 to 4 causes shown of 8 true for miller-01).
+# ---------------------------------------------------------------------------
+_MILLER_6_5_TABLE = [
+    [["Trouble", "Remedy"],
+     ["No weld output; wire does not feed.", "Be sure line disconnect switch is On (see Section 4-13)."],
+     ["", "Replace building line fuse or reset circuit breaker if open (see Section 4-13)."]],
+]
+_MILLER_8_8_TABLE = [
+    [["Excessive Spatter", ""],
+     ["Possible Causes", "Corrective Actions"],
+     ["Wire feed speed too high.", "Select lower wire feed speed."],
+     ["Voltage too high.", "Select lower voltage range."]],
+]
+_MILLER_8_17_TABLE = [
+    [["Problem", "Probable Cause", "Remedy"],
+     ["Wire feed motor operates, but wire does not feed.", "Too little pressure on wire feed rolls.", "Increase pressure setting on wire feed rolls."],
+     ["", "Incorrect wire feed rolls.", "Check size stamped on wire feed rolls, replace to match wire size and type if necessary."]],
+]
+
+
+def test_miller_6_5_two_col_labels_troubleshooting_2col():
+    assert classify_source_type(35, "Troubleshooting", _MILLER_6_5_TABLE, []) is SourceType.TROUBLESHOOTING_TABLE_2COL
+
+
+def test_miller_cause_action_table_labels_troubleshooting_2col():
+    # Title row above the header: the router must look past it.
+    assert classify_source_type(45, "Troubleshooting", _MILLER_8_8_TABLE, []) is SourceType.TROUBLESHOOTING_TABLE_2COL
+
+
+def test_miller_8_17_probable_cause_labels_troubleshooting_table():
+    # "Probable Cause" is §8-17's wording; the old header test
+    # required "possible cause" only, so this classified as `other`.
+    assert classify_source_type(48, "Troubleshooting", _MILLER_8_17_TABLE, []) is SourceType.TROUBLESHOOTING_TABLE
+
+
+def test_normalisation_gate_for_2col_label():
+    assert normalize_source_type("troubleshooting_table_2col", tables=_MILLER_6_5_TABLE) is SourceType.TROUBLESHOOTING_TABLE_2COL
+    assert normalize_source_type("troubleshooting_table_2col", tables=_MILLER_8_8_TABLE) is SourceType.TROUBLESHOOTING_TABLE_2COL
+    assert normalize_source_type("troubleshooting_table_2col", tables=[], text="random prose") is SourceType.OTHER
+    # A 3-col label still survives on a 3-col table, and a 2-col
+    # label does not survive on a 3-col table (router/parser must
+    # never silently cover for each other -- P-01).
+    assert normalize_source_type("troubleshooting_table", tables=_MILLER_8_17_TABLE) is SourceType.TROUBLESHOOTING_TABLE
+    assert normalize_source_type("troubleshooting_table_2col", tables=_MILLER_8_17_TABLE) is SourceType.OTHER

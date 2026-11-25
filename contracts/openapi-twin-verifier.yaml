@@ -1,0 +1,388 @@
+# Crater.ai — twin-verifier contracts (OpenAPI-ish, v1)
+# Governing: contracts/README.md §5. Verification is a JOB, not a call:
+# diagnosis ranks/asks/ships its turn; the verdict attaches when the job
+# completes. Archetype library FROZEN at 3c-1.0.0. Execution: Celery +
+# Redis (broker db 0, result db 1) with the job row in Postgres.
+openapi: 3.0.3
+info:
+  title: Crater.ai twin-verifier API
+  version: 1.0.0
+  description: >
+    Compiled twins, archetype library (frozen 3c-1.0.0), async
+    verification jobs. Deterministic state machine, not a physics
+    solver: only transitions from explicit simulation_rules.
+servers:
+  - url: https://{internal-host}/v1
+    description: Internal network (via gateway for public callers)
+security:
+  - ApiKeyAuth: []
+tags:
+  - { name: verify, description: Async verify jobs }
+  - { name: twins, description: Twin lifecycle }
+paths:
+  /verify:
+    post:
+      tags: [verify]
+      summary: Create a verify job. 202 + job id. Diagnosis never blocks waiting for the twin.
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/RequestId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VerifyRequest" }
+      responses:
+        "202":
+          description: Job accepted (queued or running).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VerifyJobAccepted" }
+        "422":
+          description: At least one hypothesis is required.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /verify/jobs/{job_id}:
+    get:
+      tags: [verify]
+      summary: Job status + verdicts + counts. Poll (or callback); never block a turn.
+      parameters:
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: job_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Job status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VerifyJob" }
+        "404":
+          description: Verify job not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /twins/{twin_id}/compile:
+    post:
+      tags: [twins]
+      summary: Compile a twin from a canonical-model snapshot id. Returns status draft.
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: twin_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [snapshot_id]
+              properties:
+                snapshot_id: { type: string }
+      responses:
+        "200":
+          description: Compiled twin (draft).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TwinCompiled" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /twins/{twin_id}/approve:
+    post:
+      tags: [twins]
+      summary: Move a draft twin to active. The explicit human gate stays.
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: twin_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Twin approved (active).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TwinCompiled" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /twins/{twin_id}/experiments:
+    post:
+      tags: [twins]
+      summary: Run experiments on a twin. Empty assertions -> 400, never validated.
+      parameters:
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: twin_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExperimentRequest" }
+      responses:
+        "200":
+          description: Experiment result.
+          content:
+            application/json:
+              schema: { type: object }
+        "400":
+          description: Empty assertions — never validated (closes the vacuous-validation trap).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /twins/{twin_id}/hypotheses:
+    post:
+      tags: [twins]
+      summary: Batch hypothesis check on a twin (HypothesisBatchRequest shape, kept).
+      parameters:
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: twin_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HypothesisBatchRequest" }
+      responses:
+        "200":
+          description: Batch result.
+          content:
+            application/json:
+              schema: { type: object }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /twins/{twin_id}/context:
+    get:
+      tags: [twins]
+      summary: Twin context.
+      parameters:
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: twin_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Context.
+          content:
+            application/json:
+              schema: { type: object }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /twins/{twin_id}/visual:
+    get:
+      tags: [twins]
+      summary: Twin visual (moves with its endpoint to twin-verifier; frontend rendering stays frontend).
+      parameters:
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: twin_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Visual.
+          content:
+            application/json:
+              schema: { type: object }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /revisions/{revision_id}/twin:
+    get:
+      tags: [twins]
+      summary: The active twin for a revision.
+      parameters:
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: revision_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Active twin.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TwinCompiled" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /health:
+    get:
+      summary: Liveness only (unversioned in deployment; shown here for completeness).
+      security: []
+      responses:
+        "200": { description: Process alive. }
+  /ready:
+    get:
+      summary: >
+        200 only when Postgres is healthy and the twin store holds >= 1
+        approved twin for the requested revision; zero approved twins is
+        a readiness failure, never a silent fallback.
+      security: []
+      responses:
+        "200": { description: Ready. }
+        "503": { description: Not ready — per-dependency breakdown. }
+components:
+  securitySchemes:
+    ApiKeyAuth: { type: apiKey, in: header, name: X-Api-Key }
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema: { type: string, minLength: 1, maxLength: 255 }
+      description: A retried turn never double-verifies.
+    RequestId:
+      name: X-Request-ID
+      in: header
+      required: false
+      schema: { type: string }
+  responses:
+    NotFound:
+      description: Unknown twin / revision id.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  schemas:
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            request_id: { type: string }
+            upstream: { type: string }
+    VerifyHypothesis:
+      type: object
+      required: [cause]
+      properties:
+        cause: { type: string }
+        repair_name: { type: string, nullable: true }
+        fault_component_id: { type: string, nullable: true }
+        failure_mode_name: { type: string, nullable: true }
+    VerifyRequest:
+      type: object
+      required: [hypotheses]
+      properties:
+        idempotency_key: { type: string, minLength: 1, maxLength: 255 }
+        twin_id: { type: string, nullable: true }
+        revision_id: { type: string, nullable: true }
+        session_id: { type: string, nullable: true }
+        hypotheses:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/VerifyHypothesis" }
+        timeout_ms: { type: integer, default: 2000, description: Per hypothesis; job cap 10 s. }
+    VerifyJobAccepted:
+      type: object
+      required: [job_id, status, twin_id]
+      properties:
+        job_id: { type: string }
+        status: { type: string, enum: [queued, running] }
+        twin_id: { type: string, nullable: true }
+        estimated_ms: { type: integer, nullable: true }
+    VerdictResult:
+      type: object
+      description: >
+        Every result carries cause, verdict, a plain-sentence reason
+        (never empty), fault component id where known, symptom path,
+        rules_used, trace, twin id, twin library version and verified-at.
+      required: [cause, verdict, reason, rules_used, trace, twin_id, twin_library_version, verified_at]
+      properties:
+        cause: { type: string }
+        verdict:
+          type: string
+          enum: [VALIDATED, REJECTED, CANNOT_EXPRESS, NOT_VERIFIED]
+          description: >
+            VALIDATED: fault reproduced the symptom and the repair restored
+            healthy — MUST carry rules_used, source_ids and evidence pages.
+            REJECTED: repair ran, symptom did not recover — demote, never
+            delete. CANNOT_EXPRESS: terminal for that cause — no further
+            observation can make this twin express it. NOT_VERIFIED:
+            ambiguity / no registry / could not complete / twin
+            unavailable or timed out — NOT a rejection, NOT a block.
+        reason: { type: string, description: Plain sentence, never empty. For CANNOT_EXPRESS: which of the three cases applies and what is missing. }
+        fault_component_id: { type: string, nullable: true }
+        symptom_path: { type: array, items: { type: string } }
+        rules_used:
+          type: array
+          items: { type: string }
+          description: >
+            Transition ids. REQUIRED for VALIDATED — no result without
+            rules_used may be VALIDATED (enforced by a contract test).
+        trace: { type: array, items: { type: string }, description: Execution trace. }
+        source_ids: { type: array, items: { type: string }, description: Required for VALIDATED (evidence pages alongside). }
+        evidence_pages: { type: array, items: { type: integer }, description: Required for VALIDATED. }
+        twin_id: { type: string }
+        twin_library_version: { type: string, enum: ["3c-1.0.0"], description: Archetype library, frozen. }
+        verified_at: { type: string, format: date-time }
+    VerifyJob:
+      type: object
+      required: [job_id, status, results, counts]
+      properties:
+        job_id: { type: string }
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed]
+          description: >
+            A job whose twin was unavailable still SUCCEEDS, with every
+            result NOT_VERIFIED and a reason. failed is for the job
+            itself erroring, not for a verdict.
+        results:
+          type: array
+          items: { $ref: "#/components/schemas/VerdictResult" }
+        counts:
+          type: object
+          required: [validated, rejected, cannot_express, not_verified]
+          properties:
+            validated: { type: integer }
+            rejected: { type: integer }
+            cannot_express: { type: integer }
+            not_verified: { type: integer }
+    TwinCompiled:
+      type: object
+      required: [twin_id, revision_id, model_version, status, transition_count, twin_library_version]
+      properties:
+        twin_id: { type: string }
+        revision_id: { type: string }
+        model_version: { type: string }
+        status: { type: string, enum: [draft, active] }
+        warnings: { type: array, items: { type: string } }
+        transition_count: { type: integer }
+        binding_coverage: { type: object }
+        seed_applied: { type: array, items: { type: string } }
+        twin_library_version: { type: string, enum: ["3c-1.0.0"] }
+    ExperimentRequest:
+      type: object
+      description: Existing shape, kept. Empty assertions -> 400, never validated.
+      required: [assertions]
+      properties:
+        assertions:
+          type: array
+          minItems: 1
+          items: { type: object }
+    HypothesisBatchRequest:
+      type: object
+      description: Existing shape, kept.
+      required: [hypotheses]
+      properties:
+        hypotheses:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/VerifyHypothesis" }
+# Diagnosis-side rules (enforced by diagnosis-agent's own contract test):
+# ranking and the next question are produced WITHOUT any verify result.
+# Verification can promote (+0.1 VALIDATED), demote (x0.5 REJECTED), or
+# close a line (CANNOT_EXPRESS terminal). It can never be waited on.
+# CANNOT_EXPRESS and NOT_VERIFIED never change ranking. A conclusion
+# requires VALIDATED, or the explicit CANNOT_EXPRESS terminal path —
+# never a bare "twin unavailable, conclude anyway".
+# Timeouts: 2 s per hypothesis, 10 s per job. On timeout the job reports
+# NOT_VERIFIED with reason "twin verification timed out" and diagnosis proceeds.

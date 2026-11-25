@@ -1,10 +1,21 @@
-"""Knowledge-model-aware, revision-aware and graph-expanded retrieval."""
+"""Knowledge-model-aware, revision-aware and graph-expanded retrieval.
+
+Phase 3 diagnosis-agent extraction (contracts README §1.1, §3.3):
+the canonical model is fetched from ingestion's HTTP API
+(``GET /v1/knowledge/revisions/{id}/model``), never read from
+ingestion's tables — the old ``MachineKnowledgeModelSnapshot`` /
+``Product`` / ``Revision`` DB reads are deleted. The scoring and
+2-hop graph expansion below are unchanged: they operate on the model
+dict, wherever it came from. A lookup failure raises
+``IngestionUnavailableError`` (mapped to 503 with ingestion named);
+an unknown revision / product mismatch returns no hits, as before.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from sqlalchemy.orm import Session
-from backend.db.models import MachineKnowledgeModelSnapshot, Product, Revision
+
+from backend.retrieval import ingestion_client as ingestion_client_mod
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_:.\-/]+")
 
@@ -32,24 +43,29 @@ def _text(item: dict) -> str:
     return " ".join(str(v) for v in item.values() if isinstance(v, (str, int, float)))
 
 
-def _latest_snapshot(session: Session, revision_id: str):
-    return session.query(MachineKnowledgeModelSnapshot).filter_by(revision_id=revision_id).order_by(MachineKnowledgeModelSnapshot.version.desc()).first()
-
-
-def retrieve_machine_knowledge(session: Session, query: str, *, product_id: str, revision_id: str, top_k: int = 12, graph_hops: int = 2) -> list[RetrievedKnowledge]:
+def retrieve_machine_knowledge(query: str, *, product_id: str, revision_id: str, top_k: int = 12, graph_hops: int = 2, client=None) -> list[RetrievedKnowledge]:
     """Retrieve direct semantic-ish matches, then expand through canonical relations.
 
     Vector/BM25 retrieval remains the source-document path; this function is the
-    canonical knowledge path. The graph is built from the persisted canonical
-    snapshot, so retrieval is entity/relation/state/failure/procedure aware.
+    canonical knowledge path. The graph is built from the canonical model
+    fetched from ingestion's HTTP API, so retrieval is
+    entity/relation/state/failure/procedure aware. ``client`` is the
+    ingestion client (tests inject a MockTransport-backed one); None
+    builds one from settings. Raises IngestionUnavailableError when
+    ingestion cannot answer.
     """
-    revision = session.get(Revision, revision_id)
-    if revision is None or revision.product_id != product_id:
+    client = client or ingestion_client_mod.get_ingestion_client()
+    revisions = client.list_revisions(product_id)
+    if revisions is None:
         return []
-    snapshot = _latest_snapshot(session, revision_id)
-    if snapshot is None:
+    revision = next((r for r in revisions if r.get("id") == revision_id), None)
+    if revision is None:
         return []
-    model = snapshot.model or {}
+    revision_label = revision.get("label") or ""
+    payload = client.get_model(revision_id)
+    if payload is None:
+        return []
+    model = payload.get("model") or {}
     kinds = ("entities", "relations", "ports", "quantities", "states", "events", "behaviors", "constraints", "procedures", "failure_modes", "conflicts", "unresolved_facts")
     items: list[tuple[str, dict]] = [(kind, item) for kind in kinds for item in model.get(kind, []) if isinstance(item, dict)]
     q = _tokens(query)
@@ -63,7 +79,7 @@ def retrieve_machine_knowledge(session: Session, query: str, *, product_id: str,
         exact = 2.0 if any(tok in text.lower() for tok in q if len(tok) >= 3 and ("-" in tok or ":" in tok)) else 0.0
         score = float(overlap) + exact
         if score > 0:
-            hit = RetrievedKnowledge(kind, _item_id(item), score, item, product_id, revision_id, revision.label, "direct")
+            hit = RetrievedKnowledge(kind, _item_id(item), score, item, product_id, revision_id, revision_label, "direct")
             scored[(kind, hit.item_id)] = hit
             if kind == "entities": entity_seed_ids.add(hit.item_id)
             entity_seed_ids.update(str(x) for x in item.get("entity_ids", []) if x)
@@ -87,7 +103,7 @@ def retrieve_machine_knowledge(session: Session, query: str, *, product_id: str,
             attached = {str(item.get("entity_id"))} | {str(x) for x in item.get("entity_ids", [])} | {str(item.get("subject_id")), str(item.get("object_id"))}
             if node in attached:
                 key = (kind, _item_id(item))
-                scored.setdefault(key, RetrievedKnowledge(kind, _item_id(item), 1.0, item, product_id, revision_id, revision.label, "entity:seed"))
+                scored.setdefault(key, RetrievedKnowledge(kind, _item_id(item), 1.0, item, product_id, revision_id, revision_label, "entity:seed"))
 
     for depth in range(1, max(0, graph_hops) + 1):
         nxt: set[str] = set()
@@ -99,7 +115,7 @@ def retrieve_machine_knowledge(session: Session, query: str, *, product_id: str,
             for kind, item in items:
                 if kind == "entities" and _item_id(item) == node:
                     key = (kind, node)
-                    scored.setdefault(key, RetrievedKnowledge(kind, node, max(0.5, 1.0 / depth), item, product_id, revision_id, revision.label, f"graph:{depth}"))
+                    scored.setdefault(key, RetrievedKnowledge(kind, node, max(0.5, 1.0 / depth), item, product_id, revision_id, revision_label, f"graph:{depth}"))
             # all typed knowledge attached to this entity
             for kind, item in items:
                 attached = {str(item.get("entity_id"))} | {str(x) for x in item.get("entity_ids", [])} | {str(item.get("subject_id")), str(item.get("object_id"))}
@@ -107,7 +123,7 @@ def retrieve_machine_knowledge(session: Session, query: str, *, product_id: str,
                     key = (kind, _item_id(item))
                     bonus = 1.0 / (depth + 1)
                     if key not in scored or scored[key].score < bonus:
-                        scored[key] = RetrievedKnowledge(kind, _item_id(item), bonus, item, product_id, revision_id, revision.label, f"graph:{depth}")
+                        scored[key] = RetrievedKnowledge(kind, _item_id(item), bonus, item, product_id, revision_id, revision_label, f"graph:{depth}")
         frontier = nxt
         if not frontier: break
 
@@ -116,6 +132,6 @@ def retrieve_machine_knowledge(session: Session, query: str, *, product_id: str,
         if a in visited and b in visited:
             for r in rels:
                 key = ("relations", _item_id(r))
-                scored.setdefault(key, RetrievedKnowledge("relations", _item_id(r), 0.75, r, product_id, revision_id, revision.label, "graph:relation"))
+                scored.setdefault(key, RetrievedKnowledge("relations", _item_id(r), 0.75, r, product_id, revision_id, revision_label, "graph:relation"))
 
     return sorted(scored.values(), key=lambda x: (-x.score, x.kind, x.item_id))[:top_k]

@@ -209,7 +209,7 @@ button { font: inherit; }
 .context-stat { display:inline-flex; flex-direction:column; margin-right:18px; }
 .context-stat b { font-size:19px; }
 .context-stat span { color:var(--muted); font-size:9px; text-transform:uppercase; }
-.context-docs { display:flex; flex-direction:column; gap:6px; margin-top:14px; padding-top:12px; border-top:1px solid var(--border); font-size:10px; color:var(--muted); }
+.context-docs { display:flex; flex-direction:column; gap:6px; margin-top:14px; padding-top:12px; border-top:1px solid var(--border); font-size:10px; color:var(--muted); max-height:220px; overflow:auto; }
 .context-docs b { color:var(--text); }
 .machine-graph { width:100%; overflow:auto; background:#101217; border-radius:8px; }
 .machine-graph svg { min-width:500px; width:100%; height:250px; }
@@ -495,29 +495,6 @@ button { font: inherit; }
   max-width: 1250px; margin: 0 auto 10px;
 }
 .model-procedure-panel .model-explorer-grid { max-width: 1250px; margin: 0 auto; }
-
-/* Expert capture as an overlay from Diagnose, not a top-level tab. */
-.expert-overlay {
-  position: fixed; inset: 0; z-index: 100; display: grid; place-items: center;
-  padding: 20px; background: rgba(5,7,10,.78); backdrop-filter: blur(8px);
-}
-.expert-overlay__card {
-  width: min(720px, 100%); max-height: 90vh; overflow: auto;
-  background: #15181e; border: 1px solid var(--border); border-radius: 14px;
-  padding: 24px; box-shadow: 0 24px 80px rgba(0,0,0,.4);
-}
-.expert-overlay__head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
-.expert-overlay .expert { display: flex; flex-direction: column; gap: 10px; }
-.expert-overlay .expert h2 { margin: 0; font-size: 20px; }
-.expert-overlay .expert select, .expert-overlay .expert input, .expert-overlay .expert textarea {
-  width: 100%; background: #111319; color: var(--text); border: 1px solid var(--border);
-  border-radius: 8px; padding: 10px 11px; font: inherit;
-}
-.expert-overlay .expert button {
-  background: var(--accent); color: #07111c; border: 0; border-radius: 8px;
-  padding: 9px 13px; font-weight: 700; cursor: pointer; align-self: flex-start;
-}
-.expert-overlay .expert button:disabled { opacity: .45; cursor: not-allowed; }
 
 /* v11 — adaptive layout */
 @media (max-width: 1200px) {

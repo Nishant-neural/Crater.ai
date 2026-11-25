@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field, model_validator
 from backend.knowledge.machine_model import UniversalMachineModel
 
 _DEFAULT_PATH = Path(__file__).with_name("repair_cases_omnipro.json")
+_MILLER_PATH = Path(__file__).with_name("repair_cases_miller.json")
 
 # Tiers, as integers (1 = Tier 1, ...). A chunk spanning pages takes the
 # best (lowest) tier of any page it covers, so a Tier 1 page in a
@@ -110,6 +111,19 @@ class RepairCaseRegistry(BaseModel):
 def load_registry(path: str | Path | None = None) -> RepairCaseRegistry:
     """Load the OMNIPRO registry (default: the JSON next to this module)."""
     with open(path or _DEFAULT_PATH, encoding="utf-8") as fh:
+        return RepairCaseRegistry.model_validate(json.load(fh))
+
+
+def load_miller_registry(path: str | Path | None = None) -> RepairCaseRegistry:
+    """Load the Miller Millermatic 252 registry (Phase 1 Step 1).
+
+    17 cases / 63 causes from the frozen Miller oracle. Tier 1 is
+    the troubleshooting tables (§6-5 PDF p. 35; §§8-8..8-17 PDF pp.
+    45-49). 11 cases carry twin-expressible rows; miller-08..13
+    carry settings / technique rows only. ``load_registry()`` is
+    unchanged (OMNIPRO); callers pick the registry for their product.
+    """
+    with open(path or _MILLER_PATH, encoding="utf-8") as fh:
         return RepairCaseRegistry.model_validate(json.load(fh))
 
 

@@ -4,10 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from backend.db.models import (
-    MachineKnowledgeBehavior, MachineKnowledgeEntity, MachineKnowledgeEvidence, MachineKnowledgeFact,
-    MachineKnowledgeRelation, Revision,
-)
+from backend.db.models import Chunk, DocType, Document, FailureMode, MachineKnowledgeBehavior, MachineKnowledgeEntity, MachineKnowledgeEvidence, MachineKnowledgeFact, MachineKnowledgeRelation, Revision
 from backend.db.session import get_session
 
 router = APIRouter(prefix="/knowledge", tags=["machine knowledge"])
@@ -77,6 +74,82 @@ def get_machine_knowledge(
             for row in evidence
         ],
     }
+
+
+@router.get("/revisions/{revision_id}/failure-modes")
+def list_failure_modes(revision_id: str, symptom: str | None = None, db: Session = Depends(get_session)):
+    """Queryable FailureModes for a symptom (contracts §3.3).
+
+    The read path diagnosis-agent uses instead of importing
+    ingestion code or reading its tables: rows are the persisted
+    FailureMode rows for the revision (one per parsed failure mode —
+    the deterministic table parse persists them via
+    ``persist_machine_knowledge``). ``symptom`` filters by substring
+    on the symptom text; without it every row is returned.
+    """
+    _revision_or_404(db, revision_id)
+    query = db.query(FailureMode).filter(FailureMode.revision_id == revision_id)
+    if symptom:
+        query = query.filter(FailureMode.symptom.ilike(f"%{symptom}%"))
+    rows = query.order_by(FailureMode.symptom, FailureMode.id).all()
+    return {"revision_id": revision_id,
+            "failure_modes": [
+                {"id": row.id, "symptom": row.symptom,
+                 "possible_causes": row.possible_causes or [],
+                 "diagnostic_test": row.diagnostic_test,
+                 "expected_observation": row.expected_observation,
+                 "repair_procedure_id": row.repair_procedure_id,
+                 "source_chunk_id": row.source_chunk_id}
+                for row in rows]}
+
+
+@router.get("/revisions/{revision_id}/chunks")
+def list_revision_chunks(revision_id: str, ids: str | None = None,
+                         doc_type: str | None = None,
+                         limit: int = 100, offset: int = 0,
+                         db: Session = Depends(get_session)):
+    """Chunk contents for a revision — the retrieval read path
+    diagnosis-agent uses (contracts §3.3; added by the diagnosis-agent
+    extraction, Phase 3 step 3).
+
+    Diagnosis must not read ingestion's tables, and Qdrant payloads
+    carry no chunk content (only product/revision/doc/chunk-type ids),
+    so hybrid retrieval fetches whole chunk contents here: the fused
+    set by ``ids`` (one call, <= hybrid_top_k rows) and the BM25
+    corpus by paging with no ``ids``. Contents are whole, never
+    truncated (contracts §1.1). ``limit=0`` fetches no rows — a light
+    revision-existence probe that also returns the revision's
+    product_id and label. 404 for an unknown revision.
+    """
+    revision = _revision_or_404(db, revision_id)
+    limit = max(0, min(limit, 500))
+    offset = max(0, offset)
+    query = (db.query(Chunk, Document)
+             .join(Document, Chunk.document_id == Document.id)
+             .filter(Document.revision_id == revision_id))
+    if ids:
+        wanted = [part.strip() for part in ids.split(",") if part.strip()]
+        query = query.filter(Chunk.id.in_(wanted or [""]))
+    if doc_type:
+        try:
+            dtype = DocType(doc_type)
+        except ValueError:
+            raise HTTPException(422, f"unknown doc_type {doc_type!r}")
+        query = query.filter(Document.doc_type == dtype)
+    total = query.count()
+    rows = query.order_by(Chunk.id).offset(offset).limit(limit).all() if limit else []
+    return {"revision_id": revision_id, "product_id": revision.product_id,
+            "revision_label": revision.label,
+            "total": total, "limit": limit, "offset": offset,
+            "chunks": [
+                {"id": chunk.id, "content": chunk.content,
+                 "page_number": chunk.page_number,
+                 "document_id": chunk.document_id,
+                 "document_title": document.title,
+                 "doc_type": document.doc_type.value,
+                 "document_page_count": document.page_count,
+                 "chunk_type": chunk.chunk_type.value}
+                for chunk, document in rows]}
 
 
 @router.get("/revisions/{revision_id}/entities")

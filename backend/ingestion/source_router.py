@@ -9,8 +9,8 @@ field, so the label flows end to end (prompt -> evidence -> DB column)
 without a schema change.
 
 Detection order (see phase1-implementation.md §3):
-  1. Table present + header match -> troubleshooting_table / alarm_table /
-     spec_table.
+  1. Table present + header match -> troubleshooting_table /
+     troubleshooting_table_2col / alarm_table / spec_table.
   2. No table: step density -> procedure (maintenance heading ->
      maintenance_procedure).
   3. Image-heavy, little text -> diagram.
@@ -48,6 +48,12 @@ _NUMERIC_CELL_RE = re.compile(r"^\s*(?:up to\s+)?\d[\d.,]*", re.I)
 
 class SourceType(str, Enum):
     TROUBLESHOOTING_TABLE = "troubleshooting_table"
+    # 2-column troubleshooting tables: Miller §6-5 Trouble | Remedy
+    # and §§8-8..8-15 Possible Causes | Corrective Actions. Same
+    # deterministic parser family as the 3-col shape, but the router
+    # must never label them `other` (P-01) and the pipeline must never
+    # hand them to the 3-col parser, so they get their own label.
+    TROUBLESHOOTING_TABLE_2COL = "troubleshooting_table_2col"
     ALARM_TABLE = "alarm_table"
     SPEC_TABLE = "spec_table"
     PROCEDURE = "procedure"
@@ -71,13 +77,17 @@ def _header_text(tables) -> str:
 
     pdfplumber fragments one logical table into many small tables, so
     the header is matched on the concatenated first rows, not on one
-    table object.
+    table object. The first TWO rows per table are included: §§8-8..
+    8-15 tables carry a defect title row above their header row
+    ("Excessive Spatter ..." / "Possible Causes | Corrective
+    Actions"), so a first-row-only scan misses them.
     """
     parts: list[str] = []
     for table in tables or []:
         if not table:
             continue
-        parts.append(" ".join(_cell_text(c) for c in table[0]))
+        for row in table[:2]:
+            parts.append(" ".join(_cell_text(c) for c in row))
     return _norm(" ".join(parts))
 
 
@@ -91,8 +101,21 @@ def _first_column_cells(tables) -> list[str]:
 
 
 def _has_troubleshooting_header(tables) -> bool:
+    # 3-col: Problem + Possible Cause (OMNIPRO) or Probable Cause
+    # (Miller §8-17). The old test required "possible cause" only,
+    # so §8-17 fell through to `other`.
     header = _header_text(tables)
-    return "problem" in header and "possible cause" in header
+    return "problem" in header and ("possible cause" in header or "probable cause" in header)
+
+
+def _has_troubleshooting_2col_header(tables) -> bool:
+    """2-col troubleshooting header: Trouble | Remedy (§6-5) or
+    Possible Causes | Corrective Actions (§§8-8..8-15)."""
+    header = _header_text(tables)
+    return (
+        ("trouble" in header and "remedy" in header)
+        or ("possible cause" in header and "corrective action" in header)
+    )
 
 
 def _has_alarm_codes(tables) -> bool:
@@ -149,6 +172,8 @@ def classify_source_type(
     if tables:
         if _has_troubleshooting_header(tables):
             return SourceType.TROUBLESHOOTING_TABLE
+        if _has_troubleshooting_2col_header(tables):
+            return SourceType.TROUBLESHOOTING_TABLE_2COL
         if _has_alarm_codes(tables) or _has_alarm_header(tables):
             return SourceType.ALARM_TABLE
         if _has_spec_heading(text) and _looks_like_spec_rows(tables):
@@ -187,6 +212,13 @@ def normalize_source_type(label, tables=None, text: str = "") -> SourceType:
     tables = tables or []
     if parsed is SourceType.TROUBLESHOOTING_TABLE:
         if not tables or not _has_troubleshooting_header(tables):
+            return (
+                SourceType.PROCEDURE
+                if _step_line_count(text) >= 3
+                else SourceType.OTHER
+            )
+    if parsed is SourceType.TROUBLESHOOTING_TABLE_2COL:
+        if not tables or not _has_troubleshooting_2col_header(tables):
             return (
                 SourceType.PROCEDURE
                 if _step_line_count(text) >= 3

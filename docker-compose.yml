@@ -1,0 +1,228 @@
+# Crater.ai — local container stack, gateway + ingestion + diagnosis-agent + twin-verifier
+# (contracts README §0/§10).
+# Traefik v3 at the edge + the gateway shim (inside the monolith until the
+# oracle gate passes) + the ingestion service and its Celery worker +
+# the shared infrastructure services. This file grows one service at a
+# time; the monolith's local run (uvicorn directly) is untouched —
+# compose is an additional way to run it, not a replacement.
+#
+# Start:  docker compose up --build
+# API via Traefik:  http://localhost/v1/...  (health: http://localhost/health)
+# Traefik dashboard (local only): http://localhost:8080
+#
+# Notes:
+# - postgres is now WIRED (ingestion step, contracts §8.2): DATABASE_URL
+#   points at the postgres:16 service for the gateway (monolith) and
+#   the ingestion service + worker. SQLite is no longer the compose
+#   database. There is no SQLite->Postgres data migration: the next
+#   ingestion round re-ingests from PDFs against Postgres, and Alembic
+#   (alembic upgrade head, run by the ingestion container on start)
+#   owns the schema from here on.
+# - redis is the Celery broker (db 0) + result backend (db 1) for
+#   ingestion jobs, and backs the gateway rate-limit token bucket
+#   (REDIS_URL). No durable state lives in Redis by design.
+# - the ingestion service is internal-only (no published port): the
+#   gateway still serves the public /v1/ surface from the monolith
+#   until the diagnosis-agent and twin-verifier splits land and
+#   Traefik routes per-service. Reach it on the internal network as
+#   http://ingestion:8000 (health: /health, readiness: /ready).
+# - the diagnosis-agent service is internal-only too (same reason):
+#   http://diagnosis-agent:8000. It reads knowledge and chunks from
+#   ingestion over HTTP (INGESTION_BASE_URL) and never reads
+#   ingestion's tables. The gateway (monolith) also calls ingestion
+#   over HTTP now, so it gets INGESTION_BASE_URL as well; ingestion
+#   gets DIAGNOSIS_BASE_URL for the Mode B diagnose call.
+# - the twin-verifier service is internal-only too (same reason):
+#   http://twin-verifier:8000. Diagnosis reaches it over HTTP
+#   (TWIN_VERIFIER_BASE_URL) and never runs the tournament in-process
+#   any more; the gateway (monolith) also gets TWIN_VERIFIER_BASE_URL
+#   because it still serves the public /v1/ surface from the monolith
+#   until Traefik routes per-service. The twin-verifier-worker runs
+#   the verify jobs (Celery queue "twin-verifier"); verify job rows
+#   live in Postgres (verify_jobs), never in memory.
+# - gateway auth is OFF by default (GATEWAY_AUTH_ENABLED=false), so the
+#   forwardAuth target answers 200 locally; enable it for any shared
+#   deployment and set GATEWAY_API_KEYS (or the api_keys table, once it
+#   exists) — Traefik then rejects unauthenticated requests.
+# - the frontend service is served by Traefik (same origin as the API)
+#   and talks ONLY to the gateway: its runtime config
+#   (docker/frontend/config.js, mounted over public/config.js) sets
+#   apiBase "/v1", so the browser never calls a backend service
+#   directly. No published port — Traefik is the only entry point.
+
+services:
+  traefik:
+    image: traefik:v3
+    command:
+      - --configfile=/etc/traefik/traefik.yml
+    ports:
+      - "80:80"
+      - "8080:8080"
+    volumes:
+      - ./docker/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./docker/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+    depends_on:
+      - gateway
+
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/gateway/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://crater:crater@postgres:5432/crater
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: crater_chunks
+      REDIS_URL: redis://redis:6379/0
+      INGESTION_BASE_URL: http://ingestion:8000
+      TWIN_VERIFIER_BASE_URL: http://twin-verifier:8000
+      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000
+      GATEWAY_AUTH_ENABLED: "false"
+      CRATER_LEARNING_ENABLED: "false"
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    depends_on:
+      - qdrant
+      - redis
+      - postgres
+    volumes:
+      - crater-data:/app/data
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend/Dockerfile
+    volumes:
+      # Runtime-injected API base (frontend audit Step 5): overrides
+      # the built public/config.js so the bundle is never rebuilt per
+      # environment. Same-origin "/v1" via Traefik/the gateway.
+      - ./docker/frontend/config.js:/usr/share/nginx/html/config.js:ro
+    depends_on:
+      - gateway
+
+  ingestion:
+    build:
+      context: .
+      dockerfile: docker/ingestion/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://crater:crater@postgres:5432/crater
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: crater_chunks
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      DIAGNOSIS_BASE_URL: http://diagnosis-agent:8000
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    depends_on:
+      - qdrant
+      - redis
+      - postgres
+    volumes:
+      - crater-data:/app/data
+
+  diagnosis-agent:
+    build:
+      context: .
+      dockerfile: docker/diagnosis-agent/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://crater:crater@postgres:5432/crater
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: crater_chunks
+      REDIS_URL: redis://redis:6379/0
+      INGESTION_BASE_URL: http://ingestion:8000
+      TWIN_VERIFIER_BASE_URL: http://twin-verifier:8000
+      CRATER_LEARNING_ENABLED: "false"
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    depends_on:
+      - qdrant
+      - redis
+      - postgres
+      - ingestion
+    volumes:
+      - crater-data:/app/data
+
+  twin-verifier:
+    build:
+      context: .
+      dockerfile: docker/twin-verifier/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://crater:crater@postgres:5432/crater
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    depends_on:
+      - redis
+      - postgres
+    volumes:
+      - crater-data:/app/data
+
+  twin-verifier-worker:
+    build:
+      context: .
+      dockerfile: docker/twin-verifier/Dockerfile
+    command: ["uv", "run", "celery", "-A", "backend.simulation.celery_app:celery_app", "worker", "--loglevel=info"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://crater:crater@postgres:5432/crater
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    depends_on:
+      - redis
+      - postgres
+      - twin-verifier
+    volumes:
+      - crater-data:/app/data
+
+  ingestion-worker:
+    build:
+      context: .
+      dockerfile: docker/ingestion/Dockerfile
+    command: ["uv", "run", "celery", "-A", "backend.ingestion.celery_app:celery_app", "worker", "--loglevel=info"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://crater:crater@postgres:5432/crater
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: crater_chunks
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    depends_on:
+      - qdrant
+      - redis
+      - postgres
+      - ingestion
+    volumes:
+      - crater-data:/app/data
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: crater
+      POSTGRES_PASSWORD: crater
+      POSTGRES_DB: crater
+    volumes:
+      - crater-postgres:/var/lib/postgresql/data
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    volumes:
+      - crater-qdrant:/qdrant/storage
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "no"]
+
+volumes:
+  crater-data:
+  crater-postgres:
+  crater-qdrant:

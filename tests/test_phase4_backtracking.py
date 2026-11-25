@@ -291,8 +291,7 @@ def test_lazy_ingest_summary_without_deferred_chunks():
 
 # --- early tournament endpoint (corrected loop order) ------------------------
 
-def test_early_tournament_reranks_and_selects_discriminating_test():
-    from backend.api.routes import diagnostics as diagnostics_routes
+def test_early_tournament_reranks_and_selects_discriminating_test(monkeypatch):
     from backend.db.models import (
         Base, DiagnosticSession, DiagnosticStatus, DigitalTwin,
         MachineKnowledgeModelSnapshot, Product, Revision, TwinStatus,
@@ -303,6 +302,7 @@ def test_early_tournament_reranks_and_selects_discriminating_test():
     from backend.simulation.omnipro_proof import (
         build_omnipro_proof_model, initial_twin_state, snapshot_model_for_tournament,
     )
+    from tests.twin_testkit import make_twin_client
 
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False},
                            poolclass=StaticPool)
@@ -355,9 +355,35 @@ def test_early_tournament_reranks_and_selects_discriminating_test():
     db.add(session)
     db.commit()
 
+    # Phase 3 extraction: POST /early-tournament is removed (§2.5) —
+    # the tournament runs inside POST /respond instead. The helper is
+    # driven directly here and the endpoint asserted 404 below.
+    # Phase 3 twin split: the tournament now runs over HTTP to the
+    # twin-verifier service; the test kit wires the client to the real
+    # twin app over this test DB (inline dispatch, no broker).
+    from backend.api.routes.diagnostics import _apply_early_tournament
+    summary = _apply_early_tournament(
+        db, session, state, twin_client=make_twin_client(db, monkeypatch))
+    assert summary is not None
+    assert summary["available"] is True
+    assert summary["counts"]["validated"] == 4
+    # All four case-1 causes validate, so the re-rank keeps all four —
+    # and the discriminating test is selected from the signatures.
+    assert len(summary["reranked"]["hypotheses"]) == 4
+    assert summary["discriminating_test"] is not None
+    assert summary["discriminating_test"]["test"] in {
+        "step27_wood_test", "post_release_spin", "groove_check"}
+    # The persisted session carries the timeline entry and the re-rank.
+    db.refresh(session)
+    persisted = DiagnosticState.model_validate(session.state)
+    assert any(entry.get("kind") == "early_tournament" for entry in persisted.timeline)
+
+    # The endpoint itself is gone from the diagnosis service (§2.5).
+    from backend.api.routes import diagnostics as diagnostics_routes
+    from backend.db.session import get_session
+
     app = FastAPI()
     app.include_router(diagnostics_routes.router)
-    from backend.db.session import get_session
 
     def _override():
         yield db
@@ -365,17 +391,4 @@ def test_early_tournament_reranks_and_selects_discriminating_test():
     app.dependency_overrides[get_session] = _override
     client = TestClient(app)
     resp = client.post(f"/diagnose/{session.id}/early-tournament")
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["available"] is True
-    assert body["counts"]["validated"] == 4
-    # All four case-1 causes validate, so the re-rank keeps all four —
-    # and the discriminating test is selected from the signatures.
-    assert len(body["hypotheses"]) == 4
-    assert body["discriminating_test"] is not None
-    assert body["discriminating_test"]["test"] in {
-        "step27_wood_test", "post_release_spin", "groove_check"}
-    # The persisted session carries the timeline entry and the re-rank.
-    db.refresh(session)
-    persisted = DiagnosticState.model_validate(session.state)
-    assert any(entry.get("kind") == "early_tournament" for entry in persisted.timeline)
+    assert resp.status_code == 404, resp.text

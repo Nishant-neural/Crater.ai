@@ -1,0 +1,272 @@
+# Crater.ai — gateway public surface (OpenAPI-ish, v1)
+# Governing: contracts/README.md §1, §2, §6. Traefik v3 + FastAPI shim
+# (250-350 lines, hard cap 400, no business logic). Shim owns only:
+# X-Request-ID, forwardAuth (API-key vs Postgres), /health, /ready,
+# uniform error envelope, Prometheus metrics.
+openapi: 3.0.3
+info:
+  title: Crater.ai public API (via gateway)
+  version: 1.0.0
+  description: >
+    Every public route lives under /v1/. /health and /ready stay
+    unversioned (infrastructure, not API). Expert routes are CUT
+    (/v1/expert/... -> 404). Learning routes are mounted but gated
+    (403 learning_deferred in production v1 until the pilot gate flips).
+servers:
+  - url: https://{gateway-host}/v1
+    description: Public gateway (Traefik v3 -> FastAPI shim -> services)
+security:
+  - ApiKeyAuth: []
+tags:
+  - { name: health, description: "Liveness/readiness (unversioned)" }
+  - { name: diagnose, description: "Diagnosis-agent (see openapi-diagnosis.yaml)" }
+  - { name: ingestion, description: "Ingestion jobs (see openapi-ingestion.yaml)" }
+  - { name: verify, description: "Twin-verifier jobs (see openapi-twin-verifier.yaml)" }
+paths:
+  /health:
+    get:
+      tags: [health]
+      summary: Liveness only — 200 while the process is up, checks NO dependency.
+      security: []
+      responses:
+        "200":
+          description: Process alive.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthResponse" }
+  /ready:
+    get:
+      tags: [health]
+      summary: >
+        Readiness aggregation — 200 only when Postgres, Qdrant (via
+        diagnosis-agent) and LLM-key configuration are all healthy.
+      security: []
+      responses:
+        "200":
+          description: Ready.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReadyResponse" }
+        "503":
+          description: Not ready — per-dependency breakdown names the failed check.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReadyResponse" }
+  /diagnose/start:
+    post:
+      tags: [diagnose]
+      summary: Start a diagnosis session and run turn 1 (diagnosis-agent).
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/RequestId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StartDiagnosticRequest" }
+      responses:
+        "201": { description: Session created, turn 1 run. See openapi-diagnosis.yaml. }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/ModeBNoRegistry" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/RetrievalDegraded" }
+  /jobs:
+    post:
+      tags: [ingestion]
+      summary: Upload a PDF for ingestion (202 + job). See openapi-ingestion.yaml.
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/RequestId" }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: "#/components/schemas/IngestUpload" }
+      responses:
+        "202": { description: Job accepted. See openapi-ingestion.yaml. }
+        "409": { $ref: "#/components/responses/IdempotencyConflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /verify:
+    post:
+      tags: [verify]
+      summary: Create an async verify job (202 + job). See openapi-twin-verifier.yaml.
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/RequestId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VerifyRequest" }
+      responses:
+        "202": { description: Job accepted. See openapi-twin-verifier.yaml. }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /learning/review:
+    get:
+      tags: [ingestion]
+      summary: "GATED in production v1 — 403 learning_deferred until the pilot gate flips (contracts README §2.4)."
+      responses:
+        "403":
+          description: Learning deferred until the pilot produces field outcomes.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /expert/knowledge:
+    get:
+      summary: "CUT — no such route. /v1/expert/... returns 404 (contracts README §2.3)."
+      responses:
+        "404": { $ref: "#/components/responses/NotFound" }
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+      description: >
+        API keys stored in Postgres, validated by the gateway shim as
+        Traefik's forwardAuth target. OIDC deferred.
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema: { type: string, minLength: 1, maxLength: 255 }
+      description: >
+        Honoured on all mutating endpoints. Same key + same payload
+        returns the original response; same key + different payload
+        (ingestion: different SHA-256) -> 409.
+    RequestId:
+      name: X-Request-ID
+      in: header
+      required: false
+      schema: { type: string }
+      description: >
+        Generated by the gateway when absent; propagated to every
+        upstream; echoed in the error envelope and every log line.
+  responses:
+    NotFound:
+      description: Unknown id or CUT route (e.g. /v1/expert/...).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Unprocessable:
+      description: Semantic validation failed (empty hypotheses, empty assertions, symptom required, observations sent before the schema change).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    IdempotencyConflict:
+      description: Same idempotency key with a different payload / SHA-256.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    ModeBNoRegistry:
+      description: Mode B request with no top-case registry; carries missing_pages and wait_message.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    RateLimited:
+      description: Rate limit exceeded — 429 with Retry-After.
+      headers:
+        Retry-After: { schema: { type: integer }, description: Seconds to wait. }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    RetrievalDegraded:
+      description: >
+        Retrieval failed (e.g. Qdrant down) — 503, never a silent
+        degraded result. Upstream names the dependency.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [ok], example: ok }
+    ReadyResponse:
+      type: object
+      required: [status, checks]
+      properties:
+        status: { type: string, enum: [ready, not_ready] }
+        checks:
+          type: object
+          additionalProperties:
+            type: object
+            required: [ready, detail]
+            properties:
+              ready: { type: boolean }
+              detail: { type: string, description: "Plain sentence naming what passed/failed." }
+    ErrorEnvelope:
+      type: object
+      description: The one error shape for every failure, from shim, Traefik, or any upstream.
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code: { type: string, example: retrieval_degraded }
+            message: { type: string, description: Plain sentence, never empty. }
+            request_id: { type: string, description: Same X-Request-ID. }
+            upstream: { type: string, description: Failing dependency or service. }
+    StartDiagnosticRequest:
+      type: object
+      required: [product_id, symptom]
+      properties:
+        product_id: { type: string }
+        revision_id: { type: string, nullable: true }
+        symptom: { type: string, minLength: 1 }
+        mode: { type: string, enum: [prebuilt, on_demand], default: prebuilt }
+        observations:
+          type: array
+          description: >
+            Accepted ONLY after the diagnosis schema change lands
+            (contracts README §4.1). Before that, 422
+            observations_not_supported_yet — never silently dropped.
+          items: { $ref: "#/components/schemas/Observation" }
+        partial_model: { type: boolean, default: false }
+        idempotency_key: { type: string, minLength: 1, maxLength: 255 }
+    Observation:
+      type: object
+      required: [input]
+      properties:
+        input: { type: string }
+        input_kind: { type: string, enum: [symptom, observation, measurement], default: observation }
+        answer_to_test: { type: string, nullable: true }
+    IngestUpload:
+      type: object
+      required: [revision_id, doc_type, idempotency_key, file]
+      properties:
+        revision_id: { type: string }
+        doc_type: { type: string, enum: [manual, troubleshooting, alarm, parts, wiring, specification] }
+        idempotency_key: { type: string, minLength: 1, maxLength: 255 }
+        ingest_tier2: { type: boolean, nullable: true }
+        mode: { type: string, enum: [prebuilt, on_demand], default: prebuilt }
+        file: { type: string, format: binary, description: PDF only. }
+    VerifyRequest:
+      type: object
+      required: [hypotheses]
+      properties:
+        idempotency_key: { type: string, minLength: 1, maxLength: 255 }
+        twin_id: { type: string, nullable: true }
+        revision_id: { type: string, nullable: true }
+        session_id: { type: string, nullable: true }
+        hypotheses:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [cause]
+            properties:
+              cause: { type: string }
+              repair_name: { type: string, nullable: true }
+              fault_component_id: { type: string, nullable: true }
+              failure_mode_name: { type: string, nullable: true }
+        timeout_ms: { type: integer, default: 2000, description: Per hypothesis; job cap 10 s. }
+# Rate limits (interim, Redis token bucket, per API key):
+#   diagnosis 10 req/min sustained / 20 burst; reads 60 req/min;
+#   ingestion uploads 5/hour. 429 + Retry-After on exceed.
+# Superseded and NOT in this contract: POST /v1/tables/parse,
+# POST /v1/retrieve (standalone), Redis Streams, /v1/expert/...

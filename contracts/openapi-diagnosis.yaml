@@ -1,0 +1,381 @@
+# Crater.ai — diagnosis-agent contracts (OpenAPI-ish, v1)
+# Governing: contracts/README.md §4. Retrieval search / hybrid / rerank /
+# knowledge lookup live HERE and only here. Indexing/embedding in ingestion.
+# v1 versions the EXISTING /v1/diagnose/... surface; the audit's proposed
+# POST /v1/sessions redesign is NOT adopted for v1 (would be /v2/).
+openapi: 3.0.3
+info:
+  title: Crater.ai diagnosis-agent API
+  version: 1.0.0
+  description: >
+    The diagnosis loop (LangGraph + Postgres checkpoints). Rank, then
+    ask. Verification is async via twin-verifier — diagnosis never
+    blocks waiting for the twin.
+servers:
+  - url: https://{internal-host}/v1
+    description: Internal network (via gateway for public callers)
+security:
+  - ApiKeyAuth: []
+tags:
+  - { name: diagnose, description: Sessions and turns }
+  - { name: query, description: Retrieval read (diagnosis-owned) }
+paths:
+  /diagnose/start:
+    post:
+      tags: [diagnose]
+      summary: Start a session and run turn 1.
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/RequestId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StartDiagnosticRequest" }
+      responses:
+        "201":
+          description: Session created, turn 1 run.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DiagnosticSessionView" }
+        "404":
+          description: Product or revision not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "409":
+          description: Mode B request with no top-case registry; carries missing_pages and wait_message.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "422":
+          description: Symptom required, or observations sent before the schema change (observations_not_supported_yet).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "503":
+          description: retrieval_degraded — session does not proceed on partial evidence in silence.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /diagnose/sessions:
+    get:
+      tags: [diagnose]
+      summary: List sessions for a product revision, most recent first.
+      description: >
+        Registered BEFORE /{session_id} so "sessions" is never read as
+        a session id.
+      parameters:
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: product_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: revision_id
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Sessions.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items: { $ref: "#/components/schemas/DiagnosticSessionView" }
+  /diagnose/{session_id}/respond:
+    post:
+      tags: [diagnose]
+      summary: Run the next turn.
+      parameters:
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RespondRequest" }
+      responses:
+        "200":
+          description: Turn response (same shape as start, plus asked/eliminated sets and ending when done).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DiagnosticSessionView" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          description: retrieval_degraded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /diagnose/{session_id}/context:
+    get:
+      tags: [diagnose]
+      summary: Session context (timeline, evidence) for restore.
+      parameters:
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Context.
+          content:
+            application/json:
+              schema: { type: object }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /diagnose/{session_id}:
+    get:
+      tags: [diagnose]
+      summary: Full session state, including asked sets, eliminated hypotheses, verification status.
+      parameters:
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Session.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DiagnosticSessionView" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /diagnose/{session_id}/outcome:
+    post:
+      tags: [diagnose]
+      summary: >
+        Record-only. Stores the outcome; does NOT feed learning in the
+        loop (learning deferred — contracts README §2.4).
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OutcomeFeedback" }
+      responses:
+        "200":
+          description: Outcome stored.
+          content:
+            application/json:
+              schema: { type: object }
+        "404": { $ref: "#/components/responses/NotFound" }
+    get:
+      tags: [diagnose]
+      summary: Read the recorded outcome.
+      parameters:
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Outcome.
+          content:
+            application/json:
+              schema: { type: object }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /query:
+    post:
+      tags: [query]
+      summary: >
+        Retrieval search over the revision's knowledge (whole items, no
+        truncation). Diagnosis-owned read; NOT a separate retrieval service.
+      parameters:
+        - { $ref: "#/components/parameters/RequestId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/QueryRequest" }
+      responses:
+        "200":
+          description: Whole items; degraded is always false on success.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QueryResponse" }
+        "503":
+          description: retrieval_degraded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /health:
+    get:
+      summary: Liveness only (unversioned in deployment; shown here for completeness).
+      security: []
+      responses:
+        "200": { description: Process alive. }
+  /ready:
+    get:
+      summary: >
+        200 only when Postgres, Qdrant (collection exists and answers)
+        and the CrossEncoder model loaded; else 503 naming the failed check.
+      security: []
+      responses:
+        "200": { description: Ready. }
+        "503": { description: Not ready — per-dependency breakdown. }
+components:
+  securitySchemes:
+    ApiKeyAuth: { type: apiKey, in: header, name: X-Api-Key }
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema: { type: string, minLength: 1, maxLength: 255 }
+      description: A retried session creation must not make a second session.
+    RequestId:
+      name: X-Request-ID
+      in: header
+      required: false
+      schema: { type: string }
+  responses:
+    NotFound:
+      description: Unknown session id.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  schemas:
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            request_id: { type: string }
+            upstream: { type: string }
+    Observation:
+      type: object
+      required: [input]
+      properties:
+        input: { type: string }
+        input_kind: { type: string, enum: [symptom, observation, measurement], default: observation }
+        answer_to_test: { type: string, nullable: true }
+    StartDiagnosticRequest:
+      type: object
+      required: [product_id, symptom]
+      properties:
+        product_id: { type: string }
+        revision_id: { type: string, nullable: true }
+        symptom: { type: string, minLength: 1 }
+        mode: { type: string, enum: [prebuilt, on_demand], default: prebuilt }
+        observations:
+          type: array
+          description: >
+            Re-ordered Step 3: accepted ONLY after the diagnosis schema
+            change lands. Before that, 422
+            observations_not_supported_yet — never silently dropped.
+            Frontend sends symptom only on start until the change is live.
+          items: { $ref: "#/components/schemas/Observation" }
+        partial_model: { type: boolean, default: false }
+        idempotency_key: { type: string, minLength: 1, maxLength: 255 }
+    RespondRequest:
+      type: object
+      required: [input]
+      properties:
+        input: { type: string }
+        input_kind: { type: string, enum: [symptom, observation, measurement], default: observation }
+        answer_to_test: { type: string, nullable: true }
+    Hypothesis:
+      type: object
+      description: 3 to 5 hypotheses per turn, never 1. Uncited ones are labelled guess.
+      required: [cause, confidence, citation_status]
+      properties:
+        cause: { type: string }
+        component: { type: string, nullable: true }
+        value: { type: string, nullable: true }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        rationale: { type: string, nullable: true }
+        supporting_evidence_chunk_ids: { type: array, items: { type: string } }
+        citation_status: { type: string, enum: [grounded, guess] }
+    DiagnosticSessionView:
+      type: object
+      required: [session_id, turn, hypotheses]
+      properties:
+        session_id: { type: string }
+        turn: { type: integer, minimum: 1 }
+        hypotheses:
+          type: array
+          minItems: 3
+          maxItems: 5
+          items: { $ref: "#/components/schemas/Hypothesis" }
+        eliminated_hypotheses:
+          type: array
+          items: { $ref: "#/components/schemas/Hypothesis" }
+        asked_causes: { type: array, items: { type: string } }
+        asked_tests: { type: array, items: { type: string } }
+        next_step: { type: object, description: Never repeats anything in the asked sets. }
+        discriminating_test: { type: object, description: Present on every turn 1, from the single picker. }
+        verification:
+          type: object
+          properties:
+            status: { type: string, enum: [pending, validated, rejected, cannot_express, not_verified, unavailable] }
+            reason: { type: string, description: Plain sentence, never empty when unavailable. }
+        safety: { type: object }
+        retrieval:
+          type: object
+          required: [chunks_returned, failure_modes_returned, degraded]
+          properties:
+            chunks_returned: { type: integer }
+            failure_modes_returned: { type: integer }
+            degraded: { type: boolean, enum: [false], description: Degraded retrieval is a 503, never a response. }
+        ending:
+          type: object
+          description: >
+            Present only when the session ends. Turn 8 without a validated
+            conclusion returns this — never a bare stop. No escalated status.
+          properties:
+            reason: { type: string, enum: [turn_limit, cannot_express] }
+            ranked_guesses: { type: array, items: { type: string } }
+            discriminating_test: { type: object }
+            missing: { type: string, description: What is missing, in plain words. }
+    OutcomeFeedback:
+      type: object
+      properties:
+        outcome: { type: string, description: "e.g. fixed | not_fixed | inconclusive." }
+        notes: { type: string, nullable: true }
+    QueryRequest:
+      type: object
+      required: [query, product_id, revision_id]
+      properties:
+        query: { type: string }
+        product_id: { type: string }
+        revision_id: { type: string }
+        doc_type: { type: string, nullable: true }
+        top_k: { type: integer, default: 5 }
+    QueryResponse:
+      type: object
+      required: [items, degraded]
+      properties:
+        items:
+          type: array
+          description: Whole items (chunks / table rows / knowledge) — no truncation field.
+          items: { type: object }
+        degraded: { type: boolean, enum: [false] }
+# Server-side rules enforced on every turn (not in the prompt):
+# - Hypotheses 3-5, never 1. - next_step never repeats the asked sets.
+# - Conclusion only with verification VALIDATED, else demoted to a
+#   question labelled UNVERIFIED. - Turn 8 without a validated
+#   conclusion returns the ending object, never a bare stop.
+# NOT public under /v1/ after the split: verify-repair,
+# verify-hypotheses, early-tournament, upstream-walk, next-test,
+# guided-checks, safety GET, fleet-patterns GET (contracts README §2.5).
+# NOT a contract: POST /v1/retrieve as a standalone service
+# (retrieval is an internal module of diagnosis-agent).

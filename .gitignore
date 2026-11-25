@@ -8,7 +8,12 @@ crater.db
 data/raw/
 data/processed/
 data/
-docs/
-crater-benchmarks/
+crater_checkpoints.db
+gate6-run/*.db*
+gate6-run/**/*.db*
+gate6-run/**/*.log
+gate6-run/**/*.stdout
+gate6-run/mock-llm/queue/
+frontend/dist/
 *.md
-benchmark/
+*.json

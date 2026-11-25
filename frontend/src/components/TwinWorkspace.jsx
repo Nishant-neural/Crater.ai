@@ -4,7 +4,6 @@ import {
   integrateKnowledge,
 } from "../api/client";
 import { getMachineModel } from "../api/knowledge";
-import DigitalTwin from "./DigitalTwin";
 import SimulationAgent from "./SimulationAgent";
 import VisualTwin from "./VisualTwin";
 
@@ -164,7 +163,6 @@ export default function TwinWorkspace({ productId, revisionId, product, revision
         <p className="muted">Rules applied: {(seed.rules_applied || []).map((r) => typeof r === "string" ? r : r.name || r.id || JSON.stringify(r)).join(", ") || "none"} · States applied: {(seed.states_applied || []).length} · Skipped: {(seed.skipped || []).length}</p>
       </section>}
       <div className="safety-note"><b>Simulation is not proof of physical safety.</b><span>The twin only replays behaviour written explicitly in the manual or the expert seed. It never invents physical behaviour.</span></div>
-      <DigitalTwin productId={productId} revisionId={revisionId} initialTwinId={twin?.twin_id || ""} />
     </>}
 
     {subView === "simulate" && (twin ? <SimulationAgent initialRevisionId={revisionId} diagnosticContext={diagnosticContext} refreshKey={twinRefreshKey} /> : <div className="model-empty">No twin compiled yet. <button className="primary-button" onClick={compile} disabled={busy || !hasModel}>Compile twin</button>{!hasModel && <p className="muted">Compile is disabled until the machine model is integrated.</p>}</div>)}

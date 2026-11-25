@@ -5,8 +5,8 @@ the cold-start job is fabricated at the seam the endpoints read: an
 IngestionJob row (processing, Tier 2 deferred), Chunk rows for the
 manual's pages, a checkpoint dict (monkeypatched load_checkpoint), and
 a MachineKnowledgeModelSnapshot row standing in for the pipeline's
-partial model (built from Tier 1 knowledge). start_session is stubbed
-(no LLM) for the ready path.
+partial model (built from Tier 1 knowledge). The diagnosis-agent
+HTTP call is stubbed (no LLM) for the ready path.
 """
 import sys
 import types
@@ -110,18 +110,22 @@ def cold_start(monkeypatch):
     monkeypatch.setattr(checkpoints, "load_checkpoint", fake_load)
     monkeypatch.setattr(checkpoints, "save_checkpoint", fake_save)
 
-    # Stub session start: no LLM — a row, like the Phase 4/5 tests do.
-    def fake_start(db_session, product_id, revision_id, symptom):
+    # Stub the diagnosis-agent HTTP call: no LLM — a row, like the
+    # Phase 4/5 tests do. Phase 3 extraction: Mode B diagnose calls
+    # the diagnosis-agent service over HTTP instead of importing
+    # start_session, so the stub replaces _start_diagnosis_session.
+    def fake_start_diagnosis_session(product_id, revision_id, symptom):
         from backend.diagnostics.schema import DiagnosticState
         row = DiagnosticSession(
             product_id=product_id, revision_id=revision_id,
             status=DiagnosticStatus.active,
             state=DiagnosticState(symptoms=[symptom]).model_dump(mode="json"))
-        db_session.add(row)
-        db_session.commit()
-        return row
+        db.add(row)
+        db.commit()
+        return {"session_id": row.id}
 
-    monkeypatch.setattr(mode_b_routes, "start_session", fake_start)
+    monkeypatch.setattr(mode_b_routes, "_start_diagnosis_session",
+                        fake_start_diagnosis_session)
     return {"db": db, "product": product, "revision": revision,
             "document": document, "job": job, "store": store}
 

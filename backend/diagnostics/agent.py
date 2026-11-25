@@ -53,9 +53,41 @@ is now treated like extraction instead of trusting a bare json.loads:
 - a malformed hypothesis is quarantined on its own (the good ones from
   the same turn are kept), the same per-fact rule as ingestion;
 - the prompt no longer carries the full text of every evidence chunk
-  inside state_json, and the component/failure-mode block is filtered
-  to what is relevant to this turn instead of dumping all ~300
-  components every time.
+  inside state_json, and there is no separate knowledge block at all:
+  the prompt carries ONE copy of the facts — the whole retrieved
+  evidence rows (Phase 1 Step 3). The old component/failure-mode
+  loader and the canonical graph JSON dump were second and third
+  copies of the same facts and are deleted, along with every
+  truncation cut (the 800-char evidence cut, the 1000-char reranker
+  cut, the 1,200-char knowledge cap). A whole evidence item that does not fit
+  the evidence budget is dropped whole, never cut.
+- rank-then-ask (Phase 1 Step 4, audit Step 3): one turn is TWO
+  structured-output calls, not one. Call 1 ranks 3-5 hypotheses
+  (server-enforced, structured component + value, citations
+  intersected with the chunks retrieved this turn, uncited hypotheses
+  labelled guesses, never a single guess, never an empty ranking).
+  Call 2 asks / concludes from that ranking, with the
+  discriminating-test candidate in its prompt. The discriminating
+  test comes from the single backtracking picker
+  (select_discriminating_test over the product's repair-case registry
+  signatures); when no signature test splits the ranking — the Miller
+  registry carries no per-cause test at all — a deterministic
+  ranking-fallback question names the leading unasked cause instead,
+  so every turn 1 still carries a discriminating_test.
+- LangGraph loop (Phase 1 Step 5, audit Step 4): the turn is a graph
+  (backend/diagnostics/graph.py) — safety, retrieve, verify-pre,
+  rank, discriminating-test, ask, verify-post, confidence, gate,
+  safeguards, persist — checkpointed in Postgres (file-backed SQLite
+  under the dev default). Safety runs first on every turn including
+  turn 1, inside run_turn. The twin is a thin async client
+  (twin_verification.py) speaking POST /v1/verify; a twin that is
+  down degrades to NOT_VERIFIED, never a silent pass. Confidence is
+  computed from the tournament on the new ranking + the
+  discriminating test's information gain (see compute_confidence) —
+  the ask call's overall_confidence is parsed and discarded.
+  ``_run_llm_turn`` stays as the standalone rank+ask implementation
+  the Step 4 tests exercise; the graph nodes call the same rank/ask
+  helpers, so the two-call shape is identical in both paths.
 """
 from __future__ import annotations
 
@@ -66,20 +98,31 @@ import re
 
 from sqlalchemy.orm import Session as DBSession
 
-from backend.db.models import Component, DiagnosticSession, DiagnosticStatus, FailureMode
-from backend.diagnostics.backtracking import _texts_match, unavailable_with_attempt
-from backend.diagnostics.prompts import DIAGNOSTIC_SYSTEM_PROMPT
+from backend.config import settings
+from backend.db.models import DiagnosticSession, DiagnosticStatus
+from backend.retrieval import ingestion_client as ingestion_client_mod
+from backend.diagnostics.backtracking import (
+    _texts_match,
+    select_discriminating_test,
+    signatures_from_registry,
+    unavailable_with_attempt,
+)
+from backend.diagnostics.prompts import ASK_SYSTEM_PROMPT, RANK_SYSTEM_PROMPT
 from backend.diagnostics.schema import DiagnosticState, EvidenceRef, Hypothesis, NextStep, NextStepType
 from backend.diagnostics.twin_verification import (
+    TwinVerifyClient,
     cannot_express_cause,
     conclusion_cause,
-    render_verification_block,
-    run_tournament_for_state,
     verdict_for_cause,
 )
 from backend.diagnostics.downtime import start_downtime
+from backend.knowledge.repair_cases import (
+    load_miller_registry,
+    load_registry,
+    registry_matches_product,
+)
 from backend.llm import gateway
-from backend.retrieval.hybrid import retrieve_revision_context
+from backend.retrieval.hybrid import hybrid_retrieve  # noqa: F401 - re-exported: tests stub diag_agent.hybrid_retrieve, and graph.retrieve_node calls it via this module
 
 logger = logging.getLogger(__name__)
 
@@ -95,14 +138,27 @@ _MAX_TURNS_BEFORE_UNAVAILABLE_ENDING = 8
 # stops at the end of the JSON object, so a large ceiling costs nothing
 # extra and can never truncate a turn the way the old 2000-token cap did.
 _DIAGNOSIS_TEMPERATURE = 0.2
-_MAX_COMPONENT_LINES = 25
-_MAX_FAILURE_MODE_LINES = 12
-_MAX_KNOWLEDGE_ITEM_CHARS = 1200
 
-# JSON Schema handed to the provider's structured-output mechanism, so
+# Prompt budget (Phase 1 Step 3, audit p.8): about 4,700 characters
+# (~1,250 tokens) per turn — system ~1,200, session state ~800,
+# evidence ~2,500 (top 5 whole items, table rows first), verification
+# ~200; audit gate (p.13) is at or below about 5,000 characters.
+# Evidence is whole items or nothing: an item that does not fit the
+# evidence budget is dropped whole, never cut — except the top-ranked
+# item, which is always included whole, so a large table chunk carrying
+# the answer rows can never fall off a cut the way the Miller §6-5
+# table did at character 3,418 of its old chunk.
+_PROMPT_EVIDENCE_BUDGET_CHARS = 2500
+_PROMPT_TOTAL_BUDGET_CHARS = 5000
+
+# JSON Schemas handed to the provider's structured-output mechanism, so
 # "return ONLY JSON" is enforced by the API instead of only asked for
-# in prose. Mirrors the shape in diagnostics/prompts.py exactly.
-_DIAGNOSIS_OUTPUT_SCHEMA: dict = {
+# in prose. One schema per call of the rank-then-ask split (Phase 1
+# Step 4): the rank call returns hypotheses + eliminations only, the
+# ask call returns the overall confidence + next step only. The old
+# single _DIAGNOSIS_OUTPUT_SCHEMA (all four fields in one call) is
+# deleted with the single call it belonged to.
+_RANK_OUTPUT_SCHEMA: dict = {
     "type": "object",
     "properties": {
         "hypotheses": {
@@ -111,6 +167,8 @@ _DIAGNOSIS_OUTPUT_SCHEMA: dict = {
                 "type": "object",
                 "properties": {
                     "cause": {"type": "string"},
+                    "component": {"type": "string"},
+                    "value": {"type": "string"},
                     "rationale": {"type": "string"},
                     "confidence": {"type": "number"},
                     "supporting_evidence_chunk_ids": {"type": "array", "items": {"type": "string"}},
@@ -124,6 +182,8 @@ _DIAGNOSIS_OUTPUT_SCHEMA: dict = {
                 "type": "object",
                 "properties": {
                     "cause": {"type": "string"},
+                    "component": {"type": "string"},
+                    "value": {"type": "string"},
                     "rationale": {"type": "string"},
                     "confidence": {"type": "number"},
                     "supporting_evidence_chunk_ids": {"type": "array", "items": {"type": "string"}},
@@ -131,6 +191,13 @@ _DIAGNOSIS_OUTPUT_SCHEMA: dict = {
                 "required": ["cause", "rationale", "confidence"],
             },
         },
+    },
+    "required": ["hypotheses", "eliminated_hypotheses"],
+}
+
+_ASK_OUTPUT_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
         "overall_confidence": {"type": "number"},
         "next_step": {
             "type": "object",
@@ -145,86 +212,17 @@ _DIAGNOSIS_OUTPUT_SCHEMA: dict = {
             "required": ["type", "content"],
         },
     },
-    "required": ["hypotheses", "eliminated_hypotheses", "overall_confidence", "next_step"],
+    "required": ["overall_confidence", "next_step"],
 }
 
-_TOKEN_RE = re.compile(r"[a-z0-9]+")
-
-
-def _query_tokens(text: str) -> set[str]:
-    return {t for t in _TOKEN_RE.findall(text.lower()) if len(t) >= 3}
-
-
-def _ranked_lines(scored: list[tuple[float, str, str]], limit: int) -> list[str]:
-    """Best-first by relevance score, then by name for determinism."""
-    scored.sort(key=lambda item: (-item[0], item[1]))
-    return [line for _score, _name, line in scored[:limit]]
-
-
-def _load_product_knowledge(db: DBSession, revision_id: str | None, query: str = "") -> str:
-    """Pull structured Component/FailureMode rows for this revision into a compact text block.
-
-    Filtered to this turn: every component/failure mode used to be dumped
-    (~300 components / ~18k chars on the OMNIPRO revision), most of it
-    unrelated to the symptom, which buried the relevant rows and bloated
-    the prompt. Now only the highest-overlap rows are sent, plus any
-    component named in a live hypothesis cause (so the model never loses
-    a hypothesis it is already tracking).
-    """
-    if not revision_id:
-        return "(no revision specified — component/failure-mode knowledge unavailable)"
-
-    components = db.query(Component).filter(Component.revision_id == revision_id).all()
-    failure_modes = db.query(FailureMode).filter(FailureMode.revision_id == revision_id).all()
-    # Approved expert knowledge is part of the revision-scoped Product Brain.
-    # Draft/rejected knowledge is deliberately invisible to the diagnostic agent.
-    from backend.db.models import ExpertKnowledge, KnowledgeStatus, KnowledgeVersion
-    approved_versions = db.query(KnowledgeVersion).filter(
-        KnowledgeVersion.revision_id == revision_id,
-        KnowledgeVersion.status == KnowledgeStatus.approved,
-    ).all()
-    approved_version_ids = [v.id for v in approved_versions]
-    expert_knowledge = []
-    if approved_version_ids:
-        expert_knowledge = db.query(ExpertKnowledge).filter(
-            ExpertKnowledge.knowledge_version_id.in_(approved_version_ids)
-        ).all()
-
-    tokens = _query_tokens(query)
-    lines: list[str] = []
-    if components:
-        scored: list[tuple[float, str, str]] = []
-        for c in components:
-            text = f"{c.name} {c.function or ''} {c.location_description or ''}"
-            overlap = len(tokens & _query_tokens(text)) if tokens else 0
-            line = (
-                f"- {c.name}: {(c.function or 'function unknown')[:120]} "
-                f"({(c.location_description or 'location unknown')[:120]})"
-            )
-            scored.append((float(overlap), c.name, line))
-        lines.append("Components (most relevant to this turn):")
-        lines.extend(_ranked_lines(scored, _MAX_COMPONENT_LINES))
-    if failure_modes:
-        scored = []
-        for f in failure_modes:
-            text = f"{f.symptom} {' '.join(f.possible_causes)}"
-            overlap = len(tokens & _query_tokens(text)) if tokens else 0
-            scored.append((float(overlap), f.symptom, f"- Symptom: {f.symptom} | Possible causes: {', '.join(f.possible_causes)}"))
-        lines.append("Known failure modes (most relevant to this turn):")
-        lines.extend(_ranked_lines(scored, _MAX_FAILURE_MODE_LINES))
-    if expert_knowledge:
-        lines.append("Approved senior-engineer knowledge:")
-        for k in expert_knowledge:
-            scope = ", ".join(k.applicable_revisions or []) or "revision scope from interview"
-            lines.append(
-                f"- {k.title} [{k.knowledge_type.value}; confidence={k.confidence:.2f}; scope={scope}] "
-                f"Symptom={k.symptom or 'n/a'} Condition={k.condition or 'n/a'} "
-                f"Action={k.action or 'n/a'} Expected={k.expected_observation or 'n/a'} "
-                f"Safety={'; '.join(k.safety_notes or []) or 'none stated'}"
-            )
-
-    return "\n".join(lines) if lines else "(no structured component/failure-mode/expert knowledge extracted yet for this revision)"
-
+# Rank-then-ask (Phase 1 Step 4, audit p.13): the server enforces a
+# minimum of 3 and a maximum of 5 ranked hypotheses. Fewer than 3 is
+# never a ranking — the model gets one repair call, and if it still
+# cannot rank 3 the turn degrades (previous hypotheses kept, question
+# asked) instead of persisting a single guess. More than 5 is cut to
+# the top 5 in ranked order.
+_MIN_RANKED_HYPOTHESES = 3
+_MAX_RANKED_HYPOTHESES = 5
 
 def _build_query(state: DiagnosticState, latest_input: str) -> str:
     """Retrieval query = symptoms + latest observation, not the whole state history (keeps it focused)."""
@@ -232,44 +230,152 @@ def _build_query(state: DiagnosticState, latest_input: str) -> str:
     return " ".join(p for p in parts if p)
 
 
-def _knowledge_context(knowledge) -> str:
-    if not knowledge:
-        return "(no canonical machine knowledge retrieved)"
-    lines = []
-    for item in knowledge:
-        # Payloads carry long evidence lists; the evidence itself is
-        # already in the evidence block, so strip it here and cap the
-        # remainder — a full payload dump used to add ~2k chars per item.
-        payload = {k: v for k, v in item.payload.items() if k != "evidence"}
-        text = json.dumps(payload, ensure_ascii=False)
-        if len(text) > _MAX_KNOWLEDGE_ITEM_CHARS:
-            text = text[:_MAX_KNOWLEDGE_ITEM_CHARS] + "… (truncated)"
-        lines.append(f"[{item.kind}:{item.item_id}; path={item.retrieval_path}; score={item.score:.2f}] {text}")
+def _state_summary(state: DiagnosticState, include_hypotheses: bool = True) -> str:
+    """Typed state summary for the prompt (audit budget ~800 chars),
+    not a JSON dump of everything.
+
+    Symptoms, the latest observations/measurements, live and eliminated
+    hypothesis causes with confidences, and the current step. Evidence
+    is NOT repeated here — it lives once in the evidence block, as
+    whole rows. Bounded by item count (latest 3 observations /
+    measurements), never by cutting an item's text. The ask call
+    passes ``include_hypotheses=False``: its ranked block already
+    carries the ranking, so repeating it here would be a second copy.
+    """
+    lines = [f"Symptoms: {'; '.join(state.symptoms) or '(none reported yet)'}"]
+    if state.observations:
+        lines.append(f"Observations: {'; '.join(state.observations[-3:])}")
+    if state.measurements:
+        lines.append(f"Measurements: {'; '.join(state.measurements[-3:])}")
+    if include_hypotheses:
+        if state.hypotheses:
+            lines.append("Hypotheses: " + "; ".join(
+                f"{h.cause} ({h.confidence:.2f})" for h in state.hypotheses))
+        else:
+            lines.append("Hypotheses: none yet.")
+        if state.eliminated_hypotheses:
+            lines.append("Eliminated: " + "; ".join(h.cause for h in state.eliminated_hypotheses))
+    lines.append(f"Overall confidence: {state.confidence:.2f}; turns taken: {state.turns_taken}")
+    if state.current_step is not None:
+        lines.append(f"Current step ({state.current_step.type.value}): {state.current_step.content}")
     return "\n".join(lines)
 
 
-def _compact_state_json(state: DiagnosticState) -> str:
-    """State for the prompt, without the full evidence text.
+def _select_evidence_items(evidence: list[EvidenceRef],
+                           budget: int = _PROMPT_EVIDENCE_BUDGET_CHARS) -> list[EvidenceRef]:
+    """Whole items or nothing, in rerank order.
 
-    The old code dumped state.model_dump_json(indent=2), which embedded
-    the FULL content of every evidence chunk (~50k chars for 8 chunks on
-    crater-8) even though the evidence block already carries the same
-    chunks truncated to 800 chars each. The model needs the evidence
-    ids/pages to cite, not a second copy of the text — so evidence is
-    reduced to references and the timeline is capped to the last 10
-    entries. No indent: JSON does not need pretty-printing to be read.
+    The top-ranked item is always included whole — it carries the
+    answer rows for this turn, and a large table chunk must never fall
+    off a size cut. Each further item is included whole only while the
+    running content total stays within the evidence budget; an item
+    that does not fit is dropped whole, never cut. ``hybrid_retrieve``
+    already returns at most ``final_top_k`` (5) items, so this selects
+    at most 5 whole items.
     """
-    data = state.model_dump(mode="json")
-    data["evidence"] = [
-        {
-            "chunk_id": e.get("chunk_id"),
-            "page_number": e.get("page_number"),
-            "source_document": e.get("source_document"),
-        }
-        for e in data.get("evidence", [])
-    ]
-    data["timeline"] = data.get("timeline", [])[-10:]
-    return json.dumps(data, ensure_ascii=False)
+    if not evidence:
+        return []
+    selected = [evidence[0]]
+    used = len(evidence[0].content)
+    for item in evidence[1:]:
+        if used + len(item.content) <= budget:
+            selected.append(item)
+            used += len(item.content)
+    return selected
+
+
+def _render_evidence_block(evidence: list[EvidenceRef]) -> str:
+    """The ONE copy of the facts in the prompt: whole retrieved rows.
+
+    No truncation anywhere — each item's full content is emitted, with
+    its chunk_id header for citation. Items dropped by
+    ``_select_evidence_items`` do not appear at all.
+    """
+    items = _select_evidence_items(evidence)
+    if not items:
+        return "(no relevant evidence retrieved)"
+    return "\n\n".join(
+        f"[{e.chunk_id}] (p.{e.page_number}, {e.source_document}):\n{e.content}"
+        for e in items
+    )
+
+
+def build_diagnosis_prompt(state: DiagnosticState, evidence: list[EvidenceRef],
+                           verification_block: str = "") -> str:
+    """Assemble the rank call's prompt (Phase 1 Step 4: call 1 of
+    rank-then-ask).
+
+    System instructions + typed state summary + whole evidence rows +
+    verification block. No knowledge block: the facts appear exactly
+    once, as evidence. Target about 4,700 characters; the audit gate
+    is at or below about 5,000 (see ``_PROMPT_TOTAL_BUDGET_CHARS``).
+    """
+    return RANK_SYSTEM_PROMPT.format(
+        state_summary=_state_summary(state),
+        evidence_block=_render_evidence_block(evidence),
+        verification_block=verification_block or "(twin verification unavailable for this turn)",
+    )
+
+
+def _render_ranked_block(hypotheses: list[dict]) -> str:
+    """The ranking for the ask call: one line per hypothesis with its
+    structured fields and surviving citations. No evidence text is
+    repeated here — the citations point back at the rank call's
+    evidence block."""
+    if not hypotheses:
+        return "(no hypotheses ranked)"
+    lines = []
+    for index, h in enumerate(hypotheses, 1):
+        cited = ", ".join(h.get("supporting_evidence_chunk_ids") or [])
+        lines.append(
+            f"{index}. {h.get('cause')} "
+            f"(component: {h.get('component') or '-'}, "
+            f"value: {h.get('value') or '-'}, "
+            f"confidence {float(h.get('confidence') or 0.0):.2f}, "
+            f"{h.get('citation_status') or 'guess'}"
+            + (f", cites {cited}" if cited else ", uncited")
+            + f") — {h.get('rationale') or ''}")
+    return "\n".join(lines)
+
+
+def _render_discriminating_block(discriminating_test: dict | None) -> str:
+    """The discriminating-test candidate for the ask call: the test,
+    what it separates, and why. When the picker found no splitting
+    test, the fallback text says so plainly instead of inventing a
+    test name."""
+    if not discriminating_test:
+        return ("(no discriminating test could be named for this ranking — "
+                "ask for the most informative observation instead)")
+    separates = discriminating_test.get("separates") or []
+    lines = [f"Test: {discriminating_test.get('test')}"]
+    if discriminating_test.get("rationale"):
+        lines.append(f"Why: {discriminating_test.get('rationale')}")
+    if separates:
+        lines.append("Separates: " + "; ".join(str(c) for c in separates))
+    gain = discriminating_test.get("information_gain_bits")
+    if gain is not None:
+        lines.append(f"Information gain: {gain} bits")
+    return "\n".join(lines)
+
+
+def build_ask_prompt(state: DiagnosticState, hypotheses: list[dict],
+                     discriminating_test: dict | None,
+                     verification_block: str = "") -> str:
+    """Assemble the ask call's prompt (Phase 1 Step 4: call 2 of
+    rank-then-ask).
+
+    System instructions + typed state summary (without the hypotheses
+    — the ranked block carries them) + ranked hypotheses +
+    discriminating-test candidate + verification block. No evidence
+    block: the ask call reasons over the ranking, not over raw chunks,
+    so it stays well under the ~5,000-char gate on its own.
+    """
+    return ASK_SYSTEM_PROMPT.format(
+        state_summary=_state_summary(state, include_hypotheses=False),
+        ranked_block=_render_ranked_block(hypotheses),
+        discriminating_block=_render_discriminating_block(discriminating_test),
+        verification_block=verification_block or "(twin verification unavailable for this turn)",
+    )
 
 
 # --- Lenient JSON parsing for diagnostic-turn output -------------------
@@ -403,8 +509,11 @@ def _asked_causes_and_tests(state: DiagnosticState) -> tuple[set[str], set[str]]
     so callers can compare them exactly. The current turn's own entries
     are not in the timeline yet when this runs, so they are never counted.
     """
-    asked_causes: set[str] = set()
-    asked_tests: set[str] = set()
+    # Phase 1 Step 5: the explicit sets own the answer; the timeline
+    # read below is the union for sessions stored before the sets
+    # existed (their history must not be lost).
+    asked_causes: set[str] = set(state.asked_causes or [])
+    asked_tests: set[str] = set(state.asked_tests or [])
     candidates = [h.cause for h in list(state.hypotheses) + list(state.eliminated_hypotheses)]
     for entry in state.timeline:
         if entry.get("kind") == "early_tournament":
@@ -415,6 +524,18 @@ def _asked_causes_and_tests(state: DiagnosticState) -> tuple[set[str], set[str]]
                 for candidate in candidates:
                     if _texts_match(entry["cause"], candidate):
                         asked_causes.add(candidate)
+        # Phase 1 Step 4: the turn itself now carries its
+        # discriminating test on the timeline entry, so a test the
+        # agent attached (not only one the routes-level tournament
+        # attached) counts as asked-and-answered next turn. Walk
+        # entries store the test as a plain string, turn entries as a
+        # dict — both count.
+        own_test = entry.get("discriminating_test")
+        if isinstance(own_test, dict):
+            if own_test.get("test"):
+                asked_tests.add(own_test["test"])
+        elif isinstance(own_test, str) and own_test:
+            asked_tests.add(own_test)
         step = entry.get("step") or ""
         if step and (entry.get("step_type") or "") in ("question", "action"):
             match = _LEADING_CAUSE_RE.search(step)
@@ -480,38 +601,118 @@ def _degraded_result(state: DiagnosticState, reason: str) -> dict:
     }
 
 
-def _normalize_result(state: DiagnosticState, parsed: dict) -> dict | None:
-    """Validate a parsed turn the way ingestion validates a chunk: keep
-    every good hypothesis, quarantine only the malformed ones, coerce
-    percent confidences, and never let a missing/malformed next_step
-    crash the turn — it becomes a question instead."""
+def _normalize_evidence_text(evidence: list[EvidenceRef]) -> str:
+    """The prompted evidence as one lower-cased string, for the
+    component-grounding check: a ranked component must occur in the
+    evidence the model actually saw."""
+    return "\n".join(e.content for e in _select_evidence_items(evidence)).lower()
+
+
+def _valid_hypotheses(raw_list, default_confidence: float,
+                      prompted_chunk_ids: set[str],
+                      evidence_text: str) -> list[dict]:
+    """Validate one hypothesis list the way ingestion validates a chunk:
+    keep every good hypothesis, quarantine only the malformed ones,
+    coerce percent confidences — plus the Step 4 server rules (audit
+    P-14 / P-16):
+
+    - citation intersection: cited chunk ids are intersected with the
+      chunk ids actually prompted this turn; ids that were not
+      retrieved are dropped, never honoured. A hypothesis with zero
+      surviving citations is kept and labelled ``guess`` (P-15), not
+      dropped — an uncited ranking is a guess, not a fabrication to
+      hide.
+    - structured component: a non-empty component must occur in the
+      prompted evidence text; one that does not is blanked (the
+      hypothesis is kept, the unverified field is quarantined), so a
+      component is never asserted from free text.
+    """
+    valid: list[dict] = []
+    if not isinstance(raw_list, list):
+        return valid
+    for item in raw_list:
+        if not isinstance(item, dict):
+            logger.warning("diagnosis: dropping non-object hypothesis: %.200s", repr(item))
+            continue
+        item = dict(item)
+        item["confidence"] = _coerce_confidence(item.get("confidence"), default_confidence)
+        cited = [c for c in (item.get("supporting_evidence_chunk_ids") or [])
+                 if isinstance(c, str) and c in prompted_chunk_ids]
+        if len(cited) != len(item.get("supporting_evidence_chunk_ids") or []):
+            logger.warning(
+                "diagnosis: dropping %d unretrieved citation(s) from hypothesis %r",
+                len(item.get("supporting_evidence_chunk_ids") or []) - len(cited),
+                item.get("cause"))
+        item["supporting_evidence_chunk_ids"] = cited
+        item["citation_status"] = "grounded" if cited else "guess"
+        component = str(item.get("component") or "").strip()
+        if component and component.lower() not in evidence_text:
+            logger.warning(
+                "diagnosis: blanking ungrounded component %r on hypothesis %r "
+                "(not in the prompted evidence)",
+                component, item.get("cause"))
+            item["component"] = ""
+        try:
+            valid.append(Hypothesis.model_validate(item).model_dump())
+        except Exception as exc:
+            logger.warning("diagnosis: dropping malformed hypothesis %r: %s", item.get("cause"), exc)
+    return valid
+
+
+def _normalize_ranked(state: DiagnosticState, parsed: dict,
+                      evidence: list[EvidenceRef]) -> dict | None:
+    """Validate a parsed RANK call and enforce the 3–5 rule
+    server-side (audit p.13).
+
+    Returns ``{"hypotheses": [...], "eliminated_hypotheses": [...]}``
+    with 3–5 live hypotheses (more than 5 are cut to the top 5 in
+    ranked order), or None when the ranking cannot be used at all —
+    fewer than 3 hypotheses, an empty ranking, or a non-object — in
+    which case the caller attempts one repair call and then degrades.
+    A single guess is never persisted as the ranking.
+    """
     if not isinstance(parsed, dict):
         return None
+    prompted_chunk_ids = {e.chunk_id for e in _select_evidence_items(evidence)}
+    evidence_text = _normalize_evidence_text(evidence)
+    hypotheses = _valid_hypotheses(
+        parsed.get("hypotheses"), state.confidence, prompted_chunk_ids, evidence_text)
+    eliminated = _valid_hypotheses(
+        parsed.get("eliminated_hypotheses"), 0.0, prompted_chunk_ids, evidence_text)
+    if len(hypotheses) < _MIN_RANKED_HYPOTHESES:
+        logger.warning(
+            "diagnosis: rank call returned %d hypotheses, below the minimum of %d",
+            len(hypotheses), _MIN_RANKED_HYPOTHESES)
+        return None
+    if len(hypotheses) > _MAX_RANKED_HYPOTHESES:
+        logger.warning(
+            "diagnosis: rank call returned %d hypotheses, keeping the top %d",
+            len(hypotheses), _MAX_RANKED_HYPOTHESES)
+        hypotheses = hypotheses[:_MAX_RANKED_HYPOTHESES]
+    return {"hypotheses": hypotheses, "eliminated_hypotheses": eliminated}
 
-    def _valid_hypotheses(raw_list, default_confidence: float) -> list[dict]:
-        valid: list[dict] = []
-        if not isinstance(raw_list, list):
-            return valid
-        for item in raw_list:
-            if not isinstance(item, dict):
-                logger.warning("diagnosis: dropping non-object hypothesis: %.200s", repr(item))
-                continue
-            item = dict(item)
-            item["confidence"] = _coerce_confidence(item.get("confidence"), default_confidence)
-            try:
-                valid.append(Hypothesis.model_validate(item).model_dump())
-            except Exception as exc:
-                logger.warning("diagnosis: dropping malformed hypothesis %r: %s", item.get("cause"), exc)
-        return valid
 
-    hypotheses = _valid_hypotheses(parsed.get("hypotheses"), state.confidence)
-    eliminated = _valid_hypotheses(parsed.get("eliminated_hypotheses"), 0.0)
+def _normalize_ask(state: DiagnosticState, parsed: dict,
+                   ranked_hypotheses: list[dict]) -> dict | None:
+    """Validate a parsed ASK call: overall confidence + next step.
+
+    A missing/malformed next step becomes a question instead of
+    crashing the turn; an escalate step is degraded to a question
+    (escalation was removed from the loop, fix-3). The ranking from
+    call 1 is never re-decided here — this call only picks the step.
+    """
+    if not isinstance(parsed, dict):
+        return None
     overall = _coerce_confidence(
         parsed.get("overall_confidence"),
-        max([h["confidence"] for h in hypotheses], default=state.confidence),
+        max([h["confidence"] for h in ranked_hypotheses], default=state.confidence),
     )
     try:
-        next_step = NextStep.model_validate(parsed.get("next_step")).model_dump()
+        # mode="json": the next step is checkpointed by the LangGraph
+        # loop, so its ``type`` must be a plain string, not a
+        # NextStepType enum instance (the msgpack serde warns on
+        # unregistered enum types and will block them).
+        next_step = NextStep.model_validate(parsed.get("next_step")).model_dump(mode="json")
     except Exception as exc:
         logger.warning("diagnosis: malformed next_step, defaulting to question: %s", exc)
         next_step = _default_question_step(
@@ -526,27 +727,26 @@ def _normalize_result(state: DiagnosticState, parsed: dict) -> dict | None:
         next_step = _default_question_step(
             state, "Escalation has been removed from the diagnosis loop, so asking for the most informative observation instead."
         )
-    return {
-        "hypotheses": hypotheses,
-        "eliminated_hypotheses": eliminated,
-        "overall_confidence": overall,
-        "next_step": next_step,
-    }
+    return {"overall_confidence": overall, "next_step": next_step}
 
 
-def _repair_json(raw: str) -> str | None:
+def _repair_json(raw: str, json_schema: dict, instruction: str) -> str | None:
     """One repair call: ask the model to fix its own JSON, not to
-    re-diagnose. Returns the raw repaired text or None."""
+    re-diagnose. Returns the raw repaired text or None. ``instruction``
+    states the shape the repair must return (rank shape with 3–5
+    hypotheses, or ask shape) — the repair never re-ranks or
+    re-decides, it only repairs the JSON."""
     try:
         repaired, _truncated = gateway.complete_result(
             "diagnosis",
             messages=[{"role": "user", "content": (
-                "The following is a diagnostic turn that is not valid JSON. "
+                "The following is a diagnostic response that is not valid JSON, "
+                "or does not satisfy the required shape. "
                 "Return ONLY the corrected valid JSON object in exactly the same shape, "
-                "without adding, removing, or changing any hypothesis, cause, or confidence. "
-                "Do not wrap it in code fences.\n\n" + raw[:12000]
+                f"{instruction} "
+                "Do not wrap it in code fences.\n\n" + raw
             )}],
-            json_schema=_DIAGNOSIS_OUTPUT_SCHEMA,
+            json_schema=json_schema,
             temperature=0.0,
         )
         return repaired
@@ -555,45 +755,35 @@ def _repair_json(raw: str) -> str | None:
         return None
 
 
-def _run_llm_turn(state: DiagnosticState, evidence: list[EvidenceRef], knowledge_block: str,
-                  verification_block: str = "") -> dict:
-    evidence_block = "\n".join(
-        f"[{e.chunk_id}] (p.{e.page_number}, {e.source_document}): {e.content[:800]}" for e in evidence
-    ) or "(no relevant evidence retrieved)"
+class _NoProviderError(Exception):
+    """The gateway returned no text: no LLM provider is configured.
+    Raised (not returned) so the caller can report it plainly instead
+    of treating it as an unparseable model output."""
 
-    prompt = DIAGNOSTIC_SYSTEM_PROMPT.format(
-        state_json=_compact_state_json(state),
-        evidence_block=evidence_block,
-        knowledge_block=knowledge_block,
-        verification_block=verification_block or "(twin verification unavailable for this turn)",
+
+def _call_with_one_repair(prompt: str, json_schema: dict,
+                          repair_instruction: str) -> dict | None:
+    """One structured-output call with the lenient-parse ladder plus
+    exactly ONE repair attempt: strict JSON, brace hunt,
+    trailing-comma repair, Python-literal parsing, regex repair, then
+    the repair call. Returns the parsed dict, or None when the output
+    is unparseable after the repair — the caller decides how to
+    degrade. A provider/transport failure propagates to the caller (it
+    degrades the turn); an empty (no-provider) response raises
+    ``_NoProviderError``.
+    """
+    raw, truncated = gateway.complete_result(
+        "diagnosis",
+        messages=[{"role": "user", "content": prompt}],
+        json_schema=json_schema,
+        temperature=_DIAGNOSIS_TEMPERATURE,
     )
-    try:
-        raw, truncated = gateway.complete_result(
-            "diagnosis",
-            messages=[{"role": "user", "content": prompt}],
-            json_schema=_DIAGNOSIS_OUTPUT_SCHEMA,
-            temperature=_DIAGNOSIS_TEMPERATURE,
-        )
-    except Exception as exc:
-        # A provider/transport failure (429, network) is not a diagnosis
-        # and must not kill the session either — degrade to a question.
-        logger.warning("diagnosis: LLM call failed: %s", exc)
-        return _degraded_result(
-            state,
-            f"The diagnostic model call failed ({exc}); no hypotheses were changed — please report the most informative observation and I will retry the reasoning.",
-        )
     if not raw:
         # No provider configured — degrade to a question, never fabricate
         # reasoning and never escalate (escalation was removed from the
-        # loop, fix-3). The session stays active with its hypotheses
-        # intact; the technician is told plainly what is missing.
-        return _degraded_result(
-            state,
-            "Diagnostic reasoning requires a configured LLM provider, and none is configured — "
-            "no hypotheses were changed. Configure a provider, or report the most informative "
-            "observation and I will retry the reasoning once one is available.",
-        )
-
+        # loop, fix-3). The caller reports this plainly.
+        raise _NoProviderError(
+            "Diagnostic reasoning requires a configured LLM provider, and none is configured")
     parsed = _parse_lenient_json(raw)
     if (parsed is None or truncated) and raw:
         # Truncated output (finish reason hit the ceiling) parses the
@@ -601,7 +791,7 @@ def _run_llm_turn(state: DiagnosticState, evidence: list[EvidenceRef], knowledge
         # attempt instead of ending the turn.
         if truncated:
             logger.warning("diagnosis: output truncated at the ceiling; attempting one JSON repair")
-        repaired = _repair_json(raw)
+        repaired = _repair_json(raw, json_schema, repair_instruction)
         if repaired:
             parsed = _parse_lenient_json(repaired)
     if parsed is None:
@@ -610,19 +800,347 @@ def _run_llm_turn(state: DiagnosticState, evidence: list[EvidenceRef], knowledge
             "(prompt_chars=%d, truncated=%s): %.2000s",
             len(prompt), truncated, raw,
         )
-        return _degraded_result(
-            state,
-            "The diagnostic model returned an unparseable response — no hypotheses were changed, so please report the most informative observation and I will update the ranking instead of guessing.",
-        )
+    return parsed
 
-    normalized = _normalize_result(state, parsed)
-    if normalized is None:
-        logger.warning("diagnosis: parsed output was not an object; degrading to a question")
-        return _degraded_result(
+
+def _signatures_for_product(session: DiagnosticSession) -> list:
+    """Fault signatures for this session's product, from its
+    repair-case registry — the single picker input (audit P-12: feed
+    the one picker from a registry / manual test rows per family).
+
+    Best-effort and registry-only: the oracle vocabulary JSON is the
+    scorer's answer key and must never enter the request path (audit
+    P-17/18), so only the reviewed registries are consulted, matched
+    to the product by manufacturer/family/model. The product itself is
+    ingestion-owned data, so it is fetched from ingestion's HTTP API
+    (GET /v1/products) — never read from ingestion's tables (Phase 3
+    extraction). No matching product or registry (or any load failure)
+    means no signatures — the picker returns None and the ranking
+    fallback names the test instead. Never raises.
+    """
+    try:
+        products = ingestion_client_mod.get_ingestion_client().list_products()
+        product = next((p for p in products if p.get("id") == session.product_id), None)
+        if product is None:
+            return []
+        for loader in (load_registry, load_miller_registry):
+            try:
+                registry = loader()
+            except Exception:
+                continue
+            if registry_matches_product(
+                    registry, product.get("manufacturer"), product.get("family"), product.get("model")):
+                return signatures_from_registry(registry)
+    except Exception as exc:  # noqa: BLE001 - no signatures is not fatal
+        logger.warning("diagnosis: registry signatures unavailable: %s", exc)
+    return []
+
+
+def _fallback_discriminating_test(hypotheses: list[dict],
+                                  asked_causes: set[str]) -> dict | None:
+    """Deterministic discriminating test when the picker cannot split
+    the ranking (no signature test separates the remaining causes —
+    the Miller registry carries no per-cause test at all, so this is
+    the normal Miller path, not an error).
+
+    NOT a second picker: it selects no test among candidates by gain.
+    It names the leading not-yet-asked cause as the check to run and
+    the top two ranked causes as the pair it separates, and labels
+    itself ``ranking_fallback`` so a reader can tell it from a
+    signature test. None when fewer than two hypotheses remain, or
+    when every ranked cause was already asked — then there is no
+    discriminating question left to ask, and the no-repeat gate asks
+    what changed instead.
+    """
+    if len(hypotheses) < 2:
+        return None
+    unasked = [h for h in hypotheses if h.get("cause") not in asked_causes]
+    if not unasked:
+        return None
+    lead = unasked[0]
+    top_two = [h.get("cause") for h in hypotheses[:2]]
+    return {
+        "test": (
+            f"Run the manual's check for the leading cause — {lead.get('cause')} — "
+            "and report the result."),
+        "rationale": (
+            "No signature test splits this ranking, so check the leading "
+            "not-yet-checked cause first."),
+        "source": "ranking_fallback",
+        "separates": top_two,
+        "information_gain_bits": None,
+        "score": None,
+        "cost": None,
+        "safety": None,
+    }
+
+
+def _discriminating_test_for_ranking(hypotheses: list[dict], signatures: list,
+                                     state: DiagnosticState) -> dict | None:
+    """The discriminating test for this turn's ranking, from the single
+    backtracking picker (audit P-12).
+
+    ``select_discriminating_test`` picks by information gain − cost −
+    safety over the registry signatures, excluding tests already
+    asked-and-answered. When it returns None (fewer than two live
+    signatures match, or no signature test splits the ranking), the
+    deterministic ranking fallback names the test instead — a turn
+    never ends without a discriminating test while an unasked cause
+    remains. Never raises: a picker failure means the fallback, and a
+    fallback failure means None.
+    """
+    asked_causes, asked_tests = _asked_causes_and_tests(state)
+    try:
+        picked = select_discriminating_test(
+            signatures, hypotheses, exclude_tests=asked_tests)
+    except Exception as exc:  # noqa: BLE001 - picker failure is not fatal
+        logger.warning("diagnosis: discriminating-test picker failed: %s", exc)
+        picked = None
+    if picked is not None:
+        return picked
+    return _fallback_discriminating_test(hypotheses, asked_causes)
+
+
+def _attach_discriminating_test(state: DiagnosticState, result: dict,
+                                discriminating_test: dict | None) -> dict:
+    """Carry the discriminating test into a question/action step.
+
+    The step content becomes the canonical discriminating-test
+    question — the test, and the leading cause to check — and the
+    rationale names the separated causes, so the step (content +
+    rationale) frames the test as separating at least two ranked
+    causes. The separated causes live in the rationale, not the
+    content: the asked-tracking reads step content, and a cause named
+    only as "separated by this test" was not itself checked — putting
+    both names in the content would mark both asked after one turn.
+    A step that already carries the test text is left alone, and
+    conclusion steps are never rewritten — the test is recorded on
+    the state, not in the conclusion.
+    """
+    if not discriminating_test:
+        return result
+    step = result.get("next_step") or {}
+    if step.get("type") not in (NextStepType.question.value, NextStepType.action.value):
+        return result
+    test_text = str(discriminating_test.get("test") or "")
+    if test_text and test_text in (step.get("content") or ""):
+        return result
+    ranked = result.get("hypotheses") or []
+    asked_causes, _asked_tests = _asked_causes_and_tests(state)
+    lead = next((h.get("cause") for h in ranked
+                 if h.get("cause") and h.get("cause") not in asked_causes),
+                (ranked[0].get("cause") if ranked else None))
+    separates = discriminating_test.get("separates") or [h.get("cause") for h in ranked[:2]]
+    separates = [c for c in separates if c]
+    rationale = str(discriminating_test.get("rationale") or "")
+    if separates:
+        rationale = (rationale + " It separates: " + "; ".join(separates) + ".").strip()
+    content = f"Discriminating test: {test_text} "
+    if lead:
+        content += (f"What do you observe when you check the leading cause — {lead}? "
+                    "Report the result and I will update the ranking.")
+    else:
+        content += "What do you observe?"
+    result["next_step"] = {**step, "content": content, "rationale": rationale}
+    return result
+
+
+def compute_confidence(hypotheses: list[dict], verification: dict | None,
+                       discriminating_test: dict | None) -> float:
+    """Confidence, computed — not asked (audit p.6, Phase 1 Step 5).
+
+    Derived from the tournament on the NEW ranking (the post-rank
+    verify) + the discriminating test's split — never from the ask
+    call's ``overall_confidence``, which the graph parses for schema
+    compatibility and discards. Base 0.50; the leading cause's verdict
+    moves it most (VALIDATED +0.30, REJECTED -0.25, CANNOT_EXPRESS
+    -0.20, NOT_VERIFIED 0); the validated-minus-rejected share adds up
+    to +/-0.10; the test's information gain, normalised by log2 of the
+    ranking size, adds up to +0.10. Clamped to [0.05, 0.95] so a
+    computed confidence never claims certainty or impossibility.
+    """
+    import math
+
+    ranked = hypotheses or []
+    n = max(len(ranked), 1)
+    results = (verification or {}).get("results") or []
+    by_cause = {r.get("cause"): r for r in results}
+    top_status = "unavailable"
+    top_cannot_express = False
+    if ranked:
+        top_row = by_cause.get(ranked[0].get("cause") or "")
+        if top_row is not None:
+            top_status = top_row.get("status") or "unavailable"
+            top_cannot_express = bool(top_row.get("cannot_express"))
+    validated = sum(1 for r in results if r.get("status") == "validated")
+    rejected = sum(1 for r in results if r.get("status") == "rejected")
+    score = 0.50
+    if top_status == "validated":
+        score += 0.30
+    elif top_status == "rejected":
+        score -= 0.25
+    elif top_cannot_express:
+        score -= 0.20
+    score += 0.10 * ((validated - rejected) / n)
+    gain = (discriminating_test or {}).get("information_gain_bits")
+    if gain is not None and n > 1:
+        try:
+            gain_value = float(gain)
+        except (TypeError, ValueError):
+            gain_value = 0.0
+        score += 0.10 * min(max(gain_value, 0.0), math.log2(n)) / math.log2(n)
+    return max(0.05, min(0.95, score))
+
+
+def _run_rank_call(state: DiagnosticState, evidence: list[EvidenceRef],
+                   verification_block: str = "") -> dict | None:
+    """Call 1 of rank-then-ask: rank 3–5 hypotheses from the evidence.
+
+    Returns the normalized ranking, or None when the ranking cannot be
+    used — unparseable after one repair, or fewer than 3 hypotheses
+    after one repair. The caller degrades the turn (previous
+    hypotheses kept, question asked) instead of persisting a single
+    guess or an empty ranking. A provider failure raises to the caller.
+    """
+    prompt = build_diagnosis_prompt(state, evidence, verification_block)
+    parsed = _call_with_one_repair(
+        prompt, _RANK_OUTPUT_SCHEMA,
+        "Rank 3 to 5 hypotheses in the hypotheses array (never fewer than 3), "
+        "with eliminated_hypotheses alongside, without adding, removing, "
+        "or changing any cause or confidence.")
+    if parsed is None:
+        logger.warning("diagnosis: rank call returned no usable output; degrading turn")
+        return None
+    ranked = _normalize_ranked(state, parsed, evidence)
+    if ranked is not None:
+        return ranked
+    # Fewer than 3 hypotheses (or an empty ranking): one repair call
+    # asking for a full ranking, then re-validate. A second failure
+    # degrades — the turn never persists a single guess.
+    logger.warning("diagnosis: rank call below the 3-hypothesis minimum; attempting one rank repair")
+    repaired = _repair_json(
+        json.dumps(parsed), _RANK_OUTPUT_SCHEMA,
+        "Rank 3 to 5 hypotheses in the hypotheses array (never fewer than 3), "
+        "with eliminated_hypotheses alongside, without adding, removing, "
+        "or changing any cause or confidence.")
+    if repaired:
+        ranked = _normalize_ranked(state, _parse_lenient_json(repaired) or {}, evidence)
+    if ranked is None:
+        logger.warning("diagnosis: rank call still below the 3-hypothesis minimum after repair; degrading turn")
+    return ranked
+
+
+def _run_ask_call(state: DiagnosticState, ranked: dict,
+                  discriminating_test: dict | None,
+                  verification_block: str = "") -> dict | None:
+    """Call 2 of rank-then-ask: decide the next step from the ranking.
+
+    Returns the normalized ask (overall confidence + next step), or
+    None when the output is unparseable after one repair — the caller
+    keeps the ranking and asks the default question instead.
+    """
+    prompt = build_ask_prompt(
+        state, ranked["hypotheses"], discriminating_test, verification_block)
+    parsed = _call_with_one_repair(
+        prompt, _ASK_OUTPUT_SCHEMA,
+        "Return the overall_confidence and next_step only, without "
+        "adding, removing, or changing any hypothesis, cause, or confidence.")
+    if parsed is None:
+        logger.warning("diagnosis: ask call returned no usable output; keeping the ranking with a default question")
+        return None
+    return _normalize_ask(state, parsed, ranked["hypotheses"])
+
+
+def _run_llm_turn(state: DiagnosticState, evidence: list[EvidenceRef],
+                  verification_block: str = "", signatures: list | None = None) -> dict:
+    """One diagnostic turn as two structured-output calls (Phase 1
+    Step 4, audit Step 3): rank, then ask.
+
+    Call 1 ranks 3–5 hypotheses (server-enforced); the discriminating
+    test is picked from that ranking by the single backtracking
+    picker; call 2 decides the next step from the ranking + the
+    candidate test. The result keeps the old shape — hypotheses,
+    eliminated_hypotheses, overall_confidence, next_step — plus
+    ``discriminating_test``. A failure in either call degrades the
+    turn to a question with the previous hypotheses intact (a rank
+    failure keeps the previous ranking; an ask failure keeps the new
+    ranking); a provider/transport failure degrades the same way, and
+    a missing provider is reported plainly instead of fabricated.
+    """
+    try:
+        ranked = _run_rank_call(state, evidence, verification_block)
+    except _NoProviderError as exc:
+        # No provider configured — degrade to a question, never
+        # fabricate reasoning and never escalate (escalation was
+        # removed from the loop, fix-3). The session stays active with
+        # its hypotheses intact; the technician is told plainly what
+        # is missing.
+        degraded = _degraded_result(
             state,
-            "The diagnostic model returned a response in an unexpected shape — no hypotheses were changed.",
+            f"{exc} — no hypotheses were changed. Configure a provider, or report "
+            "the most informative observation and I will retry the reasoning "
+            "once one is available.",
         )
-    return normalized
+        degraded["discriminating_test"] = (
+            _discriminating_test_for_ranking(
+                [h.model_dump() for h in state.hypotheses], signatures or [], state)
+            if state.hypotheses else None)
+        return degraded
+    except Exception as exc:
+        # A provider/transport failure (429, network) is not a diagnosis
+        # and must not kill the session either — degrade to a question.
+        logger.warning("diagnosis: rank call failed: %s", exc)
+        degraded = _degraded_result(
+            state,
+            f"The diagnostic model call failed ({exc}); no hypotheses were changed — please report the most informative observation and I will retry the reasoning.",
+        )
+        degraded["discriminating_test"] = (
+            _discriminating_test_for_ranking(
+                [h.model_dump() for h in state.hypotheses], signatures or [], state)
+            if state.hypotheses else None)
+        return degraded
+    if ranked is None:
+        degraded = _degraded_result(
+            state,
+            "The diagnostic model returned a ranking with fewer than 3 hypotheses (or an unparseable response) — no hypotheses were changed, so please report the most informative observation and I will update the ranking instead of guessing.",
+        )
+        # A degraded turn can still carry a test for the ranking it
+        # kept (previous hypotheses), so the state is never left
+        # without one while ranked causes remain.
+        degraded["discriminating_test"] = (
+            _discriminating_test_for_ranking(
+                [h.model_dump() for h in state.hypotheses], signatures or [], state)
+            if state.hypotheses else None)
+        return degraded
+
+    discriminating_test = _discriminating_test_for_ranking(
+        ranked["hypotheses"], signatures or [], state)
+    try:
+        asked = _run_ask_call(state, ranked, discriminating_test, verification_block)
+    except Exception as exc:
+        logger.warning("diagnosis: ask call failed: %s", exc)
+        asked = None
+    if asked is None:
+        result = {
+            "hypotheses": ranked["hypotheses"],
+            "eliminated_hypotheses": ranked["eliminated_hypotheses"],
+            "overall_confidence": max(
+                [h["confidence"] for h in ranked["hypotheses"]], default=state.confidence),
+            "next_step": _default_question_step(
+                state,
+                "The diagnostic model returned an unparseable next step — the ranking was kept, so please report the most informative observation and I will update it instead of guessing."),
+            "discriminating_test": discriminating_test,
+        }
+        return _attach_discriminating_test(state, result, discriminating_test)
+
+    result = {
+        "hypotheses": ranked["hypotheses"],
+        "eliminated_hypotheses": ranked["eliminated_hypotheses"],
+        "overall_confidence": asked["overall_confidence"],
+        "next_step": asked["next_step"],
+        "discriminating_test": discriminating_test,
+    }
+    return _attach_discriminating_test(state, result, discriminating_test)
 
 
 def _render_unavailable_attempt(attempt: dict) -> str:
@@ -684,7 +1202,8 @@ def _render_cannot_express_attempt(attempt: dict, cause: str, reason: str) -> st
 
 
 def _cannot_express_ending(state: DiagnosticState, cause_text: str,
-                           row_reason: str) -> tuple[dict, str]:
+                           row_reason: str,
+                           discriminating_test: dict | None = None) -> tuple[dict, str]:
     """Build the ending step for a concluded cause the twin cannot
     express, plus the reason string for the timeline.
 
@@ -693,10 +1212,10 @@ def _cannot_express_ending(state: DiagnosticState, cause_text: str,
     ending): there is no unavailable status in ``DiagnosticStatus``, and
     a conclusion step would falsely mark the session concluded. The
     content itself asks no question -- the ending is the answer.
-    The discriminating test is None here, as in the turn-bound ending:
-    no signature source exists in the agent layer, so the attempt
-    carries the ranked guesses and what is missing, and the test line
-    appears only when one is known.
+    The attempt carries this turn's discriminating test when one is
+    known (Phase 1 Step 4, audit P-09: the endings used to pass None
+    here). The test line adds no "?" — neither the picker test texts
+    nor the fallback test text is phrased as a question.
     """
     hypotheses = state.hypotheses or []
     guesses = [{"cause": h.cause, "confidence": h.confidence,
@@ -704,7 +1223,7 @@ def _cannot_express_ending(state: DiagnosticState, cause_text: str,
                for h in hypotheses]
     reason = f"The twin cannot express this cause ({cause_text}): {row_reason}"
     attempt = unavailable_with_attempt(
-        guesses, None,
+        guesses, discriminating_test,
         [f"a twin that models {cause_text}",
          "a check of this cause outside the twin (the manual's own test for it)"],
         reason)
@@ -754,7 +1273,7 @@ def _apply_forced_safeguards(state: DiagnosticState, result: dict) -> dict:
                     "evidence": h.rationale, "source": "session_hypothesis"}
                    for h in hypotheses]
         attempt = unavailable_with_attempt(
-            guesses, None,
+            guesses, result.get("discriminating_test"),
             ["a twin-validated conclusion within 8 turns",
              "the outcome of the discriminating test for the leading cause"],
             "Turn limit reached without a twin-validated conclusion")
@@ -768,41 +1287,6 @@ def _apply_forced_safeguards(state: DiagnosticState, result: dict) -> dict:
         }
         result["turn_bound_reached"] = True
     return result
-
-
-def _verification_block_for_turn(db: DBSession, session: DiagnosticSession,
-                                 state: DiagnosticState) -> str:
-    """Run the early tournament on the ranking carried into this turn and
-    render the block the LLM reasons over before it picks its next step.
-
-    When the twin runs, the re-ranked hypotheses and a pre-turn
-    ``early_tournament`` timeline entry are recorded (turn = the turn
-    about to run), so the timeline shows the verdicts the model saw.
-    When the twin cannot run, the block says so plainly — the model is
-    told verification is unavailable instead of the turn silently
-    proceeding without it.
-    """
-    asked_causes, asked_tests = _asked_causes_and_tests(state)
-    summary = run_tournament_for_state(
-        db, session, state,
-        repair_name=(state.current_step.content if state.current_step else "") or "",
-        rerank=False)  # verdicts for the prompt only: the gate / post-turn
-    # run owns the authoritative re-rank, so one hypothesis set is never
-    # re-ranked twice in a turn (see run_tournament_for_state).
-    if summary.get("available"):
-        state.timeline.append({
-            "turn": state.turns_taken + 1, "kind": "early_tournament",
-            "input": "hypothesis tournament (early, pre-turn)",
-            "available": True, "counts": summary["counts"],
-            "results": [{"cause": r["cause"], "status": r["status"], "verdict": r["verdict"],
-                         "reason": r["reason"],
-                         "cannot_express": r.get("cannot_express", False)} for r in summary["results"]],
-            "step_type": "early_tournament",
-            "step": "Hypothesis tournament (early, pre-turn): " + ", ".join(
-                f"{k} {v}" for k, v in summary["counts"].items() if v),
-        })
-    return render_verification_block(summary, asked_causes=asked_causes,
-                                     asked_tests=asked_tests)
 
 
 def _demoted_conclusion_step(state: DiagnosticState, original_step: dict, why: str) -> dict:
@@ -832,8 +1316,8 @@ def _demoted_conclusion_step(state: DiagnosticState, original_step: dict, why: s
     }
 
 
-def _apply_conclusion_gate(db: DBSession, session: DiagnosticSession,
-                           state: DiagnosticState, result: dict) -> dict:
+def _apply_conclusion_gate(state: DiagnosticState, result: dict,
+                             summary: dict | None = None) -> dict:
     """Verify-before-conclusion (the Phase 0 requirement, fix-3).
 
     A conclusion step is only accepted when the tournament has run on
@@ -846,6 +1330,12 @@ def _apply_conclusion_gate(db: DBSession, session: DiagnosticSession,
     at the turn limit still concludes. Non-conclusion steps pass through
     untouched. Appends a ``conclusion_verified`` or ``conclusion_held``
     timeline entry (turn = the turn about to run).
+
+    Phase 1 Step 5: the verdicts come from the graph's post-rank verify
+    node (``summary`` — the twin client's summary shape), so the
+    tournament runs once per turn on the new ranking instead of three
+    times. ``summary=None`` means no verification ran: the conclusion
+    is held as unverified, never accepted on an absent verdict.
 
     The one exception is the cannot-express path: when the concluded
     cause carries the tournament's ``cannot_express`` signal (no
@@ -867,10 +1357,8 @@ def _apply_conclusion_gate(db: DBSession, session: DiagnosticSession,
         return result
     turn_no = state.turns_taken + 1
     cause = conclusion_cause(state, step.get("content") or "")
-    summary = run_tournament_for_state(
-        db, session, state, repair_name=step.get("content") or "")
-    if not summary.get("available"):
-        reason = summary["reason"]
+    if summary is None or not summary.get("available"):
+        reason = (summary or {}).get("reason") or "no twin verification ran for this turn"
         result["next_step"] = _demoted_conclusion_step(
             state, step, f"the twin could not verify it ({reason})")
         state.timeline.append({
@@ -902,7 +1390,8 @@ def _apply_conclusion_gate(db: DBSession, session: DiagnosticSession,
         # and do NOT wait for the turn limit -- none of those can make
         # the twin express it. End at once with the attempt, plainly.
         row_reason = (row or {}).get("reason") or "no component in this twin can carry it"
-        ending_step, attempt_reason = _cannot_express_ending(state, cause.cause, row_reason)
+        ending_step, attempt_reason = _cannot_express_ending(
+            state, cause.cause, row_reason, result.get("discriminating_test"))
         result["next_step"] = ending_step
         result["cannot_express_ending"] = True
         result["cannot_express_reason"] = attempt_reason
@@ -979,12 +1468,35 @@ def run_turn(
     session: DiagnosticSession,
     latest_input: str,
     input_kind: str = "observation",  # "symptom" | "observation" | "measurement"
+    *,
+    graph=None,
+    checkpointer=None,
+    twin_client=None,
 ) -> DiagnosticState:
     """
-    Run one diagnostic turn: record the technician's input, retrieve
-    evidence, ask the LLM to update hypotheses and pick the next step,
-    apply deterministic safety guardrails, persist, and return the new state.
+    Run one diagnostic turn through the LangGraph loop (Phase 1 Step 5).
+
+    The turn is one graph invocation (see ``backend/diagnostics/graph.py``):
+    safety first (every turn, including turn 1 — the safety check used to
+    live in the routes respond handler and turn 1 was never checked),
+    retrieve, verify-pre, rank, discriminating-test, ask, verify-post,
+    computed confidence, conclusion gate, safeguards, persist. The graph
+    is checkpointed under ``thread_id =
+    "diagnostic-session:{session.id}"``, so the loop state survives a
+    restart; the session row remains the API-visible store and is
+    written here after the graph returns, exactly as before.
+
+    ``graph`` / ``checkpointer`` / ``twin_client`` are injectable for
+    tests. The default twin client is the thin async client over HTTP
+    to the twin-verifier service (``TWIN_VERIFIER_BASE_URL``; POST
+    /v1/verify -> 202 + job, poll; never blocks a turn). The default
+    graph uses the default checkpointer (Postgres when the app is
+    configured for Postgres, file-backed SQLite otherwise).
     """
+    # Local import: graph.py imports this module for the node helpers,
+    # so importing it at module level would be circular.
+    from backend.diagnostics.graph import get_diagnosis_graph
+
     state = DiagnosticState.model_validate(session.state)
 
     if input_kind == "symptom":
@@ -994,101 +1506,52 @@ def run_turn(
     else:
         state.observations.append(latest_input)
 
-    query = _build_query(state, latest_input)
-    # One retrieval call per turn, not two: retrieve_revision_context
-    # already returns the chunks AND the canonical knowledge, so the old
-    # separate hybrid_retrieve call (whose chunks were then discarded)
-    # was a second rerank LLM call per turn for nothing.
-    retrieved, knowledge = (
-        retrieve_revision_context(db, query, product_id=session.product_id, revision_id=session.revision_id)
-        if session.revision_id else ([], [])
+    # Seed the explicit asked sets from the timeline once, for sessions
+    # stored before the sets existed; the graph maintains them after.
+    asked_causes, asked_tests = _asked_causes_and_tests(state)
+    state.asked_causes = sorted(set(state.asked_causes or []) | asked_causes)
+    state.asked_tests = sorted(set(state.asked_tests or []) | asked_tests)
+
+    # Signatures for the discriminating-test picker, from this product's
+    # repair-case registry (best-effort; no matching registry means the
+    # picker cannot split and the ranking fallback names the test
+    # instead).
+    signatures = _signatures_for_product(session)
+
+    if twin_client is None:
+        # Split path (Phase 3 twin-verifier extraction): the thin
+        # client talks HTTP to twin-verifier (POST /v1/verify -> 202 +
+        # job, poll; never blocks a turn). With no base URL configured
+        # the client degrades every call to NOT_VERIFIED with the
+        # reason recorded — the temporary in-monolith
+        # LocalVerifyBackend is gone, and verification is never
+        # silently absent.
+        twin_client = TwinVerifyClient(base_url=settings.twin_verifier_base_url)
+    if graph is None:
+        graph = get_diagnosis_graph(checkpointer)
+
+    final = graph.invoke(
+        # Per-turn scratch keys are reset explicitly: LangGraph merges
+        # the input over the checkpointed state, so without this the
+        # previous turn's ``result`` / ``ranked`` / ``verification``
+        # would leak into this turn and the ask node would skip. The
+        # durable cross-turn state is the ``state`` dict alone.
+        {"state": state.model_dump(mode="json"),
+         "input": latest_input, "input_kind": input_kind,
+         "evidence": [], "verification_block": "",
+         "ranked": None, "discriminating_test": None,
+         "verification": None, "pre_verification": None,
+         "result": None, "safety": None},
+        config={"configurable": {
+            "thread_id": f"diagnostic-session:{session.id}",
+            "db": db, "session": session,
+            "twin_client": twin_client, "signatures": signatures,
+        }},
     )
-    # Preserve provenance at the boundary so the UI can trace every claim
-    # back to the source document/page without inventing citations.
-    from backend.db.models import Document
-    evidence = []
-    for r in retrieved:
-        doc = db.get(Document, r.document_id)
-        evidence.append(EvidenceRef(
-            chunk_id=r.chunk_id,
-            content=r.content,
-            source_document=doc.title if doc else r.document_id,
-            page_number=r.page_number,
-        ))
-    state.evidence = evidence  # replace with this turn's evidence; history stays in symptoms/observations
+    new_state = DiagnosticState.model_validate(final["state"])
 
-    # Relevance filter for the legacy block: this turn's query plus the
-    # causes of the hypotheses currently being tracked.
-    filter_query = query + " " + " ".join(h.cause for h in state.hypotheses)
-    legacy_block = _load_product_knowledge(db, session.revision_id, filter_query)
-    knowledge_block = legacy_block + "\n\nCanonical knowledge + graph retrieval:\n" + _knowledge_context(knowledge)
-    # Fix-3: the tournament runs BEFORE the LLM turn as well as after it,
-    # so the model reasons over the verified ranking (and over what was
-    # already asked) before it picks its next step — the concluding turn
-    # used to be the one turn whose verdicts the model never saw.
-    verification_block = _verification_block_for_turn(db, session, state)
-    result = _run_llm_turn(state, evidence, knowledge_block, verification_block)
-
-    state.hypotheses = [Hypothesis.model_validate(h) for h in result.get("hypotheses", [])]
-    state.eliminated_hypotheses = [Hypothesis.model_validate(h) for h in result.get("eliminated_hypotheses", [])]
-    state.confidence = float(result.get("overall_confidence", 0.0))
-    state.current_step = NextStep.model_validate(result["next_step"])
-    # Fix-3: verify-before-conclusion — a conclusion stands only when the
-    # tournament has run on this turn's hypotheses and its cause is
-    # VALIDATED; otherwise it is demoted to a question (unless the cause
-    # is one the twin cannot express at all, in which case the gate ends
-    # the session at once with the attempt). Then the deterministic
-    # guards (escalate-to-question mapping, turn-bound unavailable
-    # ending), then the no-repeat rewrite for questions that re-ask an
-    # already-checked cause. The turn-bound ending and the
-    # cannot-express ending are never rewritten: they are the ending,
-    # not a question to vary.
-    result = _apply_conclusion_gate(db, session, state, result)
-    result = _apply_forced_safeguards(state, result)
-    if not result.get("turn_bound_reached") and not result.get("cannot_express_ending"):
-        result = _apply_no_repeat_gate(state, result)
-    state.current_step = NextStep.model_validate(result["next_step"])
-    state.turns_taken += 1
-
-    ending_reason = None
-    ending_step = None
-    if result.get("turn_bound_reached"):
-        ending_reason = "Turn limit reached without a twin-validated conclusion"
-        ending_step = ("Diagnosis ended without a twin-validated conclusion: ranked best "
-                       "guesses and what is missing were given instead.")
-    elif result.get("cannot_express_ending"):
-        ending_reason = (result.get("cannot_express_reason")
-                         or "The twin cannot express the concluded cause")
-        ending_step = ("Diagnosis ended: the twin cannot express the concluded cause; "
-                       "ranked best guesses and what is missing were given instead.")
-    if ending_reason:
-        state.timeline.append({
-            "turn": state.turns_taken,
-            "kind": "diagnosis_unavailable",
-            "input": latest_input,
-            "available": False,
-            "verdict": None,
-            "reason": ending_reason,
-            "step_type": "diagnosis_unavailable",
-            "step": ending_step,
-        })
-
-    # A compact audit trail for the technician-facing timeline. This is
-    # deliberately event-level, not chain-of-thought.
-    state.timeline.append({
-        "turn": state.turns_taken,
-        "kind": input_kind,
-        "input": latest_input,
-        "hypotheses": [
-            {"cause": h.cause, "confidence": h.confidence, "status": "active"}
-            for h in state.hypotheses
-        ],
-        "step_type": state.current_step.type.value,
-        "step": state.current_step.content,
-    })
-
-    session.state = state.model_dump(mode="json")
-    if state.current_step.type == NextStepType.conclusion:
+    session.state = new_state.model_dump(mode="json")
+    if new_state.current_step.type == NextStepType.conclusion:
         session.status = DiagnosticStatus.concluded
     else:
         # No escalated transition any more (fix-3): the loop never sets
@@ -1100,7 +1563,7 @@ def run_turn(
     db.commit()
     db.refresh(session)
 
-    return state
+    return new_state
 
 
 def start_session(

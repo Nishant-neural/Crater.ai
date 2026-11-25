@@ -6,15 +6,18 @@ generate_pair_hypotheses were called only by scripts/run_phase4_offtable.py
 and the unit tests — no route or agent.py code called them. These tests
 prove the walk is reachable via the API/route:
 
-- POST /diagnose/{id}/upstream-walk on a session whose table causes are
-  exhausted returns walk-generated hypotheses (5 live + 1 ranked reserve),
-  persists them, and is idempotent while the walk is live.
+- POST /diagnose/{id}/respond auto-runs the walk when a turn exhausts
+  the table causes, returning walk-generated hypotheses (5 live + 1
+  ranked reserve), persists them, and is idempotent while the walk
+  is live.
 - POST /diagnose/{id}/respond advances the live walk with the
   technician's answers ("no" rules the leading walk hypothesis out and
   promotes a reserve; once the singles are exhausted, pairs from the top
   of the ranking appear) — no harness script involved.
-- POST /diagnose/{id}/respond auto-runs the walk when a turn exhausts
-  the table causes.
+- The walk refuses when the table is not exhausted (unless forced),
+  driven through the helper directly since the standalone
+  POST /diagnose/{id}/upstream-walk endpoint was removed in the
+  Phase 3 extraction (§2.5).
 - The live cap is enforced by split_live_and_reserves (MAX_LIVE_HYPOTHESES
   = 5, actually referenced now).
 - Tier 2 Option C: the registry default stays ON (tier2_default True);
@@ -30,6 +33,21 @@ model.
 import json
 import sys
 import types
+
+import pytest
+
+import backend.diagnostics.agent as agent_module
+
+
+@pytest.fixture(autouse=True)
+def _stub_retrieval(monkeypatch):
+    """No Qdrant runs in this VM, and since Phase 1 Step 2 a dead
+    semantic search fails loudly (503) instead of silently falling
+    back to BM25-only — so these walk-wiring tests must not depend on
+    live retrieval. They stub the LLM already; retrieval returns no
+    evidence, which is all the walk path needs."""
+    monkeypatch.setattr(agent_module, "hybrid_retrieve", lambda *a, **k: [])
+
 
 _bm25 = types.ModuleType("rank_bm25")
 
@@ -174,28 +192,57 @@ def test_split_live_and_reserves_enforces_cap():
 
 # --- the walk, via the API -------------------------------------------------
 
-def test_upstream_walk_endpoint_generates_live_plus_reserves_and_answers_advance_to_pairs(monkeypatch):
+def test_upstream_walk_generates_live_plus_reserves_and_answers_advance_to_pairs(monkeypatch):
+    """Phase 3 extraction: POST /diagnose/{id}/upstream-walk is removed
+    (§2.5) — the walk runs inside POST /respond when a turn exhausts
+    the table causes. This test drives the walk through respond (the
+    LLM turn rules the table causes out) and keeps the same assertions
+    on the walk it generates, its persistence, its idempotency, and
+    the technician's answers advancing it to pairs."""
     db, session = _db_with_proof_twin()
     client = _client(db)
 
-    resp = client.post(f"/diagnose/{session.id}/upstream-walk", json={})
+    import backend.diagnostics.agent as agent_module
+
+    def _table_exhausted(*args, **kwargs):
+        return json.dumps({
+            "hypotheses": [],
+            "eliminated_hypotheses": [
+                {"cause": cause, "rationale": "ruled out by test",
+                 "confidence": 0.0, "supporting_evidence_chunk_ids": []}
+                for cause in CASE1_CAUSES],
+            "overall_confidence": 0.2,
+            "next_step": {"type": "question",
+                          "content": "What do you observe next?",
+                          "rationale": "table exhausted"},
+        }), False
+
+    monkeypatch.setattr(agent_module.gateway, "complete_result", _table_exhausted)
+    resp = client.post(f"/diagnose/{session.id}/respond",
+                       json={"input": "The wire still does not feed",
+                             "input_kind": "observation"})
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["available"] is True
-    assert body["symptom_component"] == "Wire Feed Mechanism"
-    assert body["case_id"] == "omni-01-wire-not-feeding"
+    assert body["status"] == "active"
+    state = body["state"]
+    assert len(state["hypotheses"]) == 5
     # The live cap is enforced: 5 live + 1 ranked reserve, never dropped.
-    assert len(body["live"]) == 5
-    assert len(body["reserves"]) == 1
-    assert len(body["hypotheses"]) == 5
-    components = [h["cause"].split(":")[0].split(" ")[0] for h in body["live"]]
-    live_text = " ".join(h["cause"] for h in body["live"] + body["reserves"])
+    walk_entries = [e for e in state["timeline"] if e.get("kind") == "upstream_walk"]
+    assert len(walk_entries) == 1
+    entry = walk_entries[0]
+    assert entry["available"] is True
+    assert entry["symptom_component"] == "Wire Feed Mechanism"
+    assert entry["case_id"] == "omni-01-wire-not-feeding"
+    assert len(entry["live"]) == 5
+    assert len(entry["reserves"]) == 1
+    components = [h["cause"].split(":")[0].split(" ")[0] for h in entry["live"]]
+    live_text = " ".join(h["cause"] for h in entry["live"] + entry["reserves"])
     assert "Wire Feed Motor" in live_text
     assert "Trigger" in live_text
     assert "Input Power Cord" in live_text
-    assert body["discriminating_test"]
+    assert entry["discriminating_test"]
     assert all(h["rationale"].startswith("Upstream walk (topology + archetype):")
-               for h in body["live"])
+               for h in entry["live"])
     # Persisted: the session state carries the walk hypotheses and the
     # timeline entry records the reserve.
     db.refresh(session)
@@ -205,23 +252,21 @@ def test_upstream_walk_endpoint_generates_live_plus_reserves_and_answers_advance
     walk_entries = [e for e in persisted.timeline if e.get("kind") == "upstream_walk"]
     assert len(walk_entries) == 1
     assert len(walk_entries[0]["reserves"]) == 1
-    assert walk_entries[0]["edges_source"] in ("twin_relations", "reviewed_edge_list")
+    assert walk_entries[0]["edges_source"] in ("twin_relations", "reviewed_edge_list", "canonical_model")
 
-    # Idempotent while the walk is live: a second call returns the same
-    # live walk instead of re-walking and losing the state.
-    resp2 = client.post(f"/diagnose/{session.id}/upstream-walk", json={})
-    assert resp2.status_code == 200, resp2.text
-    assert resp2.json()["already_live"] is True
-    assert [h["cause"] for h in resp2.json()["live"]] == \
-        [h["cause"] for h in body["live"]]
+    # Idempotent while the walk is live: a second walk call returns the
+    # same live walk instead of re-walking and losing the state.
+    from backend.api.routes.diagnostics import _run_upstream_walk
+    again = _run_upstream_walk(db, session, persisted)
+    assert again is not None and again["already_live"] is True
+    assert [h["cause"] for h in again["live"]] == \
+        [h["cause"] for h in entry["live"]]
 
     # The technician answers "no" through POST /respond: the walk
     # advances deterministically (leading hypothesis ruled out, reserve
     # promoted), and once the singles are exhausted, pairs from the top
     # of the ranking appear. The LLM turn is stubbed to unparseable
     # output, which degrades to keeping the walk-advanced hypotheses.
-    import backend.diagnostics.agent as agent_module
-
     def _unparseable(*args, **kwargs):
         return "not json", False
 
@@ -239,6 +284,10 @@ def test_upstream_walk_endpoint_generates_live_plus_reserves_and_answers_advance
     assert any(e.get("kind") == "upstream_walk_answer" for e in final.timeline)
     # Ruled-out walk hypotheses are recorded as eliminated, not lost.
     assert len(final.eliminated_hypotheses) >= 5
+
+    # The endpoint itself is gone from the diagnosis service (§2.5).
+    resp = client.post(f"/diagnose/{session.id}/upstream-walk", json={})
+    assert resp.status_code == 404, resp.text
 
 
 def test_respond_auto_walks_when_turn_exhausts_table_causes(monkeypatch):
@@ -280,9 +329,13 @@ def test_respond_auto_walks_when_turn_exhausts_table_causes(monkeypatch):
 
 
 def test_upstream_walk_refuses_when_table_not_exhausted():
+    """Phase 3 extraction: POST /diagnose/{id}/upstream-walk is removed
+    (§2.5) — the refusal and the force override are driven through the
+    walk helper directly here, and the endpoint asserted 404."""
     db, session = _db_with_proof_twin()
     client = _client(db)
     # Put a table cause back as a live hypothesis: the walk must not run.
+    from backend.api.routes.diagnostics import _run_upstream_walk
     from backend.diagnostics.schema import DiagnosticState, Hypothesis
     state = DiagnosticState.model_validate(session.state)
     state.hypotheses = [Hypothesis(
@@ -291,15 +344,14 @@ def test_upstream_walk_refuses_when_table_not_exhausted():
     state.eliminated_hypotheses = []
     session.state = state.model_dump(mode="json")
     db.commit()
-    resp = client.post(f"/diagnose/{session.id}/upstream-walk", json={})
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["available"] is False
-    assert "not exhausted" in resp.json()["reason"]
+    assert _run_upstream_walk(db, session, state) is None
     # force=true runs it anyway (the explicit override).
-    resp = client.post(f"/diagnose/{session.id}/upstream-walk", json={"force": True})
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["available"] is True
-    assert len(resp.json()["live"]) == 5
+    forced = _run_upstream_walk(db, session, state, force=True)
+    assert forced is not None and forced["available"] is True
+    assert len(forced["live"]) == 5
+    # The endpoint itself is gone from the diagnosis service (§2.5).
+    resp = client.post(f"/diagnose/{session.id}/upstream-walk", json={})
+    assert resp.status_code == 404, resp.text
 
 
 # --- Tier 2 Option C: the default stays ON ---------------------------------

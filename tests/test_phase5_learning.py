@@ -126,26 +126,64 @@ def _learning_client(db):
 
 # --- Phase 5 gate: outcome flows end to end -------------------------------
 
-def test_validated_then_failed_flags_row_and_history(proof):
+def _drive_turn_to_tournament(monkeypatch, db, session):
+    """Drive one POST /respond turn with the LLM stubbed to unparseable
+    output (the degraded turn keeps the seeded hypotheses) and
+    retrieval stubbed to no evidence, so respond()'s early tournament
+    runs against the proof twin and writes a real early_tournament
+    timeline entry. Phase 3 extraction: POST
+    /diagnose/{id}/verify-repair is removed (§2.5), so the twin
+    verdict for the outcome flow comes from this live path instead."""
+    import backend.api.routes.diagnostics as diagnostics_routes
+    import backend.diagnostics.agent as agent_module
+    import backend.retrieval.ingestion_client as ingestion_client_mod
+    from tests.twin_testkit import make_twin_client
+
+    class _FakeIngestionClient:
+        def list_products(self):
+            return []
+
+    # Phase 3 twin split: the twin client is HTTP-only now. Both
+    # run_turn (agent) and respond()'s early tournament (diagnostics
+    # route) construct their own TwinVerifyClient; point both at the
+    # real twin-verifier app over this test DB (inline dispatch, no
+    # broker) -- the HTTP equivalent of the removed LocalVerifyBackend.
+    _twin_factory = lambda **kwargs: make_twin_client(db, monkeypatch)
+    monkeypatch.setattr(agent_module, "TwinVerifyClient", _twin_factory)
+    monkeypatch.setattr(diagnostics_routes, "TwinVerifyClient", _twin_factory)
+    monkeypatch.setattr(agent_module, "hybrid_retrieve", lambda *a, **k: [])
+    monkeypatch.setattr(agent_module.gateway, "complete_result",
+                        lambda *a, **k: ("not json", False))
+    monkeypatch.setattr(ingestion_client_mod, "get_ingestion_client",
+                        lambda *a, **k: _FakeIngestionClient())
+    client = _diag_client(db)
+    resp = client.post(f"/diagnose/{session.id}/respond",
+                       json={"input": "no change", "input_kind": "observation"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "active"
+    db.refresh(session)
+    from backend.diagnostics.schema import DiagnosticState
+    state = DiagnosticState.model_validate(session.state)
+    entries = [e for e in state.timeline if e.get("kind") == "early_tournament"]
+    # Two entries land: run_turn's pre-turn tournament and respond()'s
+    # early tournament (which reuses the first run's verdicts). The
+    # latest is what the outcome flow reads.
+    assert entries, state.timeline
+    assert entries[-1]["counts"]["validated"] >= 1
+    return state
+
+
+def test_validated_then_failed_flags_row_and_history(proof, monkeypatch):
     db, product, revision = proof["db"], proof["product"], proof["revision"]
     session = _session(db, product, revision)
-    client = _diag_client(db)
-    # Verify first: the twin VALIDATES the case-1(a) repair, and the
-    # RepairAction is presented safety-first (steal 6).
-    resp = client.post(f"/diagnose/{session.id}/verify-repair",
-                       json={"cause": CAUSE_A})
-    assert resp.status_code == 200, resp.text
-    verify = resp.json()
-    assert verify["available"] is True, verify
-    assert verify["verdict"] == "validated"
-    safety_first = verify.get("repair_action_safety_first")
-    assert safety_first is not None
-    assert safety_first["order"][0] == "Safety"
-    assert "lockout" in safety_first["Safety"][0].lower()
-    assert safety_first["Preconditions"], "preconditions must be present"
+    # The twin VALIDATES the case-1(a) repair via respond()'s early
+    # tournament (the safety-first RepairAction presentation itself is
+    # covered by test_phase456_readiness_repairs.py).
+    _drive_turn_to_tournament(monkeypatch, db, session)
 
     # Now the field says the repair FAILED: twin VALIDATED + field
     # FAILED must flag the implicated archetype row for review.
+    client = _diag_client(db)
     resp = client.post(f"/diagnose/{session.id}/outcome",
                        json={"outcome": "not_fixed", "confirmed_cause": CAUSE_A,
                              "repair_performed": "Increased wire feed pressure",
@@ -174,13 +212,13 @@ def test_validated_then_failed_flags_row_and_history(proof):
     assert outcome.outcome == "not_fixed"
 
 
-def test_successful_outcome_writes_history_without_flag(proof):
+def test_successful_outcome_writes_history_without_flag(proof, monkeypatch):
     db, product, revision = proof["db"], proof["product"], proof["revision"]
     session = _session(db, product, revision)
+    # Twin VALIDATES via respond()'s early tournament (verify-repair
+    # endpoint removed in the Phase 3 extraction, §2.5).
+    _drive_turn_to_tournament(monkeypatch, db, session)
     client = _diag_client(db)
-    verify = client.post(f"/diagnose/{session.id}/verify-repair",
-                         json={"cause": CAUSE_A}).json()
-    assert verify["verdict"] == "validated"
     resp = client.post(f"/diagnose/{session.id}/outcome",
                        json={"outcome": "fixed", "confirmed_cause": CAUSE_A,
                              "repair_performed": "Increased wire feed pressure"})
@@ -302,38 +340,18 @@ def test_full_repair_action_has_preconditions_and_safety():
         assert rendered["Steps"], "procedure refs carry the page evidence"
 
 
-# --- Close-out-note mining (steal 5) ------------------------------------------
+# --- Close-out-note mining (steal 5) — CUT in Phase 1 Step 5 -----------
+# The two tests below assert the cut (module + route gone); the mining
+# behaviour tests were removed with backend/diagnostics/closeout.py.
 
-def _outcome(db, product, revision, session_id, cause, notes, outcome="fixed"):
-    session = _session(db, product, revision, timeline=[])
-    session.id = session_id
-    db.add(DiagnosticOutcome(session_id=session_id, product_id=product.id,
-                             revision_id=revision.id, outcome=outcome,
-                             confirmed_cause=cause, technician_notes=notes))
-    db.flush()
-    return session
-
-
-def test_closeout_template_is_labelled_and_never_cited():
-    from backend.diagnostics.closeout import mine_closeout_notes
-    db = _db()
-    asset, asset_rev = _product(db)
-    other, other_rev = _product(db, family="OMNIPRO", model="999")
-    template = "Replaced part. Tested OK."
-    _outcome(db, asset, asset_rev, "s-t1", "Feed Tensioner is too tight.", template)
-    _outcome(db, other, other_rev, "s-t2", "Feed Tensioner is too tight.", template)
-    # A terse note is reported, never over-read.
-    _outcome(db, asset, asset_rev, "s-t3", None, "ok")
-    db.commit()
-    mined = mine_closeout_notes(db)
-    assert mined["coverage"]["total_notes"] == 3
-    assert mined["coverage"]["usable"] == 2
-    assert mined["coverage"]["terse"] == 1
-    assert len(mined["templates"]) == 1
-    template_group = mined["templates"][0]
-    assert template_group["is_template"] is True
-    assert "same text on 2 assets" in template_group["template_label"]
-    assert "not specific to this machine" in template_group["template_label"]
+def test_closeout_module_is_cut():
+    """Phase 1 Step 5 CUT: closeout (``backend/diagnostics/closeout.py``)
+    serves neither the core loop nor scalability, so the module is gone.
+    The learning routes that depended on nothing but it are gone with
+    it; learning / fleet / downtime / pm stay (DEFER, scalability base)."""
+    import pytest as _pytest
+    with _pytest.raises(ModuleNotFoundError):
+        import backend.diagnostics.closeout  # noqa: F401
 
 
 def _product(db, manufacturer="Harbor Freight", family="OMNIPRO", model="220"):
@@ -346,25 +364,16 @@ def _product(db, manufacturer="Harbor Freight", family="OMNIPRO", model="220"):
     return product, revision
 
 
-def test_closeout_same_model_recurrence_is_a_fleet_pattern_and_unresolved_flagged():
-    from backend.diagnostics.closeout import mine_closeout_notes
+def test_closeout_route_is_gone_but_learning_review_stays():
+    """Phase 1 Step 5 CUT sweep: GET /learning/closeout is gone with
+    the module, while the deferred learning surface (review view,
+    bad-actors, downtime) is intact."""
     db = _db()
-    asset, asset_rev = _product(db)
-    sibling_rev = _revision(db, asset, "Rev B")
-    note = "Tensioner was too tight again, still slipping after adjustment."
-    _outcome(db, asset, asset_rev, "s-f1", "Feed Tensioner is too tight.", note)
-    _outcome(db, asset, sibling_rev, "s-f2", "Feed Tensioner is too tight.", note)
-    db.commit()
-    mined = mine_closeout_notes(db, symptom=SYMPTOM, product_id=asset.id)
-    assert len(mined["groups"]) == 1
-    group = mined["groups"][0]
-    assert group["is_template"] is False  # same model, not a template
-    assert group["unresolved"] is True
-    assert "again" in group["unresolved_signals"]
-    assert "still" in group["unresolved_signals"]
-    assert group["fleet_pattern"] is not None
-    assert group["fleet_pattern"]["cause"] == "Feed Tensioner is too tight."
-    assert group["fleet_pattern"]["asset_count"] == 2
+    client = _learning_client(db)
+    assert client.get("/learning/closeout").status_code == 404
+    review = client.get("/learning/review")
+    assert review.status_code == 200
+    assert review.json()["counts"]["flagged_rows"] == 0
 
 
 # --- PM-interval draft (steal 7) ----------------------------------------------

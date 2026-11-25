@@ -9,10 +9,6 @@ from backend.db.models import (
     Chunk,
     ChunkType,
     DocType,
-    ExpertKnowledge,
-    KnowledgeStatus,
-    KnowledgeType,
-    KnowledgeVersion,
     MachineKnowledgeEntity,
     MachineKnowledgeFact,
     Product,
@@ -26,7 +22,6 @@ from backend.knowledge.component_extraction import (
     persist_machine_knowledge,
 )
 from backend.knowledge.evidence import MachineEvidence
-from backend.knowledge.expert import persist_approved_knowledge
 from backend.knowledge.machine_model import (
     MachineBehavior,
     MachineConstraint,
@@ -207,31 +202,3 @@ def test_schematic_projection_creates_entities_ports_and_relations():
     assert model.relations[0].evidence[0].source_type == "schematic"
 
 
-def test_approved_expert_claims_are_projected_to_universal_knowledge():
-    db = make_session()
-    product = Product(manufacturer="Acme", family="CNC", model="C1")
-    db.add(product)
-    db.flush()
-    revision = Revision(product_id=product.id, label="Rev A")
-    db.add(revision)
-    db.flush()
-    version = KnowledgeVersion(
-        interview_id="interview-1", revision_id=revision.id, version=1,
-        status=KnowledgeStatus.approved,
-    )
-    db.add(version)
-    db.flush()
-    db.add(ExpertKnowledge(
-        knowledge_version_id=version.id, knowledge_type=KnowledgeType.failure_mode,
-        title="Door fault", failure_mode="Door interlock open", symptom="Motor stopped",
-        action="Close door", expected_observation="Motor runs", evidence_turn_ids=["turn-1"],
-        confidence=0.9, source_quote="Close the door before testing.",
-    ))
-    db.commit()
-
-    persist_approved_knowledge(db, version)
-    db.commit()
-
-    entity = db.query(MachineKnowledgeEntity).filter_by(revision_id=revision.id).one()
-    assert entity.entity_type == "failure_mode"
-    assert db.query(MachineKnowledgeFact).filter_by(revision_id=revision.id, fact_type="behavior").count() == 0

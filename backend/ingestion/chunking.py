@@ -262,51 +262,67 @@ def _table_to_markdown(table: list[list[str | None]]) -> str:
     return "\n".join(md)
 
 
-def _grouped_table_chunks(page: RawPage, text=None) -> list[PendingChunk]:
-    """Group a page's tables into chunks up to max_chars, not one chunk per table.
+def _split_table_markdown(md: str, max_chars: int) -> list[str]:
+    """Split one table's Markdown into row groups <= max_chars.
 
-    pdfplumber splits one logical signal table into many small tables
-    (header repeats, ruling lines, per-section fragments). Emitting each
-    fragment as its own chunk was the other half of the 2662-chunk blow-up:
-    an 852-page PLC manual yields thousands of tiny table chunks.
-    Grouping by page keeps each page's tables together as one evidence
-    unit (split only if the page's tables exceed max_chars), with the
-    section / page_kind context attached, so no table content is lost.
+    The header (first two lines: header + separator) repeats per
+    group; rows are never split. A single row longer than the cap
+    stays whole in its own group.
+    """
+    lines = md.split("\n")
+    if len(md) <= max_chars or len(lines) <= 2:
+        return [md]
+    header, sep, *body = lines
+    groups: list[str] = []
+    buf = [header, sep]
+    size = len(header) + len(sep) + 2
+    for line in body:
+        if len(buf) > 2 and size + len(line) + 1 > max_chars:
+            groups.append("\n".join(buf))
+            buf, size = [header, sep], len(header) + len(sep) + 2
+        buf.append(line)
+        size += len(line) + 1
+    if len(buf) > 2 or not groups:
+        groups.append("\n".join(buf))
+    return groups
+
+
+def _atomic_table_chunks(page: RawPage, text=None) -> list[PendingChunk]:
+    """One chunk per table (Step 1, P-02).
+
+    The old page-level grouping merged every table on a page into
+    one chunk (up to 15,000 chars): a troubleshooting table buried
+    mid-chunk sat past every downstream cut (chunk 62f72eda: the
+    Miller table starts at character 3,418). One table = one chunk
+    makes each table a whole, countable retrieval unit; a single
+    table over the retrieval cap splits into row groups with the
+    header repeated, never a split row. Text chunking keeps the
+    large-context extraction sizing until Step 2 builds the second
+    (retrieval) stream -- this change governs tables only.
     """
     _sec = _page_section(page, text)
     _kind = getattr(page, "page_kind", "other")
     _stype = getattr(page, "source_type", "other")
     out: list[PendingChunk] = []
-    buf: list[str] = []
-    indices: list[int] = []
-    rows = 0
-    cols = 0
-    def _flush_buf():
-        nonlocal buf, indices, rows, cols
-        if not buf:
-            return
-        content = f"[Section: {_sec or _kind} | Page kind: {_kind}]\n" + "\n\n".join(buf)
-        out.append(PendingChunk(
-            ChunkType.table, page.page_number, content,
-            {"rows": rows, "cols": cols, "table_index": indices[0] if indices else 0,
-             "table_indices": list(indices), "tables_count": len(indices),
-             "chunking": "atomic_grouped", "section": _sec, "page_kind": _kind,
-             "source_type": _stype},
-        ))
-        buf, indices, rows, cols = [], [], 0, 0
+    cap = settings.retrieval_chunk_max_chars
     for i, table in enumerate(page.tables):
         md = _table_to_markdown(table)
         if not md:
             continue
-        # Flush before adding if this table alone would exceed max_chars.
-        if buf and len("\n\n".join(buf)) + len(md) + 2 > settings.chunk_max_chars:
-            _flush_buf()
-        buf.append(md)
-        indices.append(i)
-        rows += len(table)
-        cols = max(cols, len(table[0]) if table else 0)
-    _flush_buf()
+        for j, part in enumerate(_split_table_markdown(md, cap)):
+            content = f"[Section: {_sec or _kind} | Page kind: {_kind}]\n" + part
+            out.append(PendingChunk(
+                ChunkType.table, page.page_number, content,
+                {"rows": len(table), "cols": len(table[0]) if table else 0,
+                 "table_index": i, "table_group": j,
+                 "chunking": "atomic_table", "section": _sec, "page_kind": _kind,
+                 "source_type": _stype},
+            ))
     return out
+
+
+# Backward-compatible alias: the old name described page-level grouping.
+_grouped_table_chunks = _atomic_table_chunks
 
 
 def page_to_chunks(pdf_path: str, page: RawPage) -> list[PendingChunk]:
@@ -322,7 +338,7 @@ def page_to_chunks(pdf_path: str, page: RawPage) -> list[PendingChunk]:
             {"section": section or None, "chunking": "structure_aware",
              "source_type": _stype, "source_types": [_stype]},
         ))
-    chunks.extend(_grouped_table_chunks(page, text))
+    chunks.extend(_atomic_table_chunks(page, text))
     _sec = _page_section(page, text)
     _kind = getattr(page, "page_kind", "other")
     for i, image_path in enumerate(page.image_paths):
@@ -340,7 +356,7 @@ def pages_to_chunks(pdf_path: str, pages: list[RawPage]) -> list[PendingChunk]:
     """Create document-level text chunks plus atomic tables/diagrams."""
     chunks = _document_text_chunks(pdf_path, pages)
     for page in pages:
-        chunks.extend(_grouped_table_chunks(page))
+        chunks.extend(_atomic_table_chunks(page))
         _sec = _page_section(page)
         _kind = getattr(page, "page_kind", "other")
         _stype = getattr(page, "source_type", "other")

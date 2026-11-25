@@ -1,4 +1,4 @@
-"""Tests for the benchmark oracle runner (scripts/run_benchmark_oracle.py).
+"""Tests for the benchmark oracle runner (benchmark/run_benchmark_oracle.py).
 
 Coverage:
   (i)   the runner core against the OMNIPRO proof twin + the OMNIPRO
@@ -33,15 +33,14 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 from backend.db.models import Base, DigitalTwin, TwinStatus
 from backend.simulation.schema import DigitalTwinDefinition, TwinComponent
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-import run_benchmark_oracle as runner
-from run_benchmark_oracle import (
+from benchmark import run_benchmark_oracle as runner
+from benchmark.run_benchmark_oracle import (
     BenchmarkOracleError,
     NoActiveTwinError,
     build_observable_paths,
@@ -113,8 +112,8 @@ def test_proof_twin_reproduces_known_3c_numbers():
         build_test_models,
         observable_paths,
     )
-    from backend.simulation.oracle import load_vocabulary, run_oracle  # noqa: F401  (parity check)
-    from run_phase3a_baseline import _load_oracle_set
+    from benchmark.oracle import load_vocabulary, run_oracle  # noqa: F401  (parity check)
+    from benchmark.run_phase3a_baseline import _load_oracle_set
 
     vocab = load_vocabulary(VOCABULARY)
     oracle_rows, problems, _expanded = _load_oracle_set(MANUAL, vocab, REGISTRY)

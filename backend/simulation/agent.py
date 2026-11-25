@@ -73,7 +73,20 @@ def _diff(before: dict[str, Any], after: dict[str, Any], prefix: str = "") -> di
 
 def run_experiment(definition: DigitalTwinDefinition, initial_state: dict[str, Any],
                    request: ExperimentRequest) -> ExperimentResult:
-    """Run baseline → fault → intervention in an isolated clone."""
+    """Run baseline → fault → intervention in an isolated clone.
+
+    Empty assertions are rejected, never validated (twin audit: the
+    vacuous-validation trap at agent.py:98 — ``passed = all(...) if
+    checks else final_state != fault_state`` counted any state change
+    as a pass with zero assertions). The route returns 400 for an
+    empty-assertions request; this guard is the defence in depth for
+    direct callers. Every production caller supplies at least one
+    assertion (verification.py builds exactly one per experiment).
+    """
+    if not request.assertions:
+        raise ValueError(
+            "experiment assertions must not be empty: an experiment "
+            "with no assertions can never validate")
     baseline_engine = DigitalTwinEngine(definition, initial_state)
     baseline_engine.step()
     baseline = deepcopy(baseline_engine.state)
@@ -95,7 +108,10 @@ def run_experiment(definition: DigitalTwinDefinition, initial_state: dict[str, A
                        "actual": actual, "passed": passed})
         observed[assertion.path] = actual
 
-    passed = all(c["passed"] for c in checks) if checks else final_state != fault_state
+    # Empty assertions are rejected in run_experiment's guard above, so
+    # `checks` is never empty here: a pass means every requested
+    # assertion held, never "the state merely changed".
+    passed = all(c["passed"] for c in checks)
     verdict = "validated" if passed else "rejected"
 
     return ExperimentResult(

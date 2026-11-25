@@ -1,4 +1,11 @@
-"""Machine-model-backed simulation and diagnostic verification API."""
+"""Machine-model-backed simulation and diagnostic verification API.
+
+Phase 3 twin-verifier extraction: the twin visual (layout) moved
+with its endpoint to the gateway shim (``backend/api/visual.py`` +
+``backend/api/main.py``) — the twin service must not own
+presentation. This router keeps compile / approve / experiment /
+hypotheses / context / revision-twin only.
+"""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,7 +19,6 @@ from backend.simulation.simulation_schema import ExperimentRequest, ExperimentRe
 from backend.simulation.agent import run_experiment, run_hypotheses
 from backend.simulation.compiler import compile_machine_model
 from backend.simulation.expert_rules import apply_expert_seed, load_seed_for_product
-from backend.simulation.visual import layout_twin
 from backend.knowledge.global_integration import _model_from_payload
 from backend.simulation.service import create_twin, snapshot
 
@@ -102,24 +108,16 @@ def twin_context(twin_id: str, db: Session = Depends(get_session)):
     return {"twin_id": twin.id, "revision_id": twin.revision_id, "definition": definition.model_dump(mode="json"), "snapshot": snapshot(twin)}
 
 
-@router.get("/twins/{twin_id}/visual")
-def twin_visual(twin_id: str, db: Session = Depends(get_session)):
-    """Render-ready layout of a compiled twin: components as nodes, canonical relations as edges."""
-    twin = db.get(DigitalTwin, twin_id)
-    if not twin:
-        raise HTTPException(404, "Digital twin not found")
-    definition = _definition(twin)
-    return {"twin_id": twin.id, "revision_id": twin.revision_id, "name": twin.name,
-            "status": twin.status.value, "model_version": twin.model_version,
-            **layout_twin(definition, twin.state or {})}
-
-
 @router.post("/twins/{twin_id}/experiment", response_model=ExperimentResult)
 def experiment(twin_id: str, payload: ExperimentRequest, db: Session = Depends(get_session)):
     twin = db.get(DigitalTwin, twin_id)
     if not twin:
         raise HTTPException(404, "Digital twin not found")
     if twin.status != TwinStatus.active: raise HTTPException(409, "Twin is draft; review and approve it before simulation")
+    if not payload.assertions:
+        # Closes the vacuous-validation trap (simulation/agent.py:98):
+        # an experiment with no assertions can never validate.
+        raise HTTPException(400, "Experiment assertions must not be empty")
     return run_experiment(_definition(twin), twin.state, payload)
 
 
@@ -129,4 +127,6 @@ def hypotheses(twin_id: str, payload: HypothesisBatchRequest, db: Session = Depe
     if not twin:
         raise HTTPException(404, "Digital twin not found")
     if twin.status != TwinStatus.active: raise HTTPException(409, "Twin is draft; review and approve it before simulation")
+    if any(not exp.assertions for exp in payload.experiments):
+        raise HTTPException(400, "Experiment assertions must not be empty")
     return HypothesisBatchResult(results=run_hypotheses(_definition(twin), twin.state, payload.experiments))

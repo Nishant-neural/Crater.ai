@@ -16,14 +16,20 @@ def test_batch_extraction_requires_every_source_id(monkeypatch):
     assert result["c1"][0].components[0].name == "Servo"
 
 
-def test_checkpoint_preserves_vector_chunk_progress(tmp_path, monkeypatch):
-    monkeypatch.setattr("backend.ingestion.checkpoints.CHECKPOINT_DIR", tmp_path)
-    job = "large-manual-test"
-    save_checkpoint(job, stage="vectors", vector_chunks_done=["c1", "c2"], vectors_done=False)
-    cp = load_checkpoint(job)
-    assert cp["vector_chunks_done"] == ["c1", "c2"]
-    assert cp["vectors_done"] is False
-    clear_checkpoint(job)
+def test_checkpoint_preserves_vector_chunk_progress():
+    # Phase 3 ingestion step: checkpoints are Postgres rows now
+    # (ingestion_job_progress), not files -- same round-trip contract,
+    # no CHECKPOINT_DIR to point at a tmp dir.
+    job = "large-manual-test-postgres"
+    try:
+        save_checkpoint(job, stage="vectors", vector_chunks_done=["c1", "c2"], vectors_done=False)
+        cp = load_checkpoint(job)
+        assert cp["vector_chunks_done"] == ["c1", "c2"]
+        assert cp["vectors_done"] is False
+        assert cp["stage"] == "vectors"
+    finally:
+        clear_checkpoint(job)
+    assert load_checkpoint(job)["vector_chunks_done"] == []
 
 
 def test_malformed_batch_response_is_not_marked_retryable(monkeypatch):

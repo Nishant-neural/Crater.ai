@@ -1,0 +1,573 @@
+# Crater.ai — ingestion service contracts (OpenAPI-ish, v1)
+# Governing: contracts/README.md §3, §8. Table parser is an internal
+# MODULE here (no standalone service, no POST /v1/tables/parse).
+# Indexing + embedding live here; retrieval search lives in diagnosis-agent.
+# Execution: Celery + Redis (broker db 0, result db 1); Postgres progress.
+openapi: 3.0.3
+info:
+  title: Crater.ai ingestion API
+  version: 1.0.0
+  description: >
+    PDF in -> chunks, table rows, FailureModes, canonical knowledge out.
+    Diagnosis-agent reads knowledge ONLY through this API (never by
+    importing ingestion code or reading its Postgres tables).
+servers:
+  - url: https://{internal-host}/v1
+    description: Internal network (via gateway for public callers)
+security:
+  - ApiKeyAuth: []
+tags:
+  - { name: jobs, description: Ingestion jobs (Celery + Postgres progress) }
+  - { name: knowledge, description: Knowledge lookup for diagnosis-agent }
+  - { name: mode-b, description: On-demand (Mode B) ingestion }
+paths:
+  /jobs:
+    post:
+      tags: [jobs]
+      summary: Upload a PDF for ingestion. 202 + job id. SHA-256 dedupe.
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/RequestId" }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: "#/components/schemas/IngestUpload" }
+      responses:
+        "202":
+          description: Job accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobAccepted" }
+        "409":
+          description: Same idempotency key + different SHA-256.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "429":
+          description: Upload rate limit (5/hour per API key) — 429 + Retry-After.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /jobs/{job_id}:
+    get:
+      tags: [jobs]
+      summary: Job state + full progress object.
+      parameters:
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: job_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Job state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IngestionJob" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /jobs/{job_id}/retry:
+    post:
+      tags: [jobs]
+      summary: Resume from Postgres progress, retrying only failed chunks — never a whole-manual restart.
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: job_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "202":
+          description: Retry accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobAccepted" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /jobs/{job_id}/lazy-ingest:
+    post:
+      tags: [jobs]
+      summary: Promote deferred Tier 2 content for a revision on demand (Mode B, unseen-fault paths).
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: job_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "202":
+          description: Lazy ingest accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobAccepted" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /revisions/{revision_id}/status:
+    get:
+      tags: [jobs]
+      summary: >
+        Revision readiness from recorded progress, not a clock guess.
+        The 5-minute stale heuristic is DELETED.
+      parameters:
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: revision_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Revision status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RevisionStatus" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /revisions/{revision_id}/chunks:
+    get:
+      tags: [knowledge]
+      summary: >
+        Chunk contents for a revision — the retrieval read path
+        diagnosis-agent uses. Added by the Phase 3 diagnosis-agent
+        extraction (not in the Phase 2 contracts): Qdrant payloads
+        carry no chunk content and diagnosis must not read ingestion's
+        tables, so hybrid retrieval fetches whole chunk contents here
+        (fused set by ids, BM25 corpus by paging). limit=0 probes
+        revision existence and returns product_id / revision_label.
+      parameters:
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: revision_id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: ids
+          in: query
+          required: false
+          schema: { type: string }
+          description: Comma-separated chunk ids (the fused set).
+        - name: doc_type
+          in: query
+          required: false
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 100, maximum: 500 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, default: 0 }
+      responses:
+        "200":
+          description: Whole chunk rows, no truncation.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revision_id, product_id, revision_label, total, chunks]
+                properties:
+                  revision_id: { type: string }
+                  product_id: { type: string }
+                  revision_label: { type: string }
+                  total: { type: integer }
+                  limit: { type: integer }
+                  offset: { type: integer }
+                  chunks:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        content: { type: string }
+                        page_number: { type: integer, nullable: true }
+                        document_id: { type: string }
+                        document_title: { type: string }
+                        doc_type: { type: string }
+                        document_page_count: { type: integer, nullable: true }
+                        chunk_type: { type: string }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: Unknown doc_type.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /revisions/{revision_id}/failure-modes:
+    get:
+      tags: [knowledge]
+      summary: >
+        Queryable FailureModes for a symptom, backed by table_rows —
+        the read path diagnosis actually needs.
+      parameters:
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: revision_id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: symptom
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Failure modes for the symptom.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [failure_modes]
+                properties:
+                  failure_modes:
+                    type: array
+                    items: { $ref: "#/components/schemas/TableRow" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          description: Ingestion unavailable — diagnosis must not proceed on partial knowledge in silence.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /revisions/{revision_id}/model:
+    get:
+      tags: [knowledge]
+      summary: Canonical machine model snapshot (entities, typed ports, quantities, failure modes, conflicts with precedence).
+      parameters:
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: revision_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Canonical model.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CanonicalModel" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /revisions/{revision_id}/entities:
+    get:
+      tags: [knowledge]
+      summary: Entities of the canonical model.
+      parameters:
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: revision_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Entities.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entities: { type: array, items: { type: object } }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /revisions/{revision_id}/facts:
+    get:
+      tags: [knowledge]
+      summary: Facts with provenance (source doc, IB/revision, variant, precedence).
+      parameters:
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: revision_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Facts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  facts: { type: array, items: { $ref: "#/components/schemas/Fact" } }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /revisions/{revision_id}/integrate:
+    post:
+      tags: [knowledge]
+      summary: Trigger (re-)integration for a revision. Async — 202 + job.
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: revision_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "202":
+          description: Integration job accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobAccepted" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /revisions/{revision_id}/verify:
+    get:
+      tags: [knowledge]
+      summary: Knowledge-side verification of extracted facts against source.
+      parameters:
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: revision_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Verification report.
+          content:
+            application/json:
+              schema: { type: object }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /mode-b/start:
+    post:
+      tags: [mode-b]
+      summary: Start an on-demand ingestion for an unknown machine; Tier 1 first.
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/RequestId" }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: "#/components/schemas/IngestUpload" }
+      responses:
+        "202":
+          description: Mode B job accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobAccepted" }
+  /mode-b/jobs/{job_id}/progress:
+    get:
+      tags: [mode-b]
+      summary: Per-section progress, shown to the user while the rest ingests in the background.
+      parameters:
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: job_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Per-section progress.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IngestionJob" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /mode-b/jobs/{job_id}/diagnose:
+    post:
+      tags: [mode-b]
+      summary: >
+        Diagnose against the partial model that exists now; the answer
+        must state what is still missing.
+      parameters:
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: job_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [symptom]
+              properties:
+                symptom: { type: string }
+      responses:
+        "200":
+          description: Diagnosis against the partial model (missing parts stated).
+          content:
+            application/json:
+              schema: { type: object }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /products/{product_id}/graduate:
+    post:
+      tags: [mode-b]
+      summary: >
+        Promote a Mode B product to a prebuilt (Mode A) model. actor is
+        required — graduation is an accountable action.
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/RequestId" }
+        - name: product_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [actor]
+              properties:
+                actor: { type: string, description: Who performed the graduation. }
+      responses:
+        "200":
+          description: Graduated.
+          content:
+            application/json:
+              schema: { type: object }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /health:
+    get:
+      summary: Liveness only (unversioned in deployment; shown here for completeness).
+      security: []
+      responses:
+        "200": { description: Process alive. }
+  /ready:
+    get:
+      summary: 200 only when Postgres, Qdrant and Redis are all healthy; else 503 naming the failed check.
+      security: []
+      responses:
+        "200": { description: Ready. }
+        "503": { description: Not ready — per-dependency breakdown. }
+components:
+  securitySchemes:
+    ApiKeyAuth: { type: apiKey, in: header, name: X-Api-Key }
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema: { type: string, minLength: 1, maxLength: 255 }
+    RequestId:
+      name: X-Request-ID
+      in: header
+      required: false
+      schema: { type: string }
+  responses:
+    NotFound:
+      description: Unknown id.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Unprocessable:
+      description: Semantic validation failed.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  schemas:
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            request_id: { type: string }
+            upstream: { type: string }
+    IngestUpload:
+      type: object
+      required: [revision_id, doc_type, idempotency_key, file]
+      properties:
+        revision_id: { type: string }
+        doc_type: { type: string, enum: [manual, troubleshooting, alarm, parts, wiring, specification] }
+        idempotency_key: { type: string, minLength: 1, maxLength: 255 }
+        ingest_tier2: { type: boolean, nullable: true }
+        mode: { type: string, enum: [prebuilt, on_demand], default: prebuilt }
+        file: { type: string, format: binary, description: PDF only. }
+    JobAccepted:
+      type: object
+      required: [job_id, status]
+      properties:
+        job_id: { type: string }
+        status: { type: string, enum: [queued, processing] }
+        reused: { type: boolean, description: True when the same SHA was already ingested — no re-ingestion. }
+    IngestionJob:
+      type: object
+      description: "Progress is data, not a log line. table_rows_parsed is checkable vs the oracle (Miller: 38)."
+      required: [id, revision_id, sha256, idempotency_key, status, progress]
+      properties:
+        id: { type: string }
+        revision_id: { type: string }
+        document_id: { type: string, nullable: true }
+        sha256: { type: string }
+        idempotency_key: { type: string }
+        doc_type: { type: string }
+        mode: { type: string, enum: [prebuilt, on_demand] }
+        status: { type: string, enum: [queued, processing, completed, failed] }
+        progress:
+          type: object
+          required: [pages_total, pages_done, chunks_total, chunks_done, table_rows_total, table_rows_parsed, tier2_deferred_chunks, knowledge_failures, integration_done]
+          properties:
+            pages_total: { type: integer }
+            pages_done: { type: integer }
+            chunks_total: { type: integer }
+            chunks_done: { type: integer }
+            table_rows_total: { type: integer }
+            table_rows_parsed: { type: integer, description: "Miller known-correct value: 38." }
+            tier2_deferred_chunks: { type: integer }
+            knowledge_failures: { type: array, items: { type: string } }
+            integration_done: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    RevisionStatus:
+      type: object
+      required: [revision_id, ready]
+      properties:
+        revision_id: { type: string }
+        ready: { type: boolean }
+        job_id: { type: string, nullable: true }
+        progress: { $ref: "#/components/schemas/IngestionJob/properties/progress" }
+    TableRow:
+      type: object
+      description: >
+        The row is the unit of truth for tabular knowledge. Miller:
+        4 generic-service rows + 4 HL.P rows are real rows, just not
+        rankable causes.
+      required: [id, revision_id, symptom, cause, remedy, rankable, rankable_reason, twin_expressible, extraction_method, confidence]
+      properties:
+        id: { type: string }
+        job_id: { type: string, nullable: true }
+        document_id: { type: string, nullable: true }
+        revision_id: { type: string }
+        table_shape: { type: string, enum: [troubleshooting_3col, troubleshooting_2col, alarm_table, spec_table] }
+        symptom: { type: string }
+        symptom_norm: { type: string }
+        meter_code: { type: string, nullable: true, description: "e.g. HL.P 001 — attaches to the parent row, never a standalone symptom." }
+        cause: { type: string }
+        cause_index: { type: integer }
+        remedy: { type: string }
+        remedy_index: { type: integer }
+        rankable: { type: boolean }
+        rankable_reason: { type: string, enum: [concrete, generic_service_fallback, meter_code, settings, technique] }
+        twin_expressible: { type: boolean, description: "False for settings/technique rows — the twin cannot express that cause." }
+        source_document: { type: string, nullable: true }
+        source_type: { type: string, nullable: true }
+        page: { type: integer, nullable: true }
+        chunk_id: { type: string, nullable: true }
+        extraction_method: { type: string, enum: [deterministic_table_parse] }
+        confidence: { type: number, enum: [1.0], description: Parsed fact, not LLM inference. }
+        failure_mode_id: { type: string, nullable: true }
+    Fact:
+      type: object
+      description: Provenance rides on every fact; unknown is null, never invented.
+      properties:
+        id: { type: string }
+        text: { type: string }
+        source_document: { type: string, nullable: true }
+        source_type: { type: string, nullable: true }
+        source_revision: { type: string, nullable: true }
+        model_variant: { type: string, nullable: true }
+        precedence: { type: string, enum: [mtb, oem, generic], nullable: true, description: "MTB 3 > OEM 2 > generic 1." }
+        page: { type: integer, nullable: true }
+        chunk_id: { type: string, nullable: true }
+    CanonicalModel:
+      type: object
+      properties:
+        revision_id: { type: string }
+        entities: { type: array, items: { type: object } }
+        quantities: { type: array, items: { type: object } }
+        failure_modes: { type: array, items: { $ref: "#/components/schemas/TableRow" } }
+        conflicts:
+          type: array
+          items:
+            type: object
+            properties:
+              precedence: { type: object, additionalProperties: { type: string } }
+# NOT in this contract: POST /v1/tables/parse (amendment resolution 4 —
+# table parser is an ingestion-internal module). If another service ever
+# needs parsed tables, it calls ingestion's API above.

@@ -1,14 +1,19 @@
 """Visual twin: backend layout + endpoint.
 
+Phase 3 twin-verifier extraction: ``layout_twin`` moved with its
+endpoint from ``backend/simulation/visual.py`` to the gateway shim
+(``backend/api/visual.py``) — the twin service must not own
+presentation. The layout itself is unchanged.
+
 The layout must be deterministic (same twin -> same picture), render
 every component (unconnected ones are shown, not hidden), draw edges
 only from the documented topology, and never invent a node for a
 relation endpoint that is not a twin component. The verification
 result must carry the three states the frontend playback steps through.
 """
+from backend.api.visual import layout_twin
 from backend.simulation.schema import DigitalTwinDefinition
 from backend.simulation.verification import run_verified_repair
-from backend.simulation.visual import layout_twin
 
 
 def _definition():
@@ -102,7 +107,7 @@ def test_visual_endpoint_returns_layout():
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
-    from backend.api.routes.simulation import twin_visual
+    from backend.api.main import twin_visual
     from backend.db.models import Base, DigitalTwin, TwinStatus
 
     engine = create_engine("sqlite:///:memory:")

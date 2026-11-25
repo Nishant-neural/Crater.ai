@@ -13,9 +13,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session as DBSession
 
+import httpx
+
+from backend.config import settings
 from backend.db.models import IngestionJob, Product, Revision
 from backend.db.session import get_session
-from backend.diagnostics.agent import start_session
 from backend.ingestion.checkpoints import load_checkpoint
 from backend.ingestion.mode_b import (
     check_symptom_readiness, get_product_mode, graduate_to_prebuilt,
@@ -52,6 +54,32 @@ def _job_and_registry(db: DBSession, job_id: str):
         raise HTTPException(409, "No repair-case registry for this product; "
                                  "Mode B needs the Tier 1 page list")
     return job, revision, registry
+
+
+def _start_diagnosis_session(product_id: str, revision_id: str, symptom: str) -> dict:
+    """Start a diagnosis on diagnosis-agent over HTTP (contracts §2.2:
+    Mode B diagnose is diagnosis-owned; the old in-process
+    ``start_session`` import is deleted in the Phase 3 diagnosis-agent
+    extraction). Returns the parsed start response (``session_id``).
+    A diagnosis service that cannot be reached, or answers with an
+    error, is a loud 503 / the upstream status — never a silent
+    no-session. Separated for testability: tests stub this function
+    instead of the network.
+    """
+    try:
+        with httpx.Client(base_url=settings.diagnosis_base_url,
+                          timeout=10.0) as client:
+            resp = client.post("/v1/diagnose/start", json={
+                "product_id": product_id, "revision_id": revision_id,
+                "symptom": symptom})
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            503, f"Diagnosis service unavailable: {exc}")
+    if resp.status_code >= 400:
+        raise HTTPException(
+            resp.status_code,
+            f"Diagnosis service returned HTTP {resp.status_code}")
+    return resp.json()
 
 
 @router.post("/start")
@@ -95,9 +123,13 @@ def diagnose_on_partial(job_id: str, payload: DiagnoseRequest,
                 "pages_to_lazy_ingest": readiness["pages_to_lazy_ingest"],
                 "case_id": readiness.get("case_id"),
                 "partial_model": readiness["partial_model"]}
-    session = start_session(db, revision.product_id, revision.id,
-                            payload.symptom.strip())
-    return {"available": True, "job_id": job_id, "session_id": session.id,
+    started = _start_diagnosis_session(revision.product_id, revision.id,
+                                       payload.symptom.strip())
+    session_id = started.get("session_id")
+    if not session_id:
+        raise HTTPException(
+            503, "Diagnosis service returned no session id")
+    return {"available": True, "job_id": job_id, "session_id": session_id,
             "case_id": readiness.get("case_id"),
             "note": readiness.get("note") or "Diagnosis started on the partial model.",
             "partial_model": readiness["partial_model"]}

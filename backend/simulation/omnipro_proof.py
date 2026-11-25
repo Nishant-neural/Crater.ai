@@ -6,7 +6,7 @@ the human-confirmed edges from ``omnipro_edge_list.json`` (v2 in 3C). It
 is the model the 3B/3C gates run the oracle on — the crater-10 snapshot
 cannot carry the gate (7 duplicate Feed Tensioners, 0 ports), so the gate
 is proven here and the oracle is ALSO run on crater-10 with compiler v3
-and reported honestly (see ``scripts/run_phase3b_oracle.py``).
+and reported honestly (see ``benchmark/run_phase3b_oracle.py``).
 
 Every fact in this model cites its manual page. Nothing is invented:
 - the machine is the HEALTHY, nominal machine (welder on, trigger held,

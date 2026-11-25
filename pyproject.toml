@@ -21,6 +21,14 @@ dependencies = [
     "typer>=0.12",          # CLI
     "python-multipart",     # file uploads in FastAPI
     "alembic>=1.13",        # DB migrations
+    "langgraph>=0.6",        # Phase 1 Step 5: diagnosis loop orchestration
+    "langgraph-checkpoint-postgres>=0.2",  # Postgres checkpoints for the loop
+    "langgraph-checkpoint-sqlite>=0.1",    # dev/test checkpointer (no Postgres)
+    "psycopg[binary]>=3.2",  # Postgres driver for the checkpointer
+    "httpx>=0.27",           # thin async twin-verifier client + LLM provider transport
+    "redis>=5.0",             # gateway rate-limit token bucket (Celery broker in later steps)
+    "celery>=5.4",            # ingestion jobs: broker Redis db 0, result backend db 1
+    "prometheus-client>=0.20",  # gateway shim metrics (/metrics)
 ]
 
 [project.optional-dependencies]

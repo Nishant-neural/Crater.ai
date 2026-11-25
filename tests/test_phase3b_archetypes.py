@@ -3,7 +3,7 @@ ExpectedTrace, fault_injection wiring, lint, the §8 voltage rule, seed
 translation, the Demo Motor Drive regression, and the oracle case-1 gate.
 
 The oracle gate test builds its rows from the reviewed vocabulary
-artifact (the parser join is exercised by ``scripts/run_phase3b_oracle.py``
+artifact (the parser join is exercised by ``benchmark/run_phase3b_oracle.py``
 and by the 3A tests, not duplicated here).
 """
 from __future__ import annotations
@@ -33,7 +33,7 @@ from backend.simulation.omnipro_proof import (
     snapshot_model_for_tournament,
     build_test_models,
 )
-from backend.simulation.oracle import (
+from benchmark.oracle import (
     OracleRow,
     load_vocabulary,
     run_oracle,
