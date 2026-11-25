@@ -17,7 +17,7 @@ http:
     # Legacy unversioned alias, migration only (audit §5): the same
     # handlers are reachable without /v1/ until the alias is deleted.
     gateway-legacy:
-      rule: "PathPrefix(`/diagnose`, `/ingest`, `/products`, `/knowledge`, `/query`, `/schematics`, `/visualization`, `/simulation`, `/digital-twins`, `/mode-b`, `/learning`)"
+      rule: "PathPrefix(`/diagnose`) || PathPrefix(`/ingest`) || PathPrefix(`/products`) || PathPrefix(`/knowledge`) || PathPrefix(`/query`) || PathPrefix(`/schematics`) || PathPrefix(`/visualization`) || PathPrefix(`/simulation`) || PathPrefix(`/digital-twins`) || PathPrefix(`/mode-b`) || PathPrefix(`/learning`)"
       service: gateway
       entryPoints: ["web"]
       middlewares: ["gateway-retry", "gateway-breaker", "gateway-auth"]

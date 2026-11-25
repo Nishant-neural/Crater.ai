@@ -26,6 +26,7 @@ RUN pip install --no-cache-dir uv \
     && uv sync --frozen --no-dev --no-install-project
 
 COPY backend ./backend
+COPY scripts ./scripts
 COPY alembic ./alembic
 COPY alembic.ini ./
 RUN uv sync --frozen --no-dev
@@ -40,4 +41,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 # Apply Alembic migrations, then serve. No SQLite->Postgres data
 # migration exists or is wanted (contracts §8.2): the next ingestion
 # round re-ingests from PDFs against Postgres.
-CMD ["sh", "-c", "uv run alembic upgrade head && exec uv run uvicorn backend.ingestion.app:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "scripts/start_ingestion.sh"]
