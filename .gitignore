@@ -15,5 +15,5 @@ gate6-run/**/*.log
 gate6-run/**/*.stdout
 gate6-run/mock-llm/queue/
 frontend/dist/
-*.md
+
 *.json
