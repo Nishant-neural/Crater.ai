@@ -578,7 +578,16 @@ def test_oracle_moved_to_harness_scorer():
         assert (REPO / "benchmark" / name).exists(), name
         assert not (REPO / "scripts" / name).exists(), name
     # No production module imports the oracle from its harness home.
+    # Allowlist: backend/simulation/drafting.py only. Drafting is
+    # authoring-time tooling (restored 27 Nov 2026), never imported by
+    # any runtime module — and its oracle use is a lazy import inside
+    # check 5 that degrades to a visible flag when unavailable. The
+    # "no runtime module imports drafting" half of this boundary is
+    # enforced by test_drafting_restored_with_human_approval_gate
+    # below, which scans backend/ for any import of it.
     for path in (REPO / "backend").rglob("*.py"):
+        if path.name == "drafting.py":
+            continue
         text = path.read_text(errors="ignore")
         assert "benchmark.oracle" not in text, path
         assert "from benchmark import oracle" not in text, path
@@ -589,13 +598,44 @@ def test_oracle_moved_to_harness_scorer():
 
 # --- CUTs verified gone; DEFER-retained kept ----------------------------------
 
-def test_drafting_and_review_view_are_cut():
-    assert not (REPO / "backend" / "simulation" / "drafting.py").exists()
+def test_drafting_restored_with_human_approval_gate():
+    # Restored 27 Nov 2026: drafting is authoring-time tooling with a
+    # human-approval gate, not a runtime path. review_view stays cut.
+    assert (REPO / "backend" / "simulation" / "drafting.py").exists()
     assert not (REPO / "backend" / "simulation" / "review_view.py").exists()
     for path in (REPO / "backend").rglob("*.py"):
         text = path.read_text(errors="ignore")
-        assert "simulation.drafting" not in text, path
         assert "simulation.review_view" not in text, path
+    # The gate is enforced in code: a draft cannot reach "approved"
+    # without a reviewer and a checklist hash, and a 0.x candidate can
+    # only compile inside the sandbox, never on an approved twin.
+    from backend.simulation.drafting import (
+        ALLOWED_TRANSITIONS,
+        DraftAuthorization,
+    )
+    assert ALLOWED_TRANSITIONS["in review"] == (
+        "approved", "rejected", "needs revision")
+    auth = DraftAuthorization(draft_id="test-draft")
+    auth.transition("candidate")
+    auth.transition("in review")
+    with pytest.raises(ValueError):
+        auth.transition("approved")  # no reviewer, no checklist hash
+    auth.transition("approved", reviewer="nishant",
+                    checklist_hash="deadbeef")
+    assert auth.state == "approved"
+    assert auth.approval is not None
+    assert auth.approval.reviewer == "nishant"
+    # Boundary: drafting is authoring-time only — no runtime module may
+    # import it. (This is what justifies drafting's allowlisted lazy
+    # import of benchmark.oracle in test_oracle_moved_to_harness_scorer
+    # above: the oracle can only be reached through check 5, never
+    # through a production path.)
+    for path in (REPO / "backend").rglob("*.py"):
+        if path.name == "drafting.py":
+            continue
+        text = path.read_text(errors="ignore")
+        assert "simulation.drafting" not in text, path
+        assert "simulation import drafting" not in text, path
     # DEFER-retained as scalability base: kept, not cut.
     assert (REPO / "backend" / "simulation" / "field_promotion.py").exists()
     assert (REPO / "backend" / "simulation" / "library_versions.py").exists()

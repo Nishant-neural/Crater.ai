@@ -2,9 +2,12 @@
 routes and UI swept (audit final test: cut only if neither core loop
 nor scalability).
 
-Cut: closeout (157 lines), drafting (960), review_view (280), the
+Cut: closeout (157 lines), review_view (280), the
 Phase 5 expert trio (470), ProcedureViewer, ExpertKnowledge,
-DigitalTwin demo panel. Deferred (kept): learning, fleet, downtime,
+DigitalTwin demo panel. Drafting (960) was cut here too, but RESTORED
+27 Nov 2026 as authoring-time tooling with a human-approval gate
+(see backend/simulation/drafting.py) — it is no longer in CUT_MODULES.
+Deferred (kept): learning, fleet, downtime,
 pm, field_promotion, library_versions — the scalability base.
 """
 import re
@@ -23,7 +26,9 @@ ROOT = Path(__file__).resolve().parent.parent
 
 CUT_MODULES = [
     "backend.diagnostics.closeout",
-    "backend.simulation.drafting",
+    # NOTE (restore, 27 Nov 2026): "backend.simulation.drafting" was cut
+    # here and has been restored as authoring-time tooling with a
+    # human-approval gate — it is deliberately NOT in this list.
     "backend.simulation.review_view",
     "backend.knowledge.expert",
     "backend.knowledge.expert_schema",

@@ -18,6 +18,7 @@ from collections import Counter
 import pytest
 
 from backend.simulation.compiler import compile_machine_model
+from backend.simulation.edges import load_edge_list_for_product
 from backend.simulation.expert_rules import apply_expert_seed, load_seed_for_product
 from backend.simulation.omnipro_proof import build_omnipro_proof_model, initial_twin_state
 from backend.simulation.repair_actions import (
@@ -72,7 +73,8 @@ def proof_definition():
     model, _warnings, applied = apply_expert_seed(model, seed)
     assert len(applied["rules_applied"]) == 4
     definition, _warnings = compile_machine_model(
-        model, name="OMNIPRO 220 — readiness proof twin (test)")
+        model, name="OMNIPRO 220 — readiness proof twin (test)",
+        edge_list=load_edge_list_for_product("Harbor Freight", "220", "OMNIPRO"))
     return definition
 
 

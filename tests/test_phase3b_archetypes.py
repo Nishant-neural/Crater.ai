@@ -18,6 +18,7 @@ from backend.simulation import archetypes as arch
 from backend.simulation.archetypes import ARCHETYPES, ARCHETYPE_LIBRARY_VERSION
 from backend.simulation.binding import bind_model, parameter_evidence
 from backend.simulation.compiler import compile_machine_model
+from backend.simulation.edges import load_edge_list_for_product
 from backend.simulation.engine import DigitalTwinEngine, demo_definition
 from backend.simulation.expert_rules import apply_expert_seed, load_seed_for_product
 from backend.simulation.lint import (
@@ -68,7 +69,8 @@ def _proof_definition():
     model, _warnings, applied = apply_expert_seed(model, seed)
     assert len(applied["rules_applied"]) == 4
     definition, _warnings = compile_machine_model(
-        model, name="OMNIPRO 220 — Phase 3B proof twin (test)")
+        model, name="OMNIPRO 220 — Phase 3B proof twin (test)",
+        edge_list=load_edge_list_for_product("Harbor Freight", "220", "OMNIPRO"))
     return definition, model
 
 

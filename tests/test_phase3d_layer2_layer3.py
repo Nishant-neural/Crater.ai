@@ -1,12 +1,14 @@
 """Phase 3D tests — Layer 3 field promotion (DEFER, scalability base)
 and the binding points-table decision.
 
-Phase 1 Step 5 CUT drafting (``backend/simulation/drafting.py``) and
-review view (``backend/simulation/review_view.py``): the Layer 2
-drafting workflow and its review surface serve neither the core loop
-nor scalability, so their tests were removed with the modules. What
-remains here is the deferred field-promotion behaviour and the
-points-table decision, which are untouched by the cut.
+Phase 1 Step 5 CUT review view (``backend/simulation/review_view.py``):
+its review surface serves neither the core loop nor scalability, so its
+tests were removed with the module. Drafting
+(``backend/simulation/drafting.py``) was cut in Step 5 too, but RESTORED
+27 Nov 2026 as authoring-time tooling with a human-approval gate — the
+Layer 2 drafting workflow is the way the library grows under human
+review. What remains here is the deferred field-promotion behaviour and
+the points-table decision, which are untouched by either change.
 """
 
 import json

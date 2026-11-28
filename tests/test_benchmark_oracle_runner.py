@@ -52,7 +52,7 @@ from benchmark.run_benchmark_oracle import (
 )
 
 REPO = Path(__file__).resolve().parent.parent
-WORKSPACE = REPO.parents[1]  # ~/workspace (v12 -> crater-phase1 -> workspace)
+WORKSPACE = REPO.parent  # ~/workspace
 BENCHMARKS = WORKSPACE / "crater-benchmarks" / "evaluations"
 LINCOLN = BENCHMARKS / "c002-lincoln.json"
 MILLER = BENCHMARKS / "c002b-miller.json"
@@ -106,6 +106,7 @@ def test_proof_twin_reproduces_known_3c_numbers():
     not derivable from names. See BENCHMARK_ORACLE_RUNNER_BUILD_NOTES.md.
     """
     from backend.simulation.compiler import compile_machine_model
+    from backend.simulation.edges import load_edge_list_for_product
     from backend.simulation.expert_rules import apply_expert_seed, load_seed_for_product
     from backend.simulation.omnipro_proof import (
         build_omnipro_proof_model,
@@ -126,6 +127,7 @@ def test_proof_twin_reproduces_known_3c_numbers():
     definition, _warnings = compile_machine_model(
         model, name="OMNIPRO 220 — Phase 3C proof twin",
         description="Benchmark-oracle test: 3C proof twin.",
+        edge_list=load_edge_list_for_product("Harbor Freight", "220", "OMNIPRO"),
     )
 
     # The core accepts a pre-built OracleRow set only through the

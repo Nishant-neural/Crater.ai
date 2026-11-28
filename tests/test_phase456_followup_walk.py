@@ -122,6 +122,7 @@ def _db_with_proof_twin():
         MachineKnowledgeModelSnapshot, Product, Revision, TwinStatus,
     )
     from backend.simulation.compiler import compile_machine_model
+    from backend.simulation.edges import load_edge_list_for_product
     from backend.simulation.expert_rules import apply_expert_seed, load_seed_for_product
     from backend.simulation.omnipro_proof import (
         build_omnipro_proof_model, initial_twin_state, snapshot_model_for_tournament,
@@ -142,7 +143,8 @@ def _db_with_proof_twin():
     seed = load_seed_for_product("Harbor Freight", "220", "OMNIPRO")
     if seed is not None:
         proof_model, _, _ = apply_expert_seed(proof_model, seed)
-    definition, _warnings = compile_machine_model(proof_model, name="Phase 4 follow-up proof twin")
+    definition, _warnings = compile_machine_model(
+        proof_model, name="Phase 4 follow-up proof twin", edge_list=load_edge_list_for_product("Harbor Freight", "220", "OMNIPRO"))
     twin = DigitalTwin(product_id=product.id, revision_id=revision.id,
                        name="Phase 4 follow-up proof twin",
                        status=TwinStatus.active,
