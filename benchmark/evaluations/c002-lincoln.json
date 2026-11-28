@@ -1,0 +1,1253 @@
+{
+  "version": "oracle-vocabulary-lincoln-v1",
+  "created": "2026-11-21",
+  "case_id": "c002-lincoln",
+  "product": {
+    "manufacturer": "Lincoln Electric",
+    "model": "POWER MIG 210 MP",
+    "manual": "Operator's Manual IMT10164-A, 104 pp (operator-manual.pdf)"
+  },
+  "source": "Lincoln POWER MIG 210 MP Operator's Manual troubleshooting table, printed pp. 27-28 (deterministic parser output: 7 symptoms -> 22 cause rows); the parser splits each symptom's POSSIBLE CAUSE cell on its numbered items.",
+  "scope_disclaimer": "The oracle proves the twin matches the manual's claims, not that the machine behaves that way. Field data is the only real ground truth.",
+  "review": {
+    "status": "draft-for-review",
+    "reviewer": null,
+    "reviewed_at": null,
+    "note": "Written once, per case, as a separate reviewed artifact from any twin or archetype (OMNIPRO oracle method, Phase 3A). The vocabulary author writes the expected vectors from the manual pages only. Rows flagged in 'flags' are vocabulary-author judgement where the manual is silent or covers two directions in one cause row; those flags are the reviewer's starting point. The corrective-action column is held out in 'answer_key' and must never be sent to the system under test."
+  },
+  "join_rule": "A vocabulary row joins to a deterministic-parser cause row on row_id (stable parser output: tools/parse_welder_oracles.py). Cause text is the parser's exact text. The remedy is NOT carried on the row: it is the held-out answer key.",
+  "categories": {
+    "twin_expressible": "Fault injection on an archetype fault state or a parameter value. The scored headline set.",
+    "settings": "A setting / configuration value, not a fault injection. Recorded with its expected vector, not scored as a fault row.",
+    "technique": "Technique / contamination. Not twin-expressible. Own category, not scored.",
+    "cross_reference": "Routes to another case; counted once, under that case.",
+    "unmappable": "States no diagnosable cause at all (a safety stop, not a fault). Recorded, not scored."
+  },
+  "tests": {
+    "input_voltage_check": {
+      "description": "Input voltage correct for the machine (p27 cause 1 of symptom 2; p28 cause 1 of symptom 6).",
+      "outcomes": [
+        "normal",
+        "low",
+        "not_applicable"
+      ],
+      "source_page": 27
+    },
+    "power_switch_check": {
+      "description": "Power switch in the ON position (p27 cause 2 of symptom 2).",
+      "outcomes": [
+        "on",
+        "off",
+        "not_applicable"
+      ],
+      "source_page": 27
+    },
+    "breaker_check": {
+      "description": "Circuit breaker reset (p27 cause 3 of symptom 2).",
+      "outcomes": [
+        "ok",
+        "tripped",
+        "not_applicable"
+      ],
+      "source_page": 27
+    },
+    "thermal_check": {
+      "description": "Thermostat tripped due to overheating (p27 cause 1 of symptom 3).",
+      "outcomes": [
+        "ok",
+        "tripped",
+        "not_applicable"
+      ],
+      "source_page": 27
+    },
+    "airflow_check": {
+      "description": "Obstructions in air flow (p27 cause 2 of symptom 3).",
+      "outcomes": [
+        "clear",
+        "obstructed",
+        "not_applicable"
+      ],
+      "source_page": 27
+    },
+    "trigger_check": {
+      "description": "Gun Trigger connections seated; trigger not faulty (p27 causes 2-3 of symptom 3).",
+      "outcomes": [
+        "ok",
+        "faulty",
+        "loose",
+        "not_applicable"
+      ],
+      "source_page": 27
+    },
+    "drive_roll_check": {
+      "description": "Correct drive rolls installed; orientation and alignment correct (p27 cause 1 of symptom 4; p28 cause 7 of symptom 6).",
+      "outcomes": [
+        "correct",
+        "wrong_size",
+        "misaligned",
+        "not_applicable"
+      ],
+      "source_page": 27
+    },
+    "liner_tip_clog_check": {
+      "description": "Cable liner and contact tip clear of clogs (p27 cause 2 of symptom 4).",
+      "outcomes": [
+        "clear",
+        "clogged",
+        "not_applicable"
+      ],
+      "source_page": 27
+    },
+    "liner_tip_size_check": {
+      "description": "Cable liner and contact tip the proper size for the wire (p27 cause 3 of symptom 4; p28 cause 8 of symptom 6).",
+      "outcomes": [
+        "correct",
+        "wrong_size",
+        "not_applicable"
+      ],
+      "source_page": 27
+    },
+    "spool_gun_switch_check": {
+      "description": "Spool gun switch in the wire drive compartment set to the desired location (p27 cause 4 of symptom 4).",
+      "outcomes": [
+        "correct",
+        "incorrect",
+        "not_applicable"
+      ],
+      "source_page": 27
+    },
+    "gas_supply_check": {
+      "description": "Gas supply, flow regulator and gas hoses (p27 cause 1 of symptom 5).",
+      "outcomes": [
+        "ok",
+        "low",
+        "not_applicable"
+      ],
+      "source_page": 27
+    },
+    "gun_connection_check": {
+      "description": "Gun connection to machine: obstruction or leak (p27 cause 2 of symptom 5).",
+      "outcomes": [
+        "ok",
+        "obstructed",
+        "leaky",
+        "not_applicable"
+      ],
+      "source_page": 27
+    },
+    "polarity_check": {
+      "description": "Electrode polarity correct for the process (p28 cause 2 of symptom 6).",
+      "outcomes": [
+        "correct",
+        "incorrect",
+        "not_applicable"
+      ],
+      "source_page": 28
+    },
+    "tip_condition_check": {
+      "description": "Gun tip: wear, damage, proper size (p28 cause 3 of symptom 6).",
+      "outcomes": [
+        "ok",
+        "worn_or_damaged",
+        "wrong_size",
+        "not_applicable"
+      ],
+      "source_page": 28
+    },
+    "gas_flow_check": {
+      "description": "Proper gas and flow rate for the process (p28 cause 4 of symptom 6).",
+      "outcomes": [
+        "ok",
+        "low",
+        "absent",
+        "not_applicable"
+      ],
+      "source_page": 28
+    },
+    "ground_check": {
+      "description": "Work cable connections tight, not loose or faulty (p28 cause 5 of symptom 6).",
+      "outcomes": [
+        "good",
+        "poor",
+        "not_applicable"
+      ],
+      "source_page": 28
+    },
+    "gun_condition_check": {
+      "description": "Gun damaged or broken (p28 cause 6 of symptom 6).",
+      "outcomes": [
+        "ok",
+        "damaged",
+        "not_applicable"
+      ],
+      "source_page": 28
+    },
+    "power_cycle_check": {
+      "description": "Cycle power to the machine; error clears or persists (p28 remedy of symptom 7).",
+      "outcomes": [
+        "clears",
+        "persists",
+        "not_applicable"
+      ],
+      "source_page": 28
+    }
+  },
+  "cases": {
+    "lincoln-01": {
+      "symptom": "Major physical or electrical damage is evident.",
+      "table_page": 27,
+      "observables": [
+        "damage_visible"
+      ],
+      "nominal": {
+        "damage_visible": "none"
+      },
+      "required_chain": [],
+      "required_chain_note": "No chain is defined at oracle-build time: the required chain is a property of the twin under test (OMNIPRO's chains were written for the 3C proof twin). It is defined when a Test 1/1b run is prepared, against that twin's topology.",
+      "tests": []
+    },
+    "lincoln-02": {
+      "symptom": "No wire feed, weld output or gas flow when gun trigger is pulled. Fan does NOT operate.",
+      "table_page": 27,
+      "observables": [
+        "wire_out@tip",
+        "weld_output",
+        "gas_flow@gun",
+        "fan"
+      ],
+      "nominal": {
+        "wire_out@tip": "normal",
+        "weld_output": "normal",
+        "gas_flow@gun": "normal",
+        "fan": "running"
+      },
+      "required_chain": [],
+      "required_chain_note": "No chain is defined at oracle-build time: the required chain is a property of the twin under test (OMNIPRO's chains were written for the 3C proof twin). It is defined when a Test 1/1b run is prepared, against that twin's topology.",
+      "tests": [
+        "input_voltage_check",
+        "power_switch_check",
+        "breaker_check"
+      ]
+    },
+    "lincoln-03": {
+      "symptom": "No wire feed, weld output or gas flow when gun trigger is pulled. Fan operates normally.",
+      "table_page": 27,
+      "observables": [
+        "wire_out@tip",
+        "weld_output",
+        "gas_flow@gun",
+        "fan"
+      ],
+      "nominal": {
+        "wire_out@tip": "normal",
+        "weld_output": "normal",
+        "gas_flow@gun": "normal",
+        "fan": "running"
+      },
+      "required_chain": [],
+      "required_chain_note": "No chain is defined at oracle-build time: the required chain is a property of the twin under test (OMNIPRO's chains were written for the 3C proof twin). It is defined when a Test 1/1b run is prepared, against that twin's topology.",
+      "tests": [
+        "thermal_check",
+        "airflow_check",
+        "trigger_check"
+      ]
+    },
+    "lincoln-04": {
+      "symptom": "No wire feed when gun trigger is pulled. Fan runs, gas flows and machine has correct open circuit voltage (33V) - weld output.",
+      "table_page": 27,
+      "observables": [
+        "wire_out@tip",
+        "fan",
+        "gas_flow@gun",
+        "open_circuit_voltage",
+        "weld_output"
+      ],
+      "nominal": {
+        "wire_out@tip": "normal",
+        "fan": "running",
+        "gas_flow@gun": "normal",
+        "open_circuit_voltage": "33V",
+        "weld_output": "normal"
+      },
+      "required_chain": [],
+      "required_chain_note": "No chain is defined at oracle-build time: the required chain is a property of the twin under test (OMNIPRO's chains were written for the 3C proof twin). It is defined when a Test 1/1b run is prepared, against that twin's topology.",
+      "tests": [
+        "drive_roll_check",
+        "liner_tip_clog_check",
+        "liner_tip_size_check",
+        "spool_gun_switch_check"
+      ]
+    },
+    "lincoln-05": {
+      "symptom": "Low or no gas flow when gun trigger is pulled. Wire feed, weld output and fan operate normally.",
+      "table_page": 27,
+      "observables": [
+        "gas_flow@gun",
+        "wire_out@tip",
+        "weld_output",
+        "fan"
+      ],
+      "nominal": {
+        "gas_flow@gun": "normal",
+        "wire_out@tip": "normal",
+        "weld_output": "normal",
+        "fan": "running"
+      },
+      "required_chain": [],
+      "required_chain_note": "No chain is defined at oracle-build time: the required chain is a property of the twin under test (OMNIPRO's chains were written for the 3C proof twin). It is defined when a Test 1/1b run is prepared, against that twin's topology.",
+      "tests": [
+        "gas_supply_check",
+        "gun_connection_check"
+      ]
+    },
+    "lincoln-06": {
+      "symptom": "Arc is unstable - Poor starting.",
+      "table_page": 28,
+      "observables": [
+        "arc",
+        "wire_out@tip",
+        "gas_flow@gun",
+        "ground_path"
+      ],
+      "nominal": {
+        "arc": "normal",
+        "wire_out@tip": "normal",
+        "gas_flow@gun": "normal",
+        "ground_path": "good"
+      },
+      "required_chain": [],
+      "required_chain_note": "No chain is defined at oracle-build time: the required chain is a property of the twin under test (OMNIPRO's chains were written for the 3C proof twin). It is defined when a Test 1/1b run is prepared, against that twin's topology.",
+      "tests": [
+        "input_voltage_check",
+        "polarity_check",
+        "tip_condition_check",
+        "gas_flow_check",
+        "ground_check",
+        "gun_condition_check",
+        "drive_roll_check",
+        "liner_tip_size_check"
+      ]
+    },
+    "lincoln-07": {
+      "symptom": "Error Code 003,010,013 Is displayed on screen",
+      "table_page": 28,
+      "observables": [
+        "display",
+        "error_code"
+      ],
+      "nominal": {
+        "display": "normal",
+        "error_code": "none"
+      },
+      "required_chain": [],
+      "required_chain_note": "No chain is defined at oracle-build time: the required chain is a property of the twin under test (OMNIPRO's chains were written for the 3C proof twin). It is defined when a Test 1/1b run is prepared, against that twin's topology.",
+      "tests": [
+        "power_cycle_check"
+      ]
+    }
+  },
+  "rows": [
+    {
+      "row_id": "lincoln-01",
+      "case_id": "lincoln-01",
+      "symptom": "Major physical or electrical damage is evident.",
+      "cause": "“Do not Plug in machine or turn it on.” Contact your local Authorized Field Service Facility.",
+      "category": "unmappable",
+      "fault": null,
+      "observables": {
+        "damage_visible": "evident"
+      },
+      "tests": {},
+      "basis": "Printed p27, symptom 1. The POSSIBLE CAUSE column carries a safety instruction, not a cause.",
+      "flags": [
+        "not a diagnosable cause: the cause column says 'Do not Plug in machine or turn it on' — recorded, not scored"
+      ],
+      "source_pages": [
+        26
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    {
+      "row_id": "lincoln-02",
+      "case_id": "lincoln-02",
+      "symptom": "No wire feed, weld output or gas flow when gun trigger is pulled. Fan does NOT operate.",
+      "cause": "Make sure correct voltage is applied to the machine.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Input Power",
+        "field": "input_voltage",
+        "value": "low",
+        "kind": "parameter"
+      },
+      "observables": {
+        "wire_out@tip": "absent",
+        "weld_output": "absent",
+        "gas_flow@gun": "absent",
+        "fan": "stopped"
+      },
+      "tests": {
+        "input_voltage_check": "low",
+        "power_switch_check": "on",
+        "breaker_check": "ok"
+      },
+      "basis": "Printed p27, symptom 2 cause 1: 'Make sure correct voltage is applied to the machine.' Fan NOT operating is the symptom premise, so fan reads stopped for all three causes of this symptom.",
+      "flags": [],
+      "source_pages": [
+        26
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    {
+      "row_id": "lincoln-03",
+      "case_id": "lincoln-02",
+      "symptom": "No wire feed, weld output or gas flow when gun trigger is pulled. Fan does NOT operate.",
+      "cause": "Make certain that power switch is in the ON position.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Power Switch",
+        "field": "state",
+        "value": "off",
+        "kind": "parameter"
+      },
+      "observables": {
+        "wire_out@tip": "absent",
+        "weld_output": "absent",
+        "gas_flow@gun": "absent",
+        "fan": "stopped"
+      },
+      "tests": {
+        "input_voltage_check": "normal",
+        "power_switch_check": "off",
+        "breaker_check": "ok"
+      },
+      "basis": "Printed p27, symptom 2 cause 2: 'Make certain that power switch is in the ON position.'",
+      "flags": [],
+      "source_pages": [
+        26
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    {
+      "row_id": "lincoln-04",
+      "case_id": "lincoln-02",
+      "symptom": "No wire feed, weld output or gas flow when gun trigger is pulled. Fan does NOT operate.",
+      "cause": "Make sure circuit breaker is reset.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Circuit Breaker",
+        "field": "state",
+        "value": "tripped",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "wire_out@tip": "absent",
+        "weld_output": "absent",
+        "gas_flow@gun": "absent",
+        "fan": "stopped"
+      },
+      "tests": {
+        "input_voltage_check": "normal",
+        "power_switch_check": "on",
+        "breaker_check": "tripped"
+      },
+      "basis": "Printed p27, symptom 2 cause 3: 'Make sure circuit breaker is reset.'",
+      "flags": [],
+      "source_pages": [
+        26
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    {
+      "row_id": "lincoln-05",
+      "case_id": "lincoln-03",
+      "symptom": "No wire feed, weld output or gas flow when gun trigger is pulled. Fan operates normally.",
+      "cause": "The thermostat may be tripped due to overheating. Let machine cool. Weld at lower duty cycle.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Welder",
+        "field": "thermal_protection",
+        "value": "tripped",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "wire_out@tip": "absent",
+        "weld_output": "absent",
+        "gas_flow@gun": "absent",
+        "fan": "running"
+      },
+      "tests": {
+        "thermal_check": "tripped",
+        "airflow_check": "clear",
+        "trigger_check": "ok"
+      },
+      "basis": "Printed p27, symptom 3 cause 1: 'The thermostat may be tripped due to overheating. Let machine cool. Weld at lower duty cycle.' Fan operates normally is the symptom premise, so fan stays running.",
+      "flags": [],
+      "source_pages": [
+        26
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    {
+      "row_id": "lincoln-06",
+      "case_id": "lincoln-03",
+      "symptom": "No wire feed, weld output or gas flow when gun trigger is pulled. Fan operates normally.",
+      "cause": "Check for obstructions in air flow. Check Gun Trigger connections. See installation section.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Fan",
+        "field": "airflow",
+        "value": "blocked",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "wire_out@tip": "absent",
+        "weld_output": "absent",
+        "gas_flow@gun": "absent",
+        "fan": "running"
+      },
+      "tests": {
+        "thermal_check": "ok",
+        "airflow_check": "obstructed",
+        "trigger_check": "ok"
+      },
+      "basis": "Printed p27, symptom 3 cause 2: 'Check for obstructions in air flow. Check Gun Trigger connections. See installation section.'",
+      "flags": [
+        "two checks in one numbered item (airflow obstruction and trigger connections); the airflow direction is recorded, the trigger-connection direction would read trigger loose"
+      ],
+      "source_pages": [
+        26
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    {
+      "row_id": "lincoln-07",
+      "case_id": "lincoln-03",
+      "symptom": "No wire feed, weld output or gas flow when gun trigger is pulled. Fan operates normally.",
+      "cause": "Gun trigger may be faulty.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Trigger",
+        "field": "fault",
+        "value": "faulty",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "wire_out@tip": "absent",
+        "weld_output": "absent",
+        "gas_flow@gun": "absent",
+        "fan": "running"
+      },
+      "tests": {
+        "thermal_check": "ok",
+        "airflow_check": "clear",
+        "trigger_check": "faulty"
+      },
+      "basis": "Printed p27, symptom 3 cause 3: 'Gun trigger may be faulty.'",
+      "flags": [],
+      "source_pages": [
+        26
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    {
+      "row_id": "lincoln-08",
+      "case_id": "lincoln-04",
+      "symptom": "No wire feed when gun trigger is pulled. Fan runs, gas flows and machine has correct open circuit voltage (33V) - weld output.",
+      "cause": "If the wire drive motor is running make sure that the correct drive rolls are installed in the machine.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Wire Feed Mechanism",
+        "field": "groove_matches",
+        "value": false,
+        "kind": "parameter"
+      },
+      "observables": {
+        "wire_out@tip": "absent",
+        "fan": "running",
+        "gas_flow@gun": "normal",
+        "open_circuit_voltage": "33V",
+        "weld_output": "normal"
+      },
+      "tests": {
+        "drive_roll_check": "wrong_size",
+        "liner_tip_clog_check": "clear",
+        "liner_tip_size_check": "correct",
+        "spool_gun_switch_check": "correct"
+      },
+      "basis": "Printed p27, symptom 4 cause 1: 'If the wire drive motor is running make sure that the correct drive rolls are installed in the machine.' Fan runs, gas flows, open-circuit voltage 33V are the symptom premise, so fan/gas/voltage stay nominal; weld_output reads normal (open-circuit output present, no arc because no wire feeds).",
+      "flags": [
+        "inference: weld_output normal is the open-circuit reading the symptom states (33V), not an arc — no arc exists with no wire at the tip"
+      ],
+      "source_pages": [
+        26
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    {
+      "row_id": "lincoln-09",
+      "case_id": "lincoln-04",
+      "symptom": "No wire feed when gun trigger is pulled. Fan runs, gas flows and machine has correct open circuit voltage (33V) - weld output.",
+      "cause": "Check for clogged cable liner or contact tip.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "liner assembly",
+        "field": "fault",
+        "value": "clogged",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "wire_out@tip": "absent",
+        "fan": "running",
+        "gas_flow@gun": "normal",
+        "open_circuit_voltage": "33V",
+        "weld_output": "normal"
+      },
+      "tests": {
+        "drive_roll_check": "correct",
+        "liner_tip_clog_check": "clogged",
+        "liner_tip_size_check": "correct",
+        "spool_gun_switch_check": "correct"
+      },
+      "basis": "Printed p27, symptom 4 cause 2: 'Check for clogged cable liner or contact tip.'",
+      "flags": [],
+      "source_pages": [
+        26
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    {
+      "row_id": "lincoln-10",
+      "case_id": "lincoln-04",
+      "symptom": "No wire feed when gun trigger is pulled. Fan runs, gas flows and machine has correct open circuit voltage (33V) - weld output.",
+      "cause": "Check for proper size cable liner and contact tip.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "liner assembly",
+        "field": "size_matches",
+        "value": false,
+        "kind": "parameter"
+      },
+      "observables": {
+        "wire_out@tip": "absent",
+        "fan": "running",
+        "gas_flow@gun": "normal",
+        "open_circuit_voltage": "33V",
+        "weld_output": "normal"
+      },
+      "tests": {
+        "drive_roll_check": "correct",
+        "liner_tip_clog_check": "clear",
+        "liner_tip_size_check": "wrong_size",
+        "spool_gun_switch_check": "correct"
+      },
+      "basis": "Printed p27, symptom 4 cause 3: 'Check for proper size cable liner and contact tip.'",
+      "flags": [],
+      "source_pages": [
+        26
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    {
+      "row_id": "lincoln-11",
+      "case_id": "lincoln-04",
+      "symptom": "No wire feed when gun trigger is pulled. Fan runs, gas flows and machine has correct open circuit voltage (33V) - weld output.",
+      "cause": "Check if the spool gun switch, located in the wire drive compartment, is set to the desired location.",
+      "category": "settings",
+      "fault": null,
+      "observables": {
+        "wire_out@tip": "absent",
+        "fan": "running",
+        "gas_flow@gun": "normal",
+        "open_circuit_voltage": "33V",
+        "weld_output": "normal"
+      },
+      "tests": {
+        "drive_roll_check": "correct",
+        "liner_tip_clog_check": "clear",
+        "liner_tip_size_check": "correct",
+        "spool_gun_switch_check": "incorrect"
+      },
+      "basis": "Printed p27, symptom 4 cause 4: 'Check if the spool gun switch, located in the wire drive compartment, is set to the desired location.' A switch position, not a fault injection.",
+      "flags": [],
+      "source_pages": [
+        26
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    {
+      "row_id": "lincoln-12",
+      "case_id": "lincoln-05",
+      "symptom": "Low or no gas flow when gun trigger is pulled. Wire feed, weld output and fan operate normally.",
+      "cause": "Check gas supply, flow regulator and gas hoses.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Gas Supply",
+        "field": "gas_flow",
+        "value": "low",
+        "kind": "parameter"
+      },
+      "observables": {
+        "gas_flow@gun": "low",
+        "wire_out@tip": "normal",
+        "weld_output": "normal",
+        "fan": "running"
+      },
+      "tests": {
+        "gas_supply_check": "low",
+        "gun_connection_check": "ok"
+      },
+      "basis": "Printed p27, symptom 5 cause 1: 'Check gas supply, flow regulator and gas hoses.' Wire feed, weld output and fan operate normally (symptom premise).",
+      "flags": [],
+      "source_pages": [
+        26
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    {
+      "row_id": "lincoln-13",
+      "case_id": "lincoln-05",
+      "symptom": "Low or no gas flow when gun trigger is pulled. Wire feed, weld output and fan operate normally.",
+      "cause": "Check gun connection to machine for obstruction or leaky machine.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "MIG Gun",
+        "field": "fault",
+        "value": "connection_leak",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "gas_flow@gun": "low",
+        "wire_out@tip": "normal",
+        "weld_output": "normal",
+        "fan": "running"
+      },
+      "tests": {
+        "gas_supply_check": "ok",
+        "gun_connection_check": "obstructed"
+      },
+      "basis": "Printed p27, symptom 5 cause 2: 'Check gun connection to machine for obstruction or leaky machine.'",
+      "flags": [
+        "two-direction cause (obstruction or leak); the obstruction direction is recorded, the leak direction would read gun_connection leaky"
+      ],
+      "source_pages": [
+        26
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    {
+      "row_id": "lincoln-14",
+      "case_id": "lincoln-06",
+      "symptom": "Arc is unstable - Poor starting.",
+      "cause": "Check for correct input voltage to machine.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Input Power",
+        "field": "input_voltage",
+        "value": "low",
+        "kind": "parameter"
+      },
+      "observables": {
+        "arc": "unstable",
+        "wire_out@tip": "normal",
+        "gas_flow@gun": "normal",
+        "ground_path": "good"
+      },
+      "tests": {
+        "input_voltage_check": "low",
+        "polarity_check": "correct",
+        "tip_condition_check": "ok",
+        "gas_flow_check": "ok",
+        "ground_check": "good",
+        "gun_condition_check": "ok",
+        "drive_roll_check": "correct",
+        "liner_tip_size_check": "correct"
+      },
+      "basis": "Printed p28, symptom 6 cause 1: 'Check for correct input voltage to machine.'",
+      "flags": [],
+      "source_pages": [
+        27
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    {
+      "row_id": "lincoln-15",
+      "case_id": "lincoln-06",
+      "symptom": "Arc is unstable - Poor starting.",
+      "cause": "Check for proper electrode polarity for process.",
+      "category": "settings",
+      "fault": null,
+      "observables": {
+        "arc": "unstable",
+        "wire_out@tip": "normal",
+        "gas_flow@gun": "normal",
+        "ground_path": "good"
+      },
+      "tests": {
+        "input_voltage_check": "normal",
+        "polarity_check": "incorrect",
+        "tip_condition_check": "ok",
+        "gas_flow_check": "ok",
+        "ground_check": "good",
+        "gun_condition_check": "ok",
+        "drive_roll_check": "correct",
+        "liner_tip_size_check": "correct"
+      },
+      "basis": "Printed p28, symptom 6 cause 2: 'Check for proper electrode polarity for process.' A setting, not a fault injection.",
+      "flags": [],
+      "source_pages": [
+        27
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    {
+      "row_id": "lincoln-16",
+      "case_id": "lincoln-06",
+      "symptom": "Arc is unstable - Poor starting.",
+      "cause": "Check gun tip for wear or damage and proper size - Replace.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Contact Tip",
+        "field": "fault",
+        "value": "worn",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "arc": "unstable",
+        "wire_out@tip": "normal",
+        "gas_flow@gun": "normal",
+        "ground_path": "good"
+      },
+      "tests": {
+        "input_voltage_check": "normal",
+        "polarity_check": "correct",
+        "tip_condition_check": "worn_or_damaged",
+        "gas_flow_check": "ok",
+        "ground_check": "good",
+        "gun_condition_check": "ok",
+        "drive_roll_check": "correct",
+        "liner_tip_size_check": "correct"
+      },
+      "basis": "Printed p28, symptom 6 cause 3: 'Check gun tip for wear or damage and proper size - Replace.'",
+      "flags": [
+        "two-direction cause (wear/damage or wrong size); the wear/damage direction is recorded, the wrong-size direction would read tip_condition wrong_size"
+      ],
+      "source_pages": [
+        27
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    {
+      "row_id": "lincoln-17",
+      "case_id": "lincoln-06",
+      "symptom": "Arc is unstable - Poor starting.",
+      "cause": "Check for proper gas and flow rate for process. (For MIG only.)",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "MIG Gun",
+        "field": "gas_flow",
+        "value": "low",
+        "kind": "parameter"
+      },
+      "observables": {
+        "arc": "unstable",
+        "wire_out@tip": "normal",
+        "gas_flow@gun": "low",
+        "ground_path": "good"
+      },
+      "tests": {
+        "input_voltage_check": "normal",
+        "polarity_check": "correct",
+        "tip_condition_check": "ok",
+        "gas_flow_check": "low",
+        "ground_check": "good",
+        "gun_condition_check": "ok",
+        "drive_roll_check": "correct",
+        "liner_tip_size_check": "correct"
+      },
+      "basis": "Printed p28, symptom 6 cause 4: 'Check for proper gas and flow rate for process. (For MIG only.)'",
+      "flags": [
+        "two-direction cause (gas/flow too low or too high); low is recorded as the representative direction, as in the OMNIPRO vocabulary"
+      ],
+      "source_pages": [
+        27
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    {
+      "row_id": "lincoln-18",
+      "case_id": "lincoln-06",
+      "symptom": "Arc is unstable - Poor starting.",
+      "cause": "Check work cable for loose or faulty connections.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Ground Clamp",
+        "field": "fault",
+        "value": "poor_connection",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "arc": "unstable",
+        "wire_out@tip": "normal",
+        "gas_flow@gun": "normal",
+        "ground_path": "poor"
+      },
+      "tests": {
+        "input_voltage_check": "normal",
+        "polarity_check": "correct",
+        "tip_condition_check": "ok",
+        "gas_flow_check": "ok",
+        "ground_check": "poor",
+        "gun_condition_check": "ok",
+        "drive_roll_check": "correct",
+        "liner_tip_size_check": "correct"
+      },
+      "basis": "Printed p28, symptom 6 cause 5: 'Check work cable for loose or faulty connections.'",
+      "flags": [],
+      "source_pages": [
+        27
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    {
+      "row_id": "lincoln-19",
+      "case_id": "lincoln-06",
+      "symptom": "Arc is unstable - Poor starting.",
+      "cause": "Check gun for damage or breaks.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "MIG Gun",
+        "field": "fault",
+        "value": "damaged",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "arc": "unstable",
+        "wire_out@tip": "normal",
+        "gas_flow@gun": "normal",
+        "ground_path": "good"
+      },
+      "tests": {
+        "input_voltage_check": "normal",
+        "polarity_check": "correct",
+        "tip_condition_check": "ok",
+        "gas_flow_check": "ok",
+        "ground_check": "good",
+        "gun_condition_check": "damaged",
+        "drive_roll_check": "correct",
+        "liner_tip_size_check": "correct"
+      },
+      "basis": "Printed p28, symptom 6 cause 6: 'Check gun for damage or breaks.'",
+      "flags": [],
+      "source_pages": [
+        27
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    {
+      "row_id": "lincoln-20",
+      "case_id": "lincoln-06",
+      "symptom": "Arc is unstable - Poor starting.",
+      "cause": "Check for proper drive roll orientation and alignment.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Wire Feed Mechanism",
+        "field": "alignment",
+        "value": "misaligned",
+        "kind": "parameter"
+      },
+      "observables": {
+        "arc": "unstable",
+        "wire_out@tip": "normal",
+        "gas_flow@gun": "normal",
+        "ground_path": "good"
+      },
+      "tests": {
+        "input_voltage_check": "normal",
+        "polarity_check": "correct",
+        "tip_condition_check": "ok",
+        "gas_flow_check": "ok",
+        "ground_check": "good",
+        "gun_condition_check": "ok",
+        "drive_roll_check": "misaligned",
+        "liner_tip_size_check": "correct"
+      },
+      "basis": "Printed p28, symptom 6 cause 7: 'Check for proper drive roll orientation and alignment.'",
+      "flags": [],
+      "source_pages": [
+        27
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    {
+      "row_id": "lincoln-21",
+      "case_id": "lincoln-06",
+      "symptom": "Arc is unstable - Poor starting.",
+      "cause": "Check liner for proper size.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "liner assembly",
+        "field": "size_matches",
+        "value": false,
+        "kind": "parameter"
+      },
+      "observables": {
+        "arc": "unstable",
+        "wire_out@tip": "normal",
+        "gas_flow@gun": "normal",
+        "ground_path": "good"
+      },
+      "tests": {
+        "input_voltage_check": "normal",
+        "polarity_check": "correct",
+        "tip_condition_check": "ok",
+        "gas_flow_check": "ok",
+        "ground_check": "good",
+        "gun_condition_check": "ok",
+        "drive_roll_check": "correct",
+        "liner_tip_size_check": "wrong_size"
+      },
+      "basis": "Printed p28, symptom 6 cause 8: 'Check liner for proper size.'",
+      "flags": [],
+      "source_pages": [
+        27
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    {
+      "row_id": "lincoln-22",
+      "case_id": "lincoln-07",
+      "symptom": "Error Code 003,010,013 Is displayed on screen",
+      "cause": "Communication error between display P.C. board and power control board.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Display P.C. Board",
+        "field": "fault",
+        "value": "comm_error",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "display": "error",
+        "error_code": "003_010_013"
+      },
+      "tests": {
+        "power_cycle_check": "persists"
+      },
+      "basis": "Printed p28, symptom 7 cause 1: 'Communication error between display P.C. board and power control board.' Remedy: '1. Cycle power to machine 2. Contact your local Lincoln Authorized Field Service Facility.'",
+      "flags": [
+        "inference: the power-cycle outcome (persists) is the remedy's first step — the error remaining after cycling is what leads to the service call; the manual does not state a cycle outcome for this cause"
+      ],
+      "source_pages": [
+        27
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    }
+  ],
+  "answer_key": {
+    "lincoln-01": {
+      "cause": "“Do not Plug in machine or turn it on.” Contact your local Authorized Field Service Facility.",
+      "corrective_action": "If all recommended possible areas of misadjustment have been checked and the problem persists, Contact your local Lincoln Authorized Field Service Facility.",
+      "remedy_source": "action_column",
+      "source_pages": [
+        26
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    "lincoln-02": {
+      "cause": "Make sure correct voltage is applied to the machine.",
+      "corrective_action": "If all recommended possible areas of misadjustment have been checked and the problem persists, Contact your local Lincoln Authorized Field Service Facility.",
+      "remedy_source": "generic_footer",
+      "source_pages": [
+        26
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    "lincoln-03": {
+      "cause": "Make certain that power switch is in the ON position.",
+      "corrective_action": "If all recommended possible areas of misadjustment have been checked and the problem persists, Contact your local Lincoln Authorized Field Service Facility.",
+      "remedy_source": "generic_footer",
+      "source_pages": [
+        26
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    "lincoln-04": {
+      "cause": "Make sure circuit breaker is reset.",
+      "corrective_action": "If all recommended possible areas of misadjustment have been checked and the problem persists, Contact your local Lincoln Authorized Field Service Facility.",
+      "remedy_source": "generic_footer",
+      "source_pages": [
+        26
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    "lincoln-05": {
+      "cause": "The thermostat may be tripped due to overheating. Let machine cool. Weld at lower duty cycle.",
+      "corrective_action": "If all recommended possible areas of misadjustment have been checked and the problem persists, Contact your local Lincoln Authorized Field Service Facility.",
+      "remedy_source": "generic_footer",
+      "source_pages": [
+        26
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    "lincoln-06": {
+      "cause": "Check for obstructions in air flow. Check Gun Trigger connections. See installation section.",
+      "corrective_action": "If all recommended possible areas of misadjustment have been checked and the problem persists, Contact your local Lincoln Authorized Field Service Facility.",
+      "remedy_source": "generic_footer",
+      "source_pages": [
+        26
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    "lincoln-07": {
+      "cause": "Gun trigger may be faulty.",
+      "corrective_action": "If all recommended possible areas of misadjustment have been checked and the problem persists, Contact your local Lincoln Authorized Field Service Facility.",
+      "remedy_source": "generic_footer",
+      "source_pages": [
+        26
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    "lincoln-08": {
+      "cause": "If the wire drive motor is running make sure that the correct drive rolls are installed in the machine.",
+      "corrective_action": "If all recommended possible areas of misadjustment have been checked and the problem persists, Contact your local Lincoln Authorized Field Service Facility.",
+      "remedy_source": "generic_footer",
+      "source_pages": [
+        26
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    "lincoln-09": {
+      "cause": "Check for clogged cable liner or contact tip.",
+      "corrective_action": "If all recommended possible areas of misadjustment have been checked and the problem persists, Contact your local Lincoln Authorized Field Service Facility.",
+      "remedy_source": "generic_footer",
+      "source_pages": [
+        26
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    "lincoln-10": {
+      "cause": "Check for proper size cable liner and contact tip.",
+      "corrective_action": "If all recommended possible areas of misadjustment have been checked and the problem persists, Contact your local Lincoln Authorized Field Service Facility.",
+      "remedy_source": "generic_footer",
+      "source_pages": [
+        26
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    "lincoln-11": {
+      "cause": "Check if the spool gun switch, located in the wire drive compartment, is set to the desired location.",
+      "corrective_action": "If all recommended possible areas of misadjustment have been checked and the problem persists, Contact your local Lincoln Authorized Field Service Facility.",
+      "remedy_source": "generic_footer",
+      "source_pages": [
+        26
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    "lincoln-12": {
+      "cause": "Check gas supply, flow regulator and gas hoses.",
+      "corrective_action": "If all recommended possible areas of misadjustment have been checked and the problem persists, Contact your local Lincoln Authorized Field Service Facility.",
+      "remedy_source": "generic_footer",
+      "source_pages": [
+        26
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    "lincoln-13": {
+      "cause": "Check gun connection to machine for obstruction or leaky machine.",
+      "corrective_action": "If all recommended possible areas of misadjustment have been checked and the problem persists, Contact your local Lincoln Authorized Field Service Facility.",
+      "remedy_source": "generic_footer",
+      "source_pages": [
+        26
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    "lincoln-14": {
+      "cause": "Check for correct input voltage to machine.",
+      "corrective_action": "If all recommended possible areas of misadjustment have been checked and the problem persists, Contact your local Lincoln Authorized Field Service Facility.",
+      "remedy_source": "action_column",
+      "source_pages": [
+        27
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    "lincoln-15": {
+      "cause": "Check for proper electrode polarity for process.",
+      "corrective_action": "If all recommended possible areas of misadjustment have been checked and the problem persists, Contact your local Lincoln Authorized Field Service Facility.",
+      "remedy_source": "action_column",
+      "source_pages": [
+        27
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    "lincoln-16": {
+      "cause": "Check gun tip for wear or damage and proper size - Replace.",
+      "corrective_action": "If all recommended possible areas of misadjustment have been checked and the problem persists, Contact your local Lincoln Authorized Field Service Facility.",
+      "remedy_source": "action_column",
+      "source_pages": [
+        27
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    "lincoln-17": {
+      "cause": "Check for proper gas and flow rate for process. (For MIG only.)",
+      "corrective_action": "If all recommended possible areas of misadjustment have been checked and the problem persists, Contact your local Lincoln Authorized Field Service Facility.",
+      "remedy_source": "action_column",
+      "source_pages": [
+        27
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    "lincoln-18": {
+      "cause": "Check work cable for loose or faulty connections.",
+      "corrective_action": "If all recommended possible areas of misadjustment have been checked and the problem persists, Contact your local Lincoln Authorized Field Service Facility.",
+      "remedy_source": "action_column",
+      "source_pages": [
+        27
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    "lincoln-19": {
+      "cause": "Check gun for damage or breaks.",
+      "corrective_action": "If all recommended possible areas of misadjustment have been checked and the problem persists, Contact your local Lincoln Authorized Field Service Facility.",
+      "remedy_source": "action_column",
+      "source_pages": [
+        27
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    "lincoln-20": {
+      "cause": "Check for proper drive roll orientation and alignment.",
+      "corrective_action": "If all recommended possible areas of misadjustment have been checked and the problem persists, Contact your local Lincoln Authorized Field Service Facility.",
+      "remedy_source": "action_column",
+      "source_pages": [
+        27
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    "lincoln-21": {
+      "cause": "Check liner for proper size.",
+      "corrective_action": "If all recommended possible areas of misadjustment have been checked and the problem persists, Contact your local Lincoln Authorized Field Service Facility.",
+      "remedy_source": "action_column",
+      "source_pages": [
+        27
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    },
+    "lincoln-22": {
+      "cause": "Communication error between display P.C. board and power control board.",
+      "corrective_action": "1. Cycle power to machine 2. Contact your local Lincoln Authorized Field Service Facility.",
+      "remedy_source": "action_column",
+      "source_pages": [
+        27
+      ],
+      "source_table": "Troubleshooting, printed p. 27-28"
+    }
+  },
+  "denominator": {
+    "total": 22,
+    "twin_expressible": 19,
+    "settings": 2,
+    "technique": 0,
+    "cross_reference": 0,
+    "unmappable": 1
+  }
+}

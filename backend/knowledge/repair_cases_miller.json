@@ -1,0 +1,654 @@
+{
+  "product_manufacturer": "Miller Electric",
+  "product_family": "Millermatic",
+  "product_model": "252",
+  "document": "Miller Millermatic 252 Owner's Manual OM-230 693C (2007-11), 52 pp",
+  "page_count": 52,
+  "tier1_pages": [
+    35,
+    45,
+    46,
+    47,
+    48,
+    49
+  ],
+  "tier3_pages": [],
+  "tier3_note": "No Tier 3 pages defined for Miller yet: the manual's non-troubleshooting sections have not been tiered. Unknown pages are Tier 2 (lazy) by tier_for_page.",
+  "tier2_default": true,
+  "source": "Built 23 Nov 2026 (Phase 1 Step 1) from the frozen Miller oracle frozen/c002b-miller.json (oracle-vocabulary-miller-v1, 63 rows: 38 twin_expressible, 16 settings, 9 technique) and benchmark/evaluations/miller_parser_rows.json. table_page is the PDF page (printed p. 31 == PDF p. 35 for section 6-5; printed pp. 41-45 == PDF pp. 45-49 for sections 8-8..8-17). Cause fix is the remedy text verbatim; section 6-5 has no cause column, so cause == remedy there (flagged cause_from_remedy by the parser). 17 cases: 11 with twin-expressible rows (miller-01..07, 14..17), 6 with settings/technique rows only (miller-08..13).",
+  "cases": [
+    {
+      "id": "miller-01",
+      "rank": 1,
+      "symptom": "No weld output; wire does not feed.",
+      "table_page": 35,
+      "tier1_pages": [
+        35
+      ],
+      "referenced_pages": [
+        35
+      ],
+      "causes": [
+        {
+          "cause": "Be sure line disconnect switch is On (see Section 4-13).",
+          "fix": "Be sure line disconnect switch is On (see Section 4-13).",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Replace building line fuse or reset circuit breaker if open (see Section 4-13).",
+          "fix": "Replace building line fuse or reset circuit breaker if open (see Section 4-13).",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Secure gun trigger connections (see welding gun Owner’s Manual).",
+          "fix": "Secure gun trigger connections (see welding gun Owner’s Manual).",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "HL.P 001 appears on meters. Turn power switch off and back on, if HL.P 001 appears on meters again, have Factory Authorized Service Agent check unit.",
+          "fix": "HL.P 001 appears on meters. Turn power switch off and back on, if HL.P 001 appears on meters again, have Factory Authorized Service Agent check unit.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "HL.P 002 appears on meters. Thermistor T is detecting an overheating condition. Wait for unit to cool allowing the fan to run. After unit is cool, if HL.P 002 message remains, have Factory Authorized Service Agent check for an open Thermistor T (see Section 6-2).",
+          "fix": "HL.P 002 appears on meters. Thermistor T is detecting an overheating condition. Wait for unit to cool allowing the fan to run. After unit is cool, if HL.P 002 message remains, have Factory Authorized Service Agent check for an open Thermistor T (see Section 6-2).",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "HL.P 004 appears on meters. Reset message by releasing the trigger or removing stuck wire causing short circuit (see Section 5-2) . If message remains, have Factory Authorized Service Agent check for shorted trigger leads.",
+          "fix": "HL.P 004 appears on meters. Reset message by releasing the trigger or removing stuck wire causing short circuit (see Section 5-2) . If message remains, have Factory Authorized Service Agent check for shorted trigger leads.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Have Factory Authorized Service Agent check Power switch.",
+          "fix": "Have Factory Authorized Service Agent check Power switch.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Have Factory Authorized Service Agent check all board connections and main control board.",
+          "fix": "Have Factory Authorized Service Agent check all board connections and main control board.",
+          "test": null,
+          "components": []
+        }
+      ],
+      "library_types": []
+    },
+    {
+      "id": "miller-02",
+      "rank": 2,
+      "symptom": "No Weld Output; wire feeds.",
+      "table_page": 35,
+      "tier1_pages": [
+        35
+      ],
+      "referenced_pages": [
+        35
+      ],
+      "causes": [
+        {
+          "cause": "Connect work clamp to get good metal to metal contact.",
+          "fix": "Connect work clamp to get good metal to metal contact.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Replace contact tip (see welding gun Owner’s Manual.",
+          "fix": "Replace contact tip (see welding gun Owner’s Manual.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "HL.P 003 appears on meters, have Factory Authorized Service Agent check main control board and main rectifier.",
+          "fix": "HL.P 003 appears on meters, have Factory Authorized Service Agent check main control board and main rectifier.",
+          "test": null,
+          "components": []
+        }
+      ],
+      "library_types": []
+    },
+    {
+      "id": "miller-03",
+      "rank": 3,
+      "symptom": "Low weld output.",
+      "table_page": 35,
+      "tier1_pages": [
+        35
+      ],
+      "referenced_pages": [
+        35
+      ],
+      "causes": [
+        {
+          "cause": "Connect unit to proper input voltage or check for low line voltage (see Section 4-13).",
+          "fix": "Connect unit to proper input voltage or check for low line voltage (see Section 4-13).",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Check input voltage jumper links and correct position if necessary (see Section 4-11).",
+          "fix": "Check input voltage jumper links and correct position if necessary (see Section 4-11).",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Have Factory Authorized Service Agent check main control board.",
+          "fix": "Have Factory Authorized Service Agent check main control board.",
+          "test": null,
+          "components": []
+        }
+      ],
+      "library_types": []
+    },
+    {
+      "id": "miller-04",
+      "rank": 4,
+      "symptom": "Fan motor does not run.",
+      "table_page": 35,
+      "tier1_pages": [
+        35
+      ],
+      "referenced_pages": [
+        35
+      ],
+      "causes": [
+        {
+          "cause": "Have Factory Authorized Service Agent check fan-on-demand circuit.",
+          "fix": "Have Factory Authorized Service Agent check fan-on-demand circuit.",
+          "test": null,
+          "components": []
+        }
+      ],
+      "library_types": []
+    },
+    {
+      "id": "miller-05",
+      "rank": 5,
+      "symptom": "Low, high, or erratic wire speed.",
+      "table_page": 35,
+      "tier1_pages": [
+        35
+      ],
+      "referenced_pages": [
+        35
+      ],
+      "causes": [
+        {
+          "cause": "Readjust front panel settings (see Section 5-1).",
+          "fix": "Readjust front panel settings (see Section 5-1).",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Change to correct size drive rolls (see Section 6-3).",
+          "fix": "Change to correct size drive rolls (see Section 6-3).",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Readjust drive roll pressure (see Section 4-14).",
+          "fix": "Readjust drive roll pressure (see Section 4-14).",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Replace inlet guide, contact tip, and/or liner if necessary (see welding gun Owner’s Manual).",
+          "fix": "Replace inlet guide, contact tip, and/or liner if necessary (see welding gun Owner’s Manual).",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Check position of input jumper links (see Section 4-11).",
+          "fix": "Check position of input jumper links (see Section 4-11).",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Have Factory Authorized Service Agent check main control board.",
+          "fix": "Have Factory Authorized Service Agent check main control board.",
+          "test": null,
+          "components": []
+        }
+      ],
+      "library_types": []
+    },
+    {
+      "id": "miller-06",
+      "rank": 6,
+      "symptom": "Excessive Spatter",
+      "table_page": 45,
+      "tier1_pages": [
+        45
+      ],
+      "referenced_pages": [
+        45
+      ],
+      "causes": [
+        {
+          "cause": "Wire feed speed too high.",
+          "fix": "Select lower wire feed speed.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Voltage too high.",
+          "fix": "Select lower voltage range.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Electrode extension (stickout) too long.",
+          "fix": "Use shorter electrode extension (stickout).",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Workpiece dirty.",
+          "fix": "Remove all grease, oil, moisture, rust, paint, undercoating, and dirt from work surface before welding.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Insufficient shielding gas at welding arc.",
+          "fix": "Increase flow of shielding gas at regulator/flowmeter and/or prevent drafts near welding arc.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Dirty welding wire.",
+          "fix": "Use clean, dry welding wire. Eliminate pickup of oil or lubricant on welding wire from feeder or liner.",
+          "test": null,
+          "components": []
+        }
+      ],
+      "library_types": []
+    },
+    {
+      "id": "miller-07",
+      "rank": 7,
+      "symptom": "Porosity",
+      "table_page": 45,
+      "tier1_pages": [
+        45
+      ],
+      "referenced_pages": [
+        45
+      ],
+      "causes": [
+        {
+          "cause": "Insufficient shielding gas at welding arc.",
+          "fix": "Increase flow of shielding gas at regulator/flowmeter and/or prevent drafts near welding arc. Remove spatter from gun nozzle. Check gas hoses for leaks. Place nozzle 1/4 to 1/2 in (6-13 mm) from workpiece. Hold gun near bead at end of weld until molten metal solidifies.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Wrong gas.",
+          "fix": "Use welding grade shielding gas; change to different gas.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Dirty welding wire.",
+          "fix": "Use clean, dry welding wire. Eliminate pick up of oil or lubricant on welding wire from feeder or liner.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Workpiece dirty.",
+          "fix": "Remove all grease, oil, moisture, rust, paint, coatings, and dirt from work surface before welding. Use a more highly deoxidizing welding wire (contact supplier).",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Welding wire extends too far out of nozzle.",
+          "fix": "Be sure welding wire extends not more than 1/2 in (13 mm) beyond nozzle.",
+          "test": null,
+          "components": []
+        }
+      ],
+      "library_types": []
+    },
+    {
+      "id": "miller-08",
+      "rank": 8,
+      "symptom": "Excessive Penetration",
+      "table_page": 45,
+      "tier1_pages": [
+        45
+      ],
+      "referenced_pages": [
+        45
+      ],
+      "causes": [
+        {
+          "cause": "Excessive heat input.",
+          "fix": "Select lower voltage range and reduce wire feed speed. Increase travel speed.",
+          "test": null,
+          "components": []
+        }
+      ],
+      "library_types": []
+    },
+    {
+      "id": "miller-09",
+      "rank": 9,
+      "symptom": "Lack Of Penetration",
+      "table_page": 46,
+      "tier1_pages": [
+        46
+      ],
+      "referenced_pages": [
+        46
+      ],
+      "causes": [
+        {
+          "cause": "Improper joint preparation.",
+          "fix": "Material too thick. Joint preparation and design must provide access to bottom of groove while maintaining proper welding wire extension and arc characteristics.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Improper weld technique.",
+          "fix": "Maintain normal gun angle of 0 to 15 degrees to achieve maximum penetration. Keep arc on leading edge of weld puddle. Be sure welding wire extends not more than 1/2 in (13 mm) beyond nozzle.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Insufficient heat input.",
+          "fix": "Select higher wire feed speed and/or select higher voltage range. Reduce travel speed.",
+          "test": null,
+          "components": []
+        }
+      ],
+      "library_types": []
+    },
+    {
+      "id": "miller-10",
+      "rank": 10,
+      "symptom": "Incomplete Fusion",
+      "table_page": 46,
+      "tier1_pages": [
+        46
+      ],
+      "referenced_pages": [
+        46
+      ],
+      "causes": [
+        {
+          "cause": "Workpiece dirty.",
+          "fix": "Remove all grease, oil, moisture, rust, paint, undercoating, and dirt from work surface before welding.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Insufficient heat input.",
+          "fix": "Select higher voltage range and/or adjust wire feed speed.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Improper welding technique.",
+          "fix": "Place stringer bead in proper location(s) at joint during welding. Adjust work angle or widen groove to access bottom during welding. Momentarily hold arc on groove side walls when using weaving technique. Keep arc on leading edge of weld puddle. Use correct gun angle of 0 to 15 degrees.",
+          "test": null,
+          "components": []
+        }
+      ],
+      "library_types": []
+    },
+    {
+      "id": "miller-11",
+      "rank": 11,
+      "symptom": "Burn-Through",
+      "table_page": 46,
+      "tier1_pages": [
+        46
+      ],
+      "referenced_pages": [
+        46
+      ],
+      "causes": [
+        {
+          "cause": "Excessive heat input.",
+          "fix": "Select lower voltage range and reduce wire feed speed. Increase and/or maintain steady travel speed.",
+          "test": null,
+          "components": []
+        }
+      ],
+      "library_types": []
+    },
+    {
+      "id": "miller-12",
+      "rank": 12,
+      "symptom": "Waviness Of Bead",
+      "table_page": 47,
+      "tier1_pages": [
+        47
+      ],
+      "referenced_pages": [
+        47
+      ],
+      "causes": [
+        {
+          "cause": "Welding wire extends too far out of nozzle.",
+          "fix": "Be sure welding wire extends not more than 1/2 in (13 mm) beyond nozzle.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Unsteady hand.",
+          "fix": "Support hand on solid surface or use two hands.",
+          "test": null,
+          "components": []
+        }
+      ],
+      "library_types": []
+    },
+    {
+      "id": "miller-13",
+      "rank": 13,
+      "symptom": "Distortion",
+      "table_page": 47,
+      "tier1_pages": [
+        47
+      ],
+      "referenced_pages": [
+        47
+      ],
+      "causes": [
+        {
+          "cause": "Excessive heat input.",
+          "fix": "Use restraint (clamp) to hold base metal in position. Make tack welds along joint before starting welding operation. Select lower voltage range and/or reduce wire feed speed. Increase travel speed. Weld in small segments and allow cooling between welds.",
+          "test": null,
+          "components": []
+        }
+      ],
+      "library_types": []
+    },
+    {
+      "id": "miller-14",
+      "rank": 14,
+      "symptom": "Wire feed motor operates, but wire does not feed.",
+      "table_page": 48,
+      "tier1_pages": [
+        48
+      ],
+      "referenced_pages": [
+        48
+      ],
+      "causes": [
+        {
+          "cause": "Too little pressure on wire feed rolls.",
+          "fix": "Increase pressure setting on wire feed rolls.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Incorrect wire feed rolls.",
+          "fix": "Check size stamped on wire feed rolls, replace to match wire size and type if necessary.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Wire spool brake pressure too high.",
+          "fix": "Decrease brake pressure on wire spool.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Restriction in the gun and/or assembly.",
+          "fix": "Check and replace cable, gun, and contact tip if damaged. Check size of contact tip and cable liner, replace if necessary.",
+          "test": null,
+          "components": []
+        }
+      ],
+      "library_types": []
+    },
+    {
+      "id": "miller-15",
+      "rank": 15,
+      "symptom": "Wire curling up in front of the wire feed rolls (bird nesting).",
+      "table_page": 48,
+      "tier1_pages": [
+        48
+      ],
+      "referenced_pages": [
+        48
+      ],
+      "causes": [
+        {
+          "cause": "Too much pressure on wire feed rolls.",
+          "fix": "Decrease pressure setting on wire feed rolls.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Incorrect cable liner or gun contact tip size.",
+          "fix": "Check size of contact tip and check cable liner length and diameter, replace if necessary.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Gun end not inserted into drive housing properly.",
+          "fix": "Loosen gun securing bolt in drive housing and push gun end into housing just enough so it does not touch wire feed rolls.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Dirty or damaged (kinked) liner.",
+          "fix": "Replace liner.",
+          "test": null,
+          "components": []
+        }
+      ],
+      "library_types": []
+    },
+    {
+      "id": "miller-16",
+      "rank": 16,
+      "symptom": "Wire feeds, but no gas flows.",
+      "table_page": 48,
+      "tier1_pages": [
+        48
+      ],
+      "referenced_pages": [
+        48
+      ],
+      "causes": [
+        {
+          "cause": "Gas cylinder empty.",
+          "fix": "Replace empty gas cylinder.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Gas nozzle plugged.",
+          "fix": "Clean or replace gas nozzle.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Gas cylinder valve not open or flowmeter not adjusted.",
+          "fix": "Open gas valve at cylinder and adjust flow rate.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Restriction in gas line.",
+          "fix": "Check gas hose between flowmeter and wire feeder, and gas hose in gun and cable assembly.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Loose or broken wires to gas solenoid.",
+          "fix": "Have Factory Authorized Service Agent repair wiring.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Gas solenoid valve not operating.",
+          "fix": "Have Factory Authorized Service Agent replace gas solenoid valve.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Incorrect primary voltage connected to welding power source.",
+          "fix": "Check primary voltage and relink welding power source for correct voltage.",
+          "test": null,
+          "components": []
+        }
+      ],
+      "library_types": []
+    },
+    {
+      "id": "miller-17",
+      "rank": 17,
+      "symptom": "Welding arc not stable.",
+      "table_page": 49,
+      "tier1_pages": [
+        49
+      ],
+      "referenced_pages": [
+        49
+      ],
+      "causes": [
+        {
+          "cause": "Wire slipping in drive rolls.",
+          "fix": "Adjust pressure setting on wire feed rolls. Replace worn drive rolls if necessary.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Wrong size gun liner or contact tip.",
+          "fix": "Match liner and contact tip to wire size and type.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Incorrect voltage setting for selected wire feed speed on welding power source.",
+          "fix": "Readjust welding parameters.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Loose connections at the gun weld cable or work cable.",
+          "fix": "Check and tighten all connections.",
+          "test": null,
+          "components": []
+        },
+        {
+          "cause": "Gun in poor shape or loose connection inside gun.",
+          "fix": "Repair or replace gun as necessary.",
+          "test": null,
+          "components": []
+        }
+      ],
+      "library_types": []
+    }
+  ]
+}

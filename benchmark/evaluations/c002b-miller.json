@@ -1,0 +1,3138 @@
+{
+  "version": "oracle-vocabulary-miller-v1",
+  "created": "2026-11-21",
+  "case_id": "c002b-miller",
+  "product": {
+    "manufacturer": "Miller Electric",
+    "model": "Millermatic 252",
+    "manual": "Owner's Manual OM-230 693C (2007-11), 52 pp (owners-manual-om-230-693c.pdf)"
+  },
+  "source": "Miller Millermatic 252 Owner's Manual: section 6-5 Troubleshooting (printed p. 31, 5 troubles -> 21 remedy rows; no cause column, so each row key is its remedy text), sections 8-8 to 8-15 (printed pp. 41-43, 8 defects -> 22 cause rows), section 8-17 Troubleshooting Guide for Semiautomatic Welding Equipment (printed pp. 44-45, 4 problems -> 20 cause rows). Deterministic parser output: 17 symptoms -> 63 cause rows.",
+  "scope_disclaimer": "The oracle proves the twin matches the manual's claims, not that the machine behaves that way. Field data is the only real ground truth.",
+  "review": {
+    "status": "draft-for-review",
+    "reviewer": null,
+    "reviewed_at": null,
+    "note": "Written once, per case, as a separate reviewed artifact from any twin or archetype (OMNIPRO oracle method, Phase 3A). The vocabulary author writes the expected vectors from the manual pages only. Rows flagged in 'flags' are vocabulary-author judgement where the manual is silent or covers two directions in one cause row; those flags are the reviewer's starting point. The corrective-action column is held out in 'answer_key' and must never be sent to the system under test. 27 Nov 2026 injection/vocabulary update (proof-twin measurement, 0/38 run): miller-01 fault is now fault/stuck_open and miller-02 fault/tripped (the switch archetype treats state as an output the nominal row overwrites; fault is its input channel); miller-52 fault is now level/empty (empty is the storage level parameter, as in OMNIPRO); fan values are normalised to the twin motion_out domain (running->normal, stopped->absent)."
+  },
+  "join_rule": "A vocabulary row joins to a deterministic-parser cause row on row_id (stable parser output: tools/parse_welder_oracles.py). Cause text is the parser's exact text. The remedy is NOT carried on the row: it is the held-out answer key.",
+  "categories": {
+    "twin_expressible": "Fault injection on an archetype fault state or a parameter value. The scored headline set.",
+    "settings": "A setting / configuration value, not a fault injection. Recorded with its expected vector, not scored as a fault row.",
+    "technique": "Technique / contamination. Not twin-expressible. Own category, not scored.",
+    "cross_reference": "Routes to another case; counted once, under that case.",
+    "unmappable": "States no diagnosable cause at all (a safety stop, not a fault). Recorded, not scored."
+  },
+  "tests": {
+    "disconnect_check": {
+      "description": "Line disconnect switch On (6-5: 'Be sure line disconnect switch is On').",
+      "outcomes": [
+        "on",
+        "off",
+        "not_applicable"
+      ],
+      "source_page": 31
+    },
+    "breaker_check": {
+      "description": "Building line fuse / circuit breaker not open (6-5).",
+      "outcomes": [
+        "ok",
+        "tripped",
+        "not_applicable"
+      ],
+      "source_page": 31
+    },
+    "trigger_check": {
+      "description": "Gun trigger connections secure; trigger not faulty or shorted (6-5).",
+      "outcomes": [
+        "ok",
+        "faulty",
+        "loose",
+        "not_applicable"
+      ],
+      "source_page": 31
+    },
+    "power_cycle_check": {
+      "description": "Turn power switch off and back on; meter message clears or reappears (6-5, HL.P 001).",
+      "outcomes": [
+        "clears",
+        "persists",
+        "not_applicable"
+      ],
+      "source_page": 31
+    },
+    "thermal_check": {
+      "description": "Thermistor T overheating condition (6-5, HL.P 002).",
+      "outcomes": [
+        "ok",
+        "tripped",
+        "not_applicable"
+      ],
+      "source_page": 31
+    },
+    "power_switch_check": {
+      "description": "Power switch sound (6-5: service-agent check).",
+      "outcomes": [
+        "ok",
+        "faulty",
+        "not_applicable"
+      ],
+      "source_page": 31
+    },
+    "board_check": {
+      "description": "Board connections / main control board sound (6-5: Factory Authorized Service Agent check). A service-agent check, not an operator check.",
+      "outcomes": [
+        "ok",
+        "faulty",
+        "not_applicable"
+      ],
+      "source_page": 31
+    },
+    "ground_check": {
+      "description": "Work clamp metal-to-metal contact (6-5: 'Connect work clamp to get good metal to metal contact').",
+      "outcomes": [
+        "good",
+        "poor",
+        "not_applicable"
+      ],
+      "source_page": 31
+    },
+    "tip_condition_check": {
+      "description": "Contact tip condition (6-5: replace contact tip).",
+      "outcomes": [
+        "ok",
+        "worn",
+        "damaged",
+        "not_applicable"
+      ],
+      "source_page": 31
+    },
+    "input_voltage_check": {
+      "description": "Unit connected to proper input voltage; line voltage not low; primary voltage correct (6-5; 8-17).",
+      "outcomes": [
+        "normal",
+        "low",
+        "wrong",
+        "not_applicable"
+      ],
+      "source_page": 31
+    },
+    "jumper_link_check": {
+      "description": "Input voltage jumper links in the correct position (6-5; sections 4-11).",
+      "outcomes": [
+        "correct",
+        "incorrect",
+        "not_applicable"
+      ],
+      "source_page": 31
+    },
+    "fan_circuit_check": {
+      "description": "Fan-on-demand circuit sound (6-5: service-agent check).",
+      "outcomes": [
+        "ok",
+        "faulty",
+        "not_applicable"
+      ],
+      "source_page": 31
+    },
+    "panel_settings_check": {
+      "description": "Front panel settings correct (6-5; section 5-1).",
+      "outcomes": [
+        "correct",
+        "incorrect",
+        "not_applicable"
+      ],
+      "source_page": 31
+    },
+    "drive_roll_check": {
+      "description": "Correct size drive rolls (6-5; 8-17).",
+      "outcomes": [
+        "correct",
+        "wrong_size",
+        "misaligned",
+        "not_applicable"
+      ],
+      "source_page": 31
+    },
+    "tension_check": {
+      "description": "Drive roll pressure setting (6-5 section 4-14; 8-17).",
+      "outcomes": [
+        "ok",
+        "low",
+        "high",
+        "not_applicable"
+      ],
+      "source_page": 31
+    },
+    "liner_tip_check": {
+      "description": "Inlet guide, contact tip, liner sound (6-5).",
+      "outcomes": [
+        "clear",
+        "clogged",
+        "damaged",
+        "wrong_size",
+        "not_applicable"
+      ],
+      "source_page": 31
+    },
+    "wire_feed_speed_check": {
+      "description": "Wire feed speed setting (8-8).",
+      "outcomes": [
+        "correct",
+        "too_high",
+        "too_low",
+        "not_applicable"
+      ],
+      "source_page": 41
+    },
+    "voltage_setting_check": {
+      "description": "Voltage range / voltage setting for the selected wire feed speed (8-8; 8-17).",
+      "outcomes": [
+        "correct",
+        "too_high",
+        "too_low",
+        "incorrect",
+        "not_applicable"
+      ],
+      "source_page": 41
+    },
+    "stickout_check": {
+      "description": "Electrode extension (stickout) / wire extension beyond nozzle, not more than 1/2 in (13 mm) (8-8; 8-9; 8-14).",
+      "outcomes": [
+        "ok",
+        "too_long",
+        "not_applicable"
+      ],
+      "source_page": 41
+    },
+    "workpiece_clean_check": {
+      "description": "Work surface free of grease, oil, moisture, rust, paint, coatings and dirt (8-8; 8-9; 8-12).",
+      "outcomes": [
+        "clean",
+        "dirty",
+        "not_applicable"
+      ],
+      "source_page": 41
+    },
+    "wire_clean_check": {
+      "description": "Welding wire clean and dry, no oil/lubricant pickup from feeder or liner (8-8; 8-9).",
+      "outcomes": [
+        "clean",
+        "dirty",
+        "not_applicable"
+      ],
+      "source_page": 41
+    },
+    "gas_flow_check": {
+      "description": "Shielding gas flow at the welding arc (8-8; 8-9).",
+      "outcomes": [
+        "ok",
+        "low",
+        "absent",
+        "not_applicable"
+      ],
+      "source_page": 41
+    },
+    "gas_type_check": {
+      "description": "Welding grade shielding gas, correct gas for the job (8-9).",
+      "outcomes": [
+        "correct",
+        "wrong",
+        "not_applicable"
+      ],
+      "source_page": 41
+    },
+    "heat_input_check": {
+      "description": "Heat input: voltage range and wire feed speed, travel speed (8-10 to 8-13; 8-15).",
+      "outcomes": [
+        "correct",
+        "too_high",
+        "too_low",
+        "not_applicable"
+      ],
+      "source_page": 42
+    },
+    "joint_prep_check": {
+      "description": "Joint preparation and design give access to the bottom of the groove (8-11).",
+      "outcomes": [
+        "ok",
+        "improper",
+        "not_applicable"
+      ],
+      "source_page": 42
+    },
+    "technique_check": {
+      "description": "Welding technique: gun angle 0-15 degrees, arc on leading edge, hand steadiness, bead placement (8-11; 8-12; 8-14).",
+      "outcomes": [
+        "ok",
+        "improper",
+        "not_applicable"
+      ],
+      "source_page": 42
+    },
+    "spool_brake_check": {
+      "description": "Wire spool brake pressure (8-17).",
+      "outcomes": [
+        "ok",
+        "too_high",
+        "not_applicable"
+      ],
+      "source_page": 44
+    },
+    "gun_restriction_check": {
+      "description": "Restriction in the gun and/or assembly: cable, gun, contact tip (8-17).",
+      "outcomes": [
+        "clear",
+        "restricted",
+        "not_applicable"
+      ],
+      "source_page": 44
+    },
+    "liner_tip_size_check": {
+      "description": "Cable liner and gun contact tip size match the wire (8-17).",
+      "outcomes": [
+        "correct",
+        "wrong_size",
+        "not_applicable"
+      ],
+      "source_page": 44
+    },
+    "connector_seated_check": {
+      "description": "Gun end inserted into the drive housing properly (8-17).",
+      "outcomes": [
+        "yes",
+        "no",
+        "not_applicable"
+      ],
+      "source_page": 44
+    },
+    "liner_check": {
+      "description": "Liner clean, undamaged, not kinked (8-17).",
+      "outcomes": [
+        "clear",
+        "clogged",
+        "damaged",
+        "wrong_size",
+        "not_applicable"
+      ],
+      "source_page": 44
+    },
+    "bottle_level_check": {
+      "description": "Gas cylinder not empty (8-17).",
+      "outcomes": [
+        "ok",
+        "empty",
+        "low",
+        "not_applicable"
+      ],
+      "source_page": 44
+    },
+    "nozzle_check": {
+      "description": "Gas nozzle not plugged (8-17).",
+      "outcomes": [
+        "clear",
+        "plugged",
+        "not_applicable"
+      ],
+      "source_page": 44
+    },
+    "gas_valve_check": {
+      "description": "Gas cylinder valve open, flowmeter adjusted (8-17).",
+      "outcomes": [
+        "open",
+        "closed",
+        "not_applicable"
+      ],
+      "source_page": 44
+    },
+    "gas_line_check": {
+      "description": "Gas hose between flowmeter and wire feeder, and in the gun and cable assembly, clear (8-17).",
+      "outcomes": [
+        "clear",
+        "restricted",
+        "not_applicable"
+      ],
+      "source_page": 44
+    },
+    "solenoid_check": {
+      "description": "Gas solenoid wiring and valve operating (8-17).",
+      "outcomes": [
+        "ok",
+        "faulty",
+        "not_applicable"
+      ],
+      "source_page": 44
+    },
+    "cable_connection_check": {
+      "description": "Connections at the gun weld cable and work cable tight (8-17, arc not stable).",
+      "outcomes": [
+        "tight",
+        "loose",
+        "not_applicable"
+      ],
+      "source_page": 45
+    },
+    "gun_condition_check": {
+      "description": "Gun in good shape, no loose connection inside the gun (8-17, arc not stable).",
+      "outcomes": [
+        "ok",
+        "damaged",
+        "loose",
+        "not_applicable"
+      ],
+      "source_page": 45
+    }
+  },
+  "cases": {
+    "miller-01": {
+      "symptom": "No weld output; wire does not feed.",
+      "table_page": 31,
+      "observables": [
+        "weld_output",
+        "wire_out@tip",
+        "meter_display"
+      ],
+      "nominal": {
+        "weld_output": "normal",
+        "wire_out@tip": "normal",
+        "meter_display": "normal"
+      },
+      "required_chain": [],
+      "required_chain_note": "No chain is defined at oracle-build time: the required chain is a property of the twin under test (OMNIPRO's chains were written for the 3C proof twin). It is defined when a Test 1/1b run is prepared, against that twin's topology.",
+      "tests": [
+        "disconnect_check",
+        "breaker_check",
+        "trigger_check",
+        "power_cycle_check",
+        "thermal_check",
+        "power_switch_check",
+        "board_check"
+      ]
+    },
+    "miller-02": {
+      "symptom": "No Weld Output; wire feeds.",
+      "table_page": 31,
+      "observables": [
+        "weld_output",
+        "wire_out@tip",
+        "meter_display"
+      ],
+      "nominal": {
+        "weld_output": "normal",
+        "wire_out@tip": "normal",
+        "meter_display": "normal"
+      },
+      "required_chain": [],
+      "required_chain_note": "No chain is defined at oracle-build time: the required chain is a property of the twin under test (OMNIPRO's chains were written for the 3C proof twin). It is defined when a Test 1/1b run is prepared, against that twin's topology.",
+      "tests": [
+        "ground_check",
+        "tip_condition_check",
+        "board_check"
+      ]
+    },
+    "miller-03": {
+      "symptom": "Low weld output.",
+      "table_page": 31,
+      "observables": [
+        "weld_output"
+      ],
+      "nominal": {
+        "weld_output": "normal"
+      },
+      "required_chain": [],
+      "required_chain_note": "No chain is defined at oracle-build time: the required chain is a property of the twin under test (OMNIPRO's chains were written for the 3C proof twin). It is defined when a Test 1/1b run is prepared, against that twin's topology.",
+      "tests": [
+        "input_voltage_check",
+        "jumper_link_check",
+        "board_check"
+      ]
+    },
+    "miller-04": {
+      "symptom": "Fan motor does not run.",
+      "table_page": 31,
+      "observables": [
+        "fan"
+      ],
+      "nominal": {
+        "fan": "normal"
+      },
+      "required_chain": [],
+      "required_chain_note": "No chain is defined at oracle-build time: the required chain is a property of the twin under test (OMNIPRO's chains were written for the 3C proof twin). It is defined when a Test 1/1b run is prepared, against that twin's topology.",
+      "tests": [
+        "fan_circuit_check"
+      ]
+    },
+    "miller-05": {
+      "symptom": "Low, high, or erratic wire speed.",
+      "table_page": 31,
+      "observables": [
+        "wire_speed"
+      ],
+      "nominal": {
+        "wire_speed": "normal"
+      },
+      "required_chain": [],
+      "required_chain_note": "No chain is defined at oracle-build time: the required chain is a property of the twin under test (OMNIPRO's chains were written for the 3C proof twin). It is defined when a Test 1/1b run is prepared, against that twin's topology.",
+      "tests": [
+        "panel_settings_check",
+        "drive_roll_check",
+        "tension_check",
+        "liner_tip_check",
+        "jumper_link_check",
+        "board_check"
+      ]
+    },
+    "miller-06": {
+      "symptom": "Excessive Spatter",
+      "table_page": 41,
+      "observables": [
+        "weld_quality",
+        "gas_flow@gun"
+      ],
+      "nominal": {
+        "weld_quality": "normal",
+        "gas_flow@gun": "normal"
+      },
+      "required_chain": [],
+      "required_chain_note": "No chain is defined at oracle-build time: the required chain is a property of the twin under test (OMNIPRO's chains were written for the 3C proof twin). It is defined when a Test 1/1b run is prepared, against that twin's topology.",
+      "tests": [
+        "wire_feed_speed_check",
+        "voltage_setting_check",
+        "stickout_check",
+        "workpiece_clean_check",
+        "gas_flow_check",
+        "wire_clean_check"
+      ]
+    },
+    "miller-07": {
+      "symptom": "Porosity",
+      "table_page": 41,
+      "observables": [
+        "weld_quality",
+        "gas_flow@gun"
+      ],
+      "nominal": {
+        "weld_quality": "normal",
+        "gas_flow@gun": "normal"
+      },
+      "required_chain": [],
+      "required_chain_note": "No chain is defined at oracle-build time: the required chain is a property of the twin under test (OMNIPRO's chains were written for the 3C proof twin). It is defined when a Test 1/1b run is prepared, against that twin's topology.",
+      "tests": [
+        "gas_flow_check",
+        "gas_type_check",
+        "wire_clean_check",
+        "workpiece_clean_check",
+        "stickout_check"
+      ]
+    },
+    "miller-08": {
+      "symptom": "Excessive Penetration",
+      "table_page": 41,
+      "observables": [
+        "weld_quality"
+      ],
+      "nominal": {
+        "weld_quality": "normal"
+      },
+      "required_chain": [],
+      "required_chain_note": "No chain is defined at oracle-build time: the required chain is a property of the twin under test (OMNIPRO's chains were written for the 3C proof twin). It is defined when a Test 1/1b run is prepared, against that twin's topology.",
+      "tests": [
+        "heat_input_check"
+      ]
+    },
+    "miller-09": {
+      "symptom": "Lack Of Penetration",
+      "table_page": 42,
+      "observables": [
+        "weld_quality"
+      ],
+      "nominal": {
+        "weld_quality": "normal"
+      },
+      "required_chain": [],
+      "required_chain_note": "No chain is defined at oracle-build time: the required chain is a property of the twin under test (OMNIPRO's chains were written for the 3C proof twin). It is defined when a Test 1/1b run is prepared, against that twin's topology.",
+      "tests": [
+        "joint_prep_check",
+        "technique_check",
+        "heat_input_check"
+      ]
+    },
+    "miller-10": {
+      "symptom": "Incomplete Fusion",
+      "table_page": 42,
+      "observables": [
+        "weld_quality"
+      ],
+      "nominal": {
+        "weld_quality": "normal"
+      },
+      "required_chain": [],
+      "required_chain_note": "No chain is defined at oracle-build time: the required chain is a property of the twin under test (OMNIPRO's chains were written for the 3C proof twin). It is defined when a Test 1/1b run is prepared, against that twin's topology.",
+      "tests": [
+        "workpiece_clean_check",
+        "heat_input_check",
+        "technique_check"
+      ]
+    },
+    "miller-11": {
+      "symptom": "Burn-Through",
+      "table_page": 42,
+      "observables": [
+        "weld_quality"
+      ],
+      "nominal": {
+        "weld_quality": "normal"
+      },
+      "required_chain": [],
+      "required_chain_note": "No chain is defined at oracle-build time: the required chain is a property of the twin under test (OMNIPRO's chains were written for the 3C proof twin). It is defined when a Test 1/1b run is prepared, against that twin's topology.",
+      "tests": [
+        "heat_input_check"
+      ]
+    },
+    "miller-12": {
+      "symptom": "Waviness Of Bead",
+      "table_page": 43,
+      "observables": [
+        "weld_quality"
+      ],
+      "nominal": {
+        "weld_quality": "normal"
+      },
+      "required_chain": [],
+      "required_chain_note": "No chain is defined at oracle-build time: the required chain is a property of the twin under test (OMNIPRO's chains were written for the 3C proof twin). It is defined when a Test 1/1b run is prepared, against that twin's topology.",
+      "tests": [
+        "stickout_check",
+        "technique_check"
+      ]
+    },
+    "miller-13": {
+      "symptom": "Distortion",
+      "table_page": 43,
+      "observables": [
+        "weld_quality"
+      ],
+      "nominal": {
+        "weld_quality": "normal"
+      },
+      "required_chain": [],
+      "required_chain_note": "No chain is defined at oracle-build time: the required chain is a property of the twin under test (OMNIPRO's chains were written for the 3C proof twin). It is defined when a Test 1/1b run is prepared, against that twin's topology.",
+      "tests": [
+        "heat_input_check"
+      ]
+    },
+    "miller-14": {
+      "symptom": "Wire feed motor operates, but wire does not feed.",
+      "table_page": 44,
+      "observables": [
+        "wire_out@tip",
+        "motor_motion",
+        "wire_out@feeder"
+      ],
+      "nominal": {
+        "wire_out@tip": "normal",
+        "motor_motion": "normal",
+        "wire_out@feeder": "normal"
+      },
+      "required_chain": [],
+      "required_chain_note": "No chain is defined at oracle-build time: the required chain is a property of the twin under test (OMNIPRO's chains were written for the 3C proof twin). It is defined when a Test 1/1b run is prepared, against that twin's topology.",
+      "tests": [
+        "tension_check",
+        "drive_roll_check",
+        "spool_brake_check",
+        "gun_restriction_check"
+      ]
+    },
+    "miller-15": {
+      "symptom": "Wire curling up in front of the wire feed rolls (bird nesting).",
+      "table_page": 44,
+      "observables": [
+        "wire_out@feeder",
+        "wire_out@tip"
+      ],
+      "nominal": {
+        "wire_out@feeder": "normal",
+        "wire_out@tip": "normal"
+      },
+      "required_chain": [],
+      "required_chain_note": "No chain is defined at oracle-build time: the required chain is a property of the twin under test (OMNIPRO's chains were written for the 3C proof twin). It is defined when a Test 1/1b run is prepared, against that twin's topology.",
+      "tests": [
+        "tension_check",
+        "liner_tip_size_check",
+        "connector_seated_check",
+        "liner_check"
+      ]
+    },
+    "miller-16": {
+      "symptom": "Wire feeds, but no gas flows.",
+      "table_page": 44,
+      "observables": [
+        "gas_flow@gun",
+        "wire_out@tip"
+      ],
+      "nominal": {
+        "gas_flow@gun": "normal",
+        "wire_out@tip": "normal"
+      },
+      "required_chain": [],
+      "required_chain_note": "No chain is defined at oracle-build time: the required chain is a property of the twin under test (OMNIPRO's chains were written for the 3C proof twin). It is defined when a Test 1/1b run is prepared, against that twin's topology.",
+      "tests": [
+        "bottle_level_check",
+        "nozzle_check",
+        "gas_valve_check",
+        "gas_line_check",
+        "solenoid_check",
+        "input_voltage_check"
+      ]
+    },
+    "miller-17": {
+      "symptom": "Welding arc not stable.",
+      "table_page": 45,
+      "observables": [
+        "arc",
+        "wire_out@tip"
+      ],
+      "nominal": {
+        "arc": "normal",
+        "wire_out@tip": "normal"
+      },
+      "required_chain": [],
+      "required_chain_note": "No chain is defined at oracle-build time: the required chain is a property of the twin under test (OMNIPRO's chains were written for the 3C proof twin). It is defined when a Test 1/1b run is prepared, against that twin's topology.",
+      "tests": [
+        "tension_check",
+        "liner_tip_size_check",
+        "voltage_setting_check",
+        "cable_connection_check",
+        "gun_condition_check"
+      ]
+    }
+  },
+  "rows": [
+    {
+      "row_id": "miller-01",
+      "case_id": "miller-01",
+      "symptom": "No weld output; wire does not feed.",
+      "cause": "Be sure line disconnect switch is On (see Section 4-13).",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Line Disconnect Switch",
+        "field": "fault",
+        "value": "stuck_open",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "weld_output": "absent",
+        "wire_out@tip": "absent",
+        "meter_display": "normal"
+      },
+      "tests": {
+        "disconnect_check": "off",
+        "breaker_check": "ok",
+        "trigger_check": "ok",
+        "power_cycle_check": "not_applicable",
+        "thermal_check": "ok",
+        "power_switch_check": "ok",
+        "board_check": "ok"
+      },
+      "basis": "6-5 p31 remedy 1: 'Be sure line disconnect switch is On (see Section 4-13).' Section 6-5 has no cause column; the row key is the remedy text (see parser flags).",
+      "flags": [
+        "cause_from_remedy: the cause is implied by the remedy, not stated",
+        "cause_from_remedy: section 6-5 has no cause column; the row key is the remedy text verbatim"
+      ],
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    {
+      "row_id": "miller-02",
+      "case_id": "miller-01",
+      "symptom": "No weld output; wire does not feed.",
+      "cause": "Replace building line fuse or reset circuit breaker if open (see Section 4-13).",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Building Circuit Breaker",
+        "field": "fault",
+        "value": "tripped",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "weld_output": "absent",
+        "wire_out@tip": "absent",
+        "meter_display": "normal"
+      },
+      "tests": {
+        "disconnect_check": "on",
+        "breaker_check": "tripped",
+        "trigger_check": "ok",
+        "power_cycle_check": "not_applicable",
+        "thermal_check": "ok",
+        "power_switch_check": "ok",
+        "board_check": "ok"
+      },
+      "basis": "6-5 p31 remedy 2: 'Replace building line fuse or reset circuit breaker if open (see Section 4-13).'",
+      "flags": [
+        "cause_from_remedy: the cause is implied by the remedy, not stated",
+        "cause_from_remedy: section 6-5 has no cause column; the row key is the remedy text verbatim"
+      ],
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    {
+      "row_id": "miller-03",
+      "case_id": "miller-01",
+      "symptom": "No weld output; wire does not feed.",
+      "cause": "Secure gun trigger connections (see welding gun Owner’s Manual).",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Trigger",
+        "field": "fault",
+        "value": "loose",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "weld_output": "absent",
+        "wire_out@tip": "absent",
+        "meter_display": "normal"
+      },
+      "tests": {
+        "disconnect_check": "on",
+        "breaker_check": "ok",
+        "trigger_check": "loose",
+        "power_cycle_check": "not_applicable",
+        "thermal_check": "ok",
+        "power_switch_check": "ok",
+        "board_check": "ok"
+      },
+      "basis": "6-5 p31 remedy 3: 'Secure gun trigger connections (see welding gun Owner's Manual).'",
+      "flags": [
+        "cause_from_remedy: the cause is implied by the remedy, not stated",
+        "cause_from_remedy: section 6-5 has no cause column; the row key is the remedy text verbatim"
+      ],
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    {
+      "row_id": "miller-04",
+      "case_id": "miller-01",
+      "symptom": "No weld output; wire does not feed.",
+      "cause": "HL.P 001 appears on meters. Turn power switch off and back on, if HL.P 001 appears on meters again, have Factory Authorized Service Agent check unit.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Main Control Board",
+        "field": "fault",
+        "value": "HL.P 001",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "weld_output": "absent",
+        "wire_out@tip": "absent",
+        "meter_display": "HL.P 001"
+      },
+      "tests": {
+        "disconnect_check": "on",
+        "breaker_check": "ok",
+        "trigger_check": "ok",
+        "power_cycle_check": "persists",
+        "thermal_check": "ok",
+        "power_switch_check": "ok",
+        "board_check": "faulty"
+      },
+      "basis": "6-5 p31 remedy 4: 'HL.P 001 appears on meters. Turn power switch off and back on, if HL.P 001 appears on meters again, have Factory Authorized Service Agent check unit.'",
+      "flags": [
+        "cause_from_remedy: the cause is implied by the remedy, not stated",
+        "the manual does not define what HL.P 001 means; the fault value is the meter code itself, not a diagnosis",
+        "cause_from_remedy: section 6-5 has no cause column; the row key is the remedy text verbatim"
+      ],
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    {
+      "row_id": "miller-05",
+      "case_id": "miller-01",
+      "symptom": "No weld output; wire does not feed.",
+      "cause": "HL.P 002 appears on meters. Thermistor T is detecting an overheating condition. Wait for unit to cool allowing the fan to run. After unit is cool, if HL.P 002 message remains, have Factory Authorized Service Agent check for an open Thermistor T (see Section 6-2).",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Thermistor T",
+        "field": "fault",
+        "value": "overheating",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "weld_output": "absent",
+        "wire_out@tip": "absent",
+        "meter_display": "HL.P 002"
+      },
+      "tests": {
+        "disconnect_check": "on",
+        "breaker_check": "ok",
+        "trigger_check": "ok",
+        "power_cycle_check": "not_applicable",
+        "thermal_check": "tripped",
+        "power_switch_check": "ok",
+        "board_check": "ok"
+      },
+      "basis": "6-5 p31 remedy 5: 'HL.P 002 appears on meters. Thermistor T is detecting an overheating condition. Wait for unit to cool allowing the fan to run.'",
+      "flags": [
+        "cause_from_remedy: the cause is implied by the remedy, not stated",
+        "cause_from_remedy: section 6-5 has no cause column; the row key is the remedy text verbatim"
+      ],
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    {
+      "row_id": "miller-06",
+      "case_id": "miller-01",
+      "symptom": "No weld output; wire does not feed.",
+      "cause": "HL.P 004 appears on meters. Reset message by releasing the trigger or removing stuck wire causing short circuit (see Section 5-2) . If message remains, have Factory Authorized Service Agent check for shorted trigger leads.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Trigger",
+        "field": "fault",
+        "value": "shorted",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "weld_output": "absent",
+        "wire_out@tip": "absent",
+        "meter_display": "HL.P 004"
+      },
+      "tests": {
+        "disconnect_check": "on",
+        "breaker_check": "ok",
+        "trigger_check": "faulty",
+        "power_cycle_check": "not_applicable",
+        "thermal_check": "ok",
+        "power_switch_check": "ok",
+        "board_check": "ok"
+      },
+      "basis": "6-5 p31 remedy 6: 'HL.P 004 appears on meters. Reset message by releasing the trigger or removing stuck wire causing short circuit (see Section 5-2). If message remains, have Factory Authorized Service Agent check for shorted trigger leads.'",
+      "flags": [
+        "cause_from_remedy: the cause is implied by the remedy, not stated",
+        "two directions in one remedy (stuck wire causing a short, or shorted trigger leads); the shorted-trigger direction is recorded",
+        "cause_from_remedy: section 6-5 has no cause column; the row key is the remedy text verbatim"
+      ],
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    {
+      "row_id": "miller-07",
+      "case_id": "miller-01",
+      "symptom": "No weld output; wire does not feed.",
+      "cause": "Have Factory Authorized Service Agent check Power switch.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Power Switch",
+        "field": "fault",
+        "value": "faulty",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "weld_output": "absent",
+        "wire_out@tip": "absent",
+        "meter_display": "normal"
+      },
+      "tests": {
+        "disconnect_check": "on",
+        "breaker_check": "ok",
+        "trigger_check": "ok",
+        "power_cycle_check": "not_applicable",
+        "thermal_check": "ok",
+        "power_switch_check": "faulty",
+        "board_check": "ok"
+      },
+      "basis": "6-5 p31 remedy 7: 'Have Factory Authorized Service Agent check Power switch.'",
+      "flags": [
+        "cause_from_remedy: the cause is implied by the remedy, not stated",
+        "service-agent check: the operator cannot run this check; the twin has no Power Switch contract in v1, so this row fails as unmappable at run time",
+        "cause_from_remedy: section 6-5 has no cause column; the row key is the remedy text verbatim"
+      ],
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    {
+      "row_id": "miller-08",
+      "case_id": "miller-01",
+      "symptom": "No weld output; wire does not feed.",
+      "cause": "Have Factory Authorized Service Agent check all board connections and main control board.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Main Control Board",
+        "field": "fault",
+        "value": "faulty",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "weld_output": "absent",
+        "wire_out@tip": "absent",
+        "meter_display": "normal"
+      },
+      "tests": {
+        "disconnect_check": "on",
+        "breaker_check": "ok",
+        "trigger_check": "ok",
+        "power_cycle_check": "not_applicable",
+        "thermal_check": "ok",
+        "power_switch_check": "ok",
+        "board_check": "faulty"
+      },
+      "basis": "6-5 p31 remedy 8: 'Have Factory Authorized Service Agent check all board connections and main control board.'",
+      "flags": [
+        "cause_from_remedy: the cause is implied by the remedy, not stated",
+        "service-agent check; the twin has no control-board contract in v1, so this row fails as unmappable at run time",
+        "cause_from_remedy: section 6-5 has no cause column; the row key is the remedy text verbatim"
+      ],
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    {
+      "row_id": "miller-09",
+      "case_id": "miller-02",
+      "symptom": "No Weld Output; wire feeds.",
+      "cause": "Connect work clamp to get good metal to metal contact.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Work Clamp",
+        "field": "fault",
+        "value": "poor_connection",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "weld_output": "absent",
+        "wire_out@tip": "normal",
+        "meter_display": "normal"
+      },
+      "tests": {
+        "ground_check": "poor",
+        "tip_condition_check": "ok",
+        "board_check": "ok"
+      },
+      "basis": "6-5 p31 remedy 1: 'Connect work clamp to get good metal to metal contact.' Wire feeds is the symptom premise, so wire_out@tip stays normal.",
+      "flags": [
+        "cause_from_remedy: the cause is implied by the remedy, not stated",
+        "cause_from_remedy: section 6-5 has no cause column; the row key is the remedy text verbatim"
+      ],
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    {
+      "row_id": "miller-10",
+      "case_id": "miller-02",
+      "symptom": "No Weld Output; wire feeds.",
+      "cause": "Replace contact tip (see welding gun Owner’s Manual.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Contact Tip",
+        "field": "fault",
+        "value": "worn",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "weld_output": "absent",
+        "wire_out@tip": "normal",
+        "meter_display": "normal"
+      },
+      "tests": {
+        "ground_check": "good",
+        "tip_condition_check": "worn",
+        "board_check": "ok"
+      },
+      "basis": "6-5 p31 remedy 2: 'Replace contact tip (see welding gun Owner's Manual.' — the closing parenthesis is missing in the printed manual.",
+      "flags": [
+        "cause_from_remedy: the cause is implied by the remedy, not stated",
+        "inference: the manual states the fix (replace the tip), not the tip's condition; worn is the representative fault",
+        "cause_from_remedy: section 6-5 has no cause column; the row key is the remedy text verbatim"
+      ],
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    {
+      "row_id": "miller-11",
+      "case_id": "miller-02",
+      "symptom": "No Weld Output; wire feeds.",
+      "cause": "HL.P 003 appears on meters, have Factory Authorized Service Agent check main control board and main rectifier.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Main Control Board",
+        "field": "fault",
+        "value": "HL.P 003",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "weld_output": "absent",
+        "wire_out@tip": "normal",
+        "meter_display": "HL.P 003"
+      },
+      "tests": {
+        "ground_check": "good",
+        "tip_condition_check": "ok",
+        "board_check": "faulty"
+      },
+      "basis": "6-5 p31 remedy 3: 'HL.P 003 appears on meters, have Factory Authorized Service Agent check main control board and main rectifier.'",
+      "flags": [
+        "cause_from_remedy: the cause is implied by the remedy, not stated",
+        "the remedy names both the main control board and the main rectifier; the board is recorded, the rectifier direction is not separately modelled",
+        "the manual does not define what HL.P 003 means; the fault value is the meter code itself",
+        "cause_from_remedy: section 6-5 has no cause column; the row key is the remedy text verbatim"
+      ],
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    {
+      "row_id": "miller-12",
+      "case_id": "miller-03",
+      "symptom": "Low weld output.",
+      "cause": "Connect unit to proper input voltage or check for low line voltage (see Section 4-13).",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Input Power",
+        "field": "input_voltage",
+        "value": "low",
+        "kind": "parameter"
+      },
+      "observables": {
+        "weld_output": "low"
+      },
+      "tests": {
+        "input_voltage_check": "low",
+        "jumper_link_check": "correct",
+        "board_check": "ok"
+      },
+      "basis": "6-5 p31 remedy 1: 'Connect unit to proper input voltage or check for low line voltage (see Section 4-13).'",
+      "flags": [
+        "cause_from_remedy: the cause is implied by the remedy, not stated",
+        "cause_from_remedy: section 6-5 has no cause column; the row key is the remedy text verbatim"
+      ],
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    {
+      "row_id": "miller-13",
+      "case_id": "miller-03",
+      "symptom": "Low weld output.",
+      "cause": "Check input voltage jumper links and correct position if necessary (see Section 4-11).",
+      "category": "settings",
+      "fault": null,
+      "observables": {
+        "weld_output": "low"
+      },
+      "tests": {
+        "input_voltage_check": "normal",
+        "jumper_link_check": "incorrect",
+        "board_check": "ok"
+      },
+      "basis": "6-5 p31 remedy 2: 'Check input voltage jumper links and correct position if necessary (see Section 4-11).' A configuration setting, not a fault injection.",
+      "flags": [
+        "cause_from_remedy: the cause is implied by the remedy, not stated",
+        "cause_from_remedy: section 6-5 has no cause column; the row key is the remedy text verbatim"
+      ],
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    {
+      "row_id": "miller-14",
+      "case_id": "miller-03",
+      "symptom": "Low weld output.",
+      "cause": "Have Factory Authorized Service Agent check main control board.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Main Control Board",
+        "field": "fault",
+        "value": "faulty",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "weld_output": "low"
+      },
+      "tests": {
+        "input_voltage_check": "normal",
+        "jumper_link_check": "correct",
+        "board_check": "faulty"
+      },
+      "basis": "6-5 p31 remedy 3: 'Have Factory Authorized Service Agent check main control board.'",
+      "flags": [
+        "cause_from_remedy: the cause is implied by the remedy, not stated",
+        "service-agent check; no control-board contract in v1, so this row fails as unmappable at run time",
+        "cause_from_remedy: section 6-5 has no cause column; the row key is the remedy text verbatim"
+      ],
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    {
+      "row_id": "miller-15",
+      "case_id": "miller-04",
+      "symptom": "Fan motor does not run.",
+      "cause": "Have Factory Authorized Service Agent check fan-on-demand circuit.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Fan-On-Demand Circuit",
+        "field": "fault",
+        "value": "faulty",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "fan": "absent"
+      },
+      "tests": {
+        "fan_circuit_check": "faulty"
+      },
+      "basis": "6-5 p31 remedy 1: 'Have Factory Authorized Service Agent check fan-on-demand circuit.'",
+      "flags": [
+        "cause_from_remedy: the cause is implied by the remedy, not stated",
+        "service-agent check; no fan-circuit contract in v1, so this row fails as unmappable at run time",
+        "cause_from_remedy: section 6-5 has no cause column; the row key is the remedy text verbatim"
+      ],
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    {
+      "row_id": "miller-16",
+      "case_id": "miller-05",
+      "symptom": "Low, high, or erratic wire speed.",
+      "cause": "Readjust front panel settings (see Section 5-1).",
+      "category": "settings",
+      "fault": null,
+      "observables": {
+        "wire_speed": "erratic"
+      },
+      "tests": {
+        "panel_settings_check": "incorrect",
+        "drive_roll_check": "correct",
+        "tension_check": "ok",
+        "liner_tip_check": "clear",
+        "jumper_link_check": "correct",
+        "board_check": "ok"
+      },
+      "basis": "6-5 p31 remedy 1: 'Readjust front panel settings (see Section 5-1).' A setting, not a fault injection.",
+      "flags": [
+        "cause_from_remedy: the cause is implied by the remedy, not stated",
+        "inference: the wire-speed value (erratic) is the representative reading for a misadjusted panel; the symptom covers low, high, or erratic",
+        "cause_from_remedy: section 6-5 has no cause column; the row key is the remedy text verbatim"
+      ],
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    {
+      "row_id": "miller-17",
+      "case_id": "miller-05",
+      "symptom": "Low, high, or erratic wire speed.",
+      "cause": "Change to correct size drive rolls (see Section 6-3).",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Wire Feed Rolls",
+        "field": "groove_matches",
+        "value": false,
+        "kind": "parameter"
+      },
+      "observables": {
+        "wire_speed": "erratic"
+      },
+      "tests": {
+        "panel_settings_check": "correct",
+        "drive_roll_check": "wrong_size",
+        "tension_check": "ok",
+        "liner_tip_check": "clear",
+        "jumper_link_check": "correct",
+        "board_check": "ok"
+      },
+      "basis": "6-5 p31 remedy 2: 'Change to correct size drive rolls (see Section 6-3).'",
+      "flags": [
+        "cause_from_remedy: the cause is implied by the remedy, not stated",
+        "cause_from_remedy: section 6-5 has no cause column; the row key is the remedy text verbatim"
+      ],
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    {
+      "row_id": "miller-18",
+      "case_id": "miller-05",
+      "symptom": "Low, high, or erratic wire speed.",
+      "cause": "Readjust drive roll pressure (see Section 4-14).",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Wire Feed Rolls",
+        "field": "tension",
+        "value": "low",
+        "kind": "parameter"
+      },
+      "observables": {
+        "wire_speed": "erratic"
+      },
+      "tests": {
+        "panel_settings_check": "correct",
+        "drive_roll_check": "correct",
+        "tension_check": "low",
+        "liner_tip_check": "clear",
+        "jumper_link_check": "correct",
+        "board_check": "ok"
+      },
+      "basis": "6-5 p31 remedy 3: 'Readjust drive roll pressure (see Section 4-14).'",
+      "flags": [
+        "cause_from_remedy: the cause is implied by the remedy, not stated",
+        "two-direction cause (pressure too low or too high); low is recorded as the representative direction, as in the OMNIPRO vocabulary",
+        "cause_from_remedy: section 6-5 has no cause column; the row key is the remedy text verbatim"
+      ],
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    {
+      "row_id": "miller-19",
+      "case_id": "miller-05",
+      "symptom": "Low, high, or erratic wire speed.",
+      "cause": "Replace inlet guide, contact tip, and/or liner if necessary (see welding gun Owner’s Manual).",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Gun Liner",
+        "field": "fault",
+        "value": "clogged",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "wire_speed": "erratic"
+      },
+      "tests": {
+        "panel_settings_check": "correct",
+        "drive_roll_check": "correct",
+        "tension_check": "ok",
+        "liner_tip_check": "clogged",
+        "jumper_link_check": "correct",
+        "board_check": "ok"
+      },
+      "basis": "6-5 p31 remedy 4: 'Replace inlet guide, contact tip, and/or liner if necessary (see welding gun Owner's Manual).'",
+      "flags": [
+        "cause_from_remedy: the cause is implied by the remedy, not stated",
+        "one remedy covering three parts (inlet guide, contact tip, liner); the liner direction is recorded, the other two are not separately modelled",
+        "cause_from_remedy: section 6-5 has no cause column; the row key is the remedy text verbatim"
+      ],
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    {
+      "row_id": "miller-20",
+      "case_id": "miller-05",
+      "symptom": "Low, high, or erratic wire speed.",
+      "cause": "Check position of input jumper links (see Section 4-11).",
+      "category": "settings",
+      "fault": null,
+      "observables": {
+        "wire_speed": "erratic"
+      },
+      "tests": {
+        "panel_settings_check": "correct",
+        "drive_roll_check": "correct",
+        "tension_check": "ok",
+        "liner_tip_check": "clear",
+        "jumper_link_check": "incorrect",
+        "board_check": "ok"
+      },
+      "basis": "6-5 p31 remedy 5: 'Check position of input jumper links (see Section 4-11).' A configuration setting, not a fault injection.",
+      "flags": [
+        "cause_from_remedy: the cause is implied by the remedy, not stated",
+        "cause_from_remedy: section 6-5 has no cause column; the row key is the remedy text verbatim"
+      ],
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    {
+      "row_id": "miller-21",
+      "case_id": "miller-05",
+      "symptom": "Low, high, or erratic wire speed.",
+      "cause": "Have Factory Authorized Service Agent check main control board.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Main Control Board",
+        "field": "fault",
+        "value": "faulty",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "wire_speed": "erratic"
+      },
+      "tests": {
+        "panel_settings_check": "correct",
+        "drive_roll_check": "correct",
+        "tension_check": "ok",
+        "liner_tip_check": "clear",
+        "jumper_link_check": "correct",
+        "board_check": "faulty"
+      },
+      "basis": "6-5 p31 remedy 6: 'Have Factory Authorized Service Agent check main control board.'",
+      "flags": [
+        "cause_from_remedy: the cause is implied by the remedy, not stated",
+        "service-agent check; no control-board contract in v1, so this row fails as unmappable at run time",
+        "cause_from_remedy: section 6-5 has no cause column; the row key is the remedy text verbatim"
+      ],
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    {
+      "row_id": "miller-22",
+      "case_id": "miller-06",
+      "symptom": "Excessive Spatter",
+      "cause": "Wire feed speed too high.",
+      "category": "settings",
+      "fault": null,
+      "observables": {
+        "weld_quality": "spatter",
+        "gas_flow@gun": "normal"
+      },
+      "tests": {
+        "wire_feed_speed_check": "too_high",
+        "voltage_setting_check": "correct",
+        "stickout_check": "ok",
+        "workpiece_clean_check": "clean",
+        "gas_flow_check": "ok",
+        "wire_clean_check": "clean"
+      },
+      "basis": "8-8 p41: 'Wire feed speed too high.'",
+      "flags": [],
+      "source_pages": [
+        45
+      ],
+      "source_table": "8-8 Troubleshooting"
+    },
+    {
+      "row_id": "miller-23",
+      "case_id": "miller-06",
+      "symptom": "Excessive Spatter",
+      "cause": "Voltage too high.",
+      "category": "settings",
+      "fault": null,
+      "observables": {
+        "weld_quality": "spatter",
+        "gas_flow@gun": "normal"
+      },
+      "tests": {
+        "wire_feed_speed_check": "correct",
+        "voltage_setting_check": "too_high",
+        "stickout_check": "ok",
+        "workpiece_clean_check": "clean",
+        "gas_flow_check": "ok",
+        "wire_clean_check": "clean"
+      },
+      "basis": "8-8 p41: 'Voltage too high.'",
+      "flags": [],
+      "source_pages": [
+        45
+      ],
+      "source_table": "8-8 Troubleshooting"
+    },
+    {
+      "row_id": "miller-24",
+      "case_id": "miller-06",
+      "symptom": "Excessive Spatter",
+      "cause": "Electrode extension (stickout) too long.",
+      "category": "settings",
+      "fault": null,
+      "observables": {
+        "weld_quality": "spatter",
+        "gas_flow@gun": "normal"
+      },
+      "tests": {
+        "wire_feed_speed_check": "correct",
+        "voltage_setting_check": "correct",
+        "stickout_check": "too_long",
+        "workpiece_clean_check": "clean",
+        "gas_flow_check": "ok",
+        "wire_clean_check": "clean"
+      },
+      "basis": "8-8 p41: 'Electrode extension (stickout) too long.'",
+      "flags": [],
+      "source_pages": [
+        45
+      ],
+      "source_table": "8-8 Troubleshooting"
+    },
+    {
+      "row_id": "miller-25",
+      "case_id": "miller-06",
+      "symptom": "Excessive Spatter",
+      "cause": "Workpiece dirty.",
+      "category": "technique",
+      "fault": null,
+      "observables": {
+        "weld_quality": "spatter",
+        "gas_flow@gun": "normal"
+      },
+      "tests": {
+        "wire_feed_speed_check": "correct",
+        "voltage_setting_check": "correct",
+        "stickout_check": "ok",
+        "workpiece_clean_check": "dirty",
+        "gas_flow_check": "ok",
+        "wire_clean_check": "clean"
+      },
+      "basis": "8-8 p41: 'Workpiece dirty.'",
+      "flags": [],
+      "source_pages": [
+        45
+      ],
+      "source_table": "8-8 Troubleshooting"
+    },
+    {
+      "row_id": "miller-26",
+      "case_id": "miller-06",
+      "symptom": "Excessive Spatter",
+      "cause": "Insufficient shielding gas at welding arc.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "MIG Gun",
+        "field": "gas_flow",
+        "value": "low",
+        "kind": "parameter"
+      },
+      "observables": {
+        "weld_quality": "spatter",
+        "gas_flow@gun": "low"
+      },
+      "tests": {
+        "wire_feed_speed_check": "correct",
+        "voltage_setting_check": "correct",
+        "stickout_check": "ok",
+        "workpiece_clean_check": "clean",
+        "gas_flow_check": "low",
+        "wire_clean_check": "clean"
+      },
+      "basis": "8-8 p41: 'Insufficient shielding gas at welding arc.'",
+      "flags": [],
+      "source_pages": [
+        45
+      ],
+      "source_table": "8-8 Troubleshooting"
+    },
+    {
+      "row_id": "miller-27",
+      "case_id": "miller-06",
+      "symptom": "Excessive Spatter",
+      "cause": "Dirty welding wire.",
+      "category": "technique",
+      "fault": null,
+      "observables": {
+        "weld_quality": "spatter",
+        "gas_flow@gun": "normal"
+      },
+      "tests": {
+        "wire_feed_speed_check": "correct",
+        "voltage_setting_check": "correct",
+        "stickout_check": "ok",
+        "workpiece_clean_check": "clean",
+        "gas_flow_check": "ok",
+        "wire_clean_check": "dirty"
+      },
+      "basis": "8-8 p41: 'Dirty welding wire.'",
+      "flags": [],
+      "source_pages": [
+        45
+      ],
+      "source_table": "8-8 Troubleshooting"
+    },
+    {
+      "row_id": "miller-28",
+      "case_id": "miller-07",
+      "symptom": "Porosity",
+      "cause": "Insufficient shielding gas at welding arc.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "MIG Gun",
+        "field": "gas_flow",
+        "value": "low",
+        "kind": "parameter"
+      },
+      "observables": {
+        "weld_quality": "porosity",
+        "gas_flow@gun": "low"
+      },
+      "tests": {
+        "gas_flow_check": "low",
+        "gas_type_check": "correct",
+        "wire_clean_check": "clean",
+        "workpiece_clean_check": "clean",
+        "stickout_check": "ok"
+      },
+      "basis": "8-9 p41: 'Insufficient shielding gas at welding arc.' Corrective actions include raising gas flow, removing spatter from the nozzle, checking hoses for leaks, nozzle distance and holding the gun at the end of the weld.",
+      "flags": [],
+      "source_pages": [
+        45
+      ],
+      "source_table": "8-9 Troubleshooting"
+    },
+    {
+      "row_id": "miller-29",
+      "case_id": "miller-07",
+      "symptom": "Porosity",
+      "cause": "Wrong gas.",
+      "category": "settings",
+      "fault": null,
+      "observables": {
+        "weld_quality": "porosity",
+        "gas_flow@gun": "normal"
+      },
+      "tests": {
+        "gas_flow_check": "ok",
+        "gas_type_check": "wrong",
+        "wire_clean_check": "clean",
+        "workpiece_clean_check": "clean",
+        "stickout_check": "ok"
+      },
+      "basis": "8-9 p41: 'Wrong gas.'",
+      "flags": [],
+      "source_pages": [
+        45
+      ],
+      "source_table": "8-9 Troubleshooting"
+    },
+    {
+      "row_id": "miller-30",
+      "case_id": "miller-07",
+      "symptom": "Porosity",
+      "cause": "Dirty welding wire.",
+      "category": "technique",
+      "fault": null,
+      "observables": {
+        "weld_quality": "porosity",
+        "gas_flow@gun": "normal"
+      },
+      "tests": {
+        "gas_flow_check": "ok",
+        "gas_type_check": "correct",
+        "wire_clean_check": "dirty",
+        "workpiece_clean_check": "clean",
+        "stickout_check": "ok"
+      },
+      "basis": "8-9 p41: 'Dirty welding wire.'",
+      "flags": [],
+      "source_pages": [
+        45
+      ],
+      "source_table": "8-9 Troubleshooting"
+    },
+    {
+      "row_id": "miller-31",
+      "case_id": "miller-07",
+      "symptom": "Porosity",
+      "cause": "Workpiece dirty.",
+      "category": "technique",
+      "fault": null,
+      "observables": {
+        "weld_quality": "porosity",
+        "gas_flow@gun": "normal"
+      },
+      "tests": {
+        "gas_flow_check": "ok",
+        "gas_type_check": "correct",
+        "wire_clean_check": "clean",
+        "workpiece_clean_check": "dirty",
+        "stickout_check": "ok"
+      },
+      "basis": "8-9 p41: 'Workpiece dirty.'",
+      "flags": [],
+      "source_pages": [
+        45
+      ],
+      "source_table": "8-9 Troubleshooting"
+    },
+    {
+      "row_id": "miller-32",
+      "case_id": "miller-07",
+      "symptom": "Porosity",
+      "cause": "Welding wire extends too far out of nozzle.",
+      "category": "settings",
+      "fault": null,
+      "observables": {
+        "weld_quality": "porosity",
+        "gas_flow@gun": "normal"
+      },
+      "tests": {
+        "gas_flow_check": "ok",
+        "gas_type_check": "correct",
+        "wire_clean_check": "clean",
+        "workpiece_clean_check": "clean",
+        "stickout_check": "too_long"
+      },
+      "basis": "8-9 p41: 'Welding wire extends too far out of nozzle.'",
+      "flags": [],
+      "source_pages": [
+        45
+      ],
+      "source_table": "8-9 Troubleshooting"
+    },
+    {
+      "row_id": "miller-33",
+      "case_id": "miller-08",
+      "symptom": "Excessive Penetration",
+      "cause": "Excessive heat input.",
+      "category": "settings",
+      "fault": null,
+      "observables": {
+        "weld_quality": "excess_penetration"
+      },
+      "tests": {
+        "heat_input_check": "too_high"
+      },
+      "basis": "8-10 p41: 'Excessive heat input.'",
+      "flags": [],
+      "source_pages": [
+        45
+      ],
+      "source_table": "8-10 Troubleshooting"
+    },
+    {
+      "row_id": "miller-34",
+      "case_id": "miller-09",
+      "symptom": "Lack Of Penetration",
+      "cause": "Improper joint preparation.",
+      "category": "technique",
+      "fault": null,
+      "observables": {
+        "weld_quality": "lack_of_penetration"
+      },
+      "tests": {
+        "joint_prep_check": "improper",
+        "technique_check": "ok",
+        "heat_input_check": "correct"
+      },
+      "basis": "8-11 p42: 'Improper joint preparation.'",
+      "flags": [],
+      "source_pages": [
+        46
+      ],
+      "source_table": "8-11 Troubleshooting"
+    },
+    {
+      "row_id": "miller-35",
+      "case_id": "miller-09",
+      "symptom": "Lack Of Penetration",
+      "cause": "Improper weld technique.",
+      "category": "technique",
+      "fault": null,
+      "observables": {
+        "weld_quality": "lack_of_penetration"
+      },
+      "tests": {
+        "joint_prep_check": "ok",
+        "technique_check": "improper",
+        "heat_input_check": "correct"
+      },
+      "basis": "8-11 p42: 'Improper weld technique.'",
+      "flags": [],
+      "source_pages": [
+        46
+      ],
+      "source_table": "8-11 Troubleshooting"
+    },
+    {
+      "row_id": "miller-36",
+      "case_id": "miller-09",
+      "symptom": "Lack Of Penetration",
+      "cause": "Insufficient heat input.",
+      "category": "settings",
+      "fault": null,
+      "observables": {
+        "weld_quality": "lack_of_penetration"
+      },
+      "tests": {
+        "joint_prep_check": "ok",
+        "technique_check": "ok",
+        "heat_input_check": "too_low"
+      },
+      "basis": "8-11 p42: 'Insufficient heat input.'",
+      "flags": [],
+      "source_pages": [
+        46
+      ],
+      "source_table": "8-11 Troubleshooting"
+    },
+    {
+      "row_id": "miller-37",
+      "case_id": "miller-10",
+      "symptom": "Incomplete Fusion",
+      "cause": "Workpiece dirty.",
+      "category": "technique",
+      "fault": null,
+      "observables": {
+        "weld_quality": "incomplete_fusion"
+      },
+      "tests": {
+        "workpiece_clean_check": "dirty",
+        "heat_input_check": "correct",
+        "technique_check": "ok"
+      },
+      "basis": "8-12 p42: 'Workpiece dirty.'",
+      "flags": [
+        "the weld_quality value incomplete_fusion is vocabulary wording for the manual's defined defect ('failure of weld metal to fuse completely with base metal or a preceding weld bead'); it is distinct from lack_of_penetration on purpose"
+      ],
+      "source_pages": [
+        46
+      ],
+      "source_table": "8-12 Troubleshooting"
+    },
+    {
+      "row_id": "miller-38",
+      "case_id": "miller-10",
+      "symptom": "Incomplete Fusion",
+      "cause": "Insufficient heat input.",
+      "category": "settings",
+      "fault": null,
+      "observables": {
+        "weld_quality": "incomplete_fusion"
+      },
+      "tests": {
+        "workpiece_clean_check": "clean",
+        "heat_input_check": "too_low",
+        "technique_check": "ok"
+      },
+      "basis": "8-12 p42: 'Insufficient heat input.'",
+      "flags": [
+        "weld_quality value as for miller-37 — vocabulary wording for the manual's defined defect, distinct from lack_of_penetration"
+      ],
+      "source_pages": [
+        46
+      ],
+      "source_table": "8-12 Troubleshooting"
+    },
+    {
+      "row_id": "miller-39",
+      "case_id": "miller-10",
+      "symptom": "Incomplete Fusion",
+      "cause": "Improper welding technique.",
+      "category": "technique",
+      "fault": null,
+      "observables": {
+        "weld_quality": "incomplete_fusion"
+      },
+      "tests": {
+        "workpiece_clean_check": "clean",
+        "heat_input_check": "correct",
+        "technique_check": "improper"
+      },
+      "basis": "8-12 p42: 'Improper welding technique.'",
+      "flags": [
+        "weld_quality value as for miller-37 — vocabulary wording for the manual's defined defect, distinct from lack_of_penetration"
+      ],
+      "source_pages": [
+        46
+      ],
+      "source_table": "8-12 Troubleshooting"
+    },
+    {
+      "row_id": "miller-40",
+      "case_id": "miller-11",
+      "symptom": "Burn-Through",
+      "cause": "Excessive heat input.",
+      "category": "settings",
+      "fault": null,
+      "observables": {
+        "weld_quality": "burn_through"
+      },
+      "tests": {
+        "heat_input_check": "too_high"
+      },
+      "basis": "8-13 p42: 'Excessive heat input.'",
+      "flags": [],
+      "source_pages": [
+        46
+      ],
+      "source_table": "8-13 Troubleshooting"
+    },
+    {
+      "row_id": "miller-41",
+      "case_id": "miller-12",
+      "symptom": "Waviness Of Bead",
+      "cause": "Welding wire extends too far out of nozzle.",
+      "category": "settings",
+      "fault": null,
+      "observables": {
+        "weld_quality": "wavy"
+      },
+      "tests": {
+        "stickout_check": "too_long",
+        "technique_check": "ok"
+      },
+      "basis": "8-14 p43: 'Welding wire extends too far out of nozzle.'",
+      "flags": [],
+      "source_pages": [
+        47
+      ],
+      "source_table": "8-14 Troubleshooting"
+    },
+    {
+      "row_id": "miller-42",
+      "case_id": "miller-12",
+      "symptom": "Waviness Of Bead",
+      "cause": "Unsteady hand.",
+      "category": "technique",
+      "fault": null,
+      "observables": {
+        "weld_quality": "wavy"
+      },
+      "tests": {
+        "stickout_check": "ok",
+        "technique_check": "improper"
+      },
+      "basis": "8-14 p43: 'Unsteady hand.'",
+      "flags": [
+        "the technique_check value improper covers hand steadiness here; the manual's fix is to support the hand on a solid surface or use two hands"
+      ],
+      "source_pages": [
+        47
+      ],
+      "source_table": "8-14 Troubleshooting"
+    },
+    {
+      "row_id": "miller-43",
+      "case_id": "miller-13",
+      "symptom": "Distortion",
+      "cause": "Excessive heat input.",
+      "category": "settings",
+      "fault": null,
+      "observables": {
+        "weld_quality": "distorted"
+      },
+      "tests": {
+        "heat_input_check": "too_high"
+      },
+      "basis": "8-15 p43: 'Excessive heat input.'",
+      "flags": [],
+      "source_pages": [
+        47
+      ],
+      "source_table": "8-15 Troubleshooting"
+    },
+    {
+      "row_id": "miller-44",
+      "case_id": "miller-14",
+      "symptom": "Wire feed motor operates, but wire does not feed.",
+      "cause": "Too little pressure on wire feed rolls.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Wire Feed Rolls",
+        "field": "tension",
+        "value": "low",
+        "kind": "parameter"
+      },
+      "observables": {
+        "wire_out@tip": "absent",
+        "motor_motion": "normal",
+        "wire_out@feeder": "low"
+      },
+      "tests": {
+        "tension_check": "low",
+        "drive_roll_check": "correct",
+        "spool_brake_check": "ok",
+        "gun_restriction_check": "clear"
+      },
+      "basis": "8-17 p44: 'Too little pressure on wire feed rolls.' Motor operates is the symptom premise, so motor_motion stays normal.",
+      "flags": [
+        "print_artifact_repaired: doubled-letter overprint in the Problem cell repaired ('Wire feed motor operates, but wwiirree ddooeess nnoott ffeeeedd..' -> 'Wire feed motor operates, but wire does not feed.')"
+      ],
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    {
+      "row_id": "miller-45",
+      "case_id": "miller-14",
+      "symptom": "Wire feed motor operates, but wire does not feed.",
+      "cause": "Incorrect wire feed rolls.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Wire Feed Rolls",
+        "field": "groove_matches",
+        "value": false,
+        "kind": "parameter"
+      },
+      "observables": {
+        "wire_out@tip": "absent",
+        "motor_motion": "normal",
+        "wire_out@feeder": "low"
+      },
+      "tests": {
+        "tension_check": "ok",
+        "drive_roll_check": "wrong_size",
+        "spool_brake_check": "ok",
+        "gun_restriction_check": "clear"
+      },
+      "basis": "8-17 p44: 'Incorrect wire feed rolls.'",
+      "flags": [],
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    {
+      "row_id": "miller-46",
+      "case_id": "miller-14",
+      "symptom": "Wire feed motor operates, but wire does not feed.",
+      "cause": "Wire spool brake pressure too high.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Wire Spool",
+        "field": "brake_pressure",
+        "value": "high",
+        "kind": "parameter"
+      },
+      "observables": {
+        "wire_out@tip": "absent",
+        "motor_motion": "normal",
+        "wire_out@feeder": "low"
+      },
+      "tests": {
+        "tension_check": "ok",
+        "drive_roll_check": "correct",
+        "spool_brake_check": "too_high",
+        "gun_restriction_check": "clear"
+      },
+      "basis": "8-17 p44: 'Wire spool brake pressure too high.'",
+      "flags": [],
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    {
+      "row_id": "miller-47",
+      "case_id": "miller-14",
+      "symptom": "Wire feed motor operates, but wire does not feed.",
+      "cause": "Restriction in the gun and/or assembly.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "MIG Gun",
+        "field": "fault",
+        "value": "restricted",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "wire_out@tip": "absent",
+        "motor_motion": "normal",
+        "wire_out@feeder": "normal"
+      },
+      "tests": {
+        "tension_check": "ok",
+        "drive_roll_check": "correct",
+        "spool_brake_check": "ok",
+        "gun_restriction_check": "restricted"
+      },
+      "basis": "8-17 p44: 'Restriction in the gun and/or assembly.' The feeder still feeds, so wire_out@feeder stays normal and the wire is absent only at the tip — the port-qualified observable that separates this cause from the roll/spool causes (OMNIPRO case-1 cause-c pattern).",
+      "flags": [],
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    {
+      "row_id": "miller-48",
+      "case_id": "miller-15",
+      "symptom": "Wire curling up in front of the wire feed rolls (bird nesting).",
+      "cause": "Too much pressure on wire feed rolls.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Wire Feed Rolls",
+        "field": "tension",
+        "value": "high",
+        "kind": "parameter"
+      },
+      "observables": {
+        "wire_out@feeder": "high",
+        "wire_out@tip": "absent"
+      },
+      "tests": {
+        "tension_check": "high",
+        "liner_tip_size_check": "correct",
+        "connector_seated_check": "yes",
+        "liner_check": "clear"
+      },
+      "basis": "8-17 p44: 'Too much pressure on wire feed rolls.'",
+      "flags": [
+        "inference: the feeder output value (high) is the bird's-nest precursor — excess pressure drives wire faster than the tip passes it, so it piles up at the feeder (OMNIPRO case-3 pattern)",
+        "print_artifact_repaired: doubled-letter overprint in the Problem cell repaired ('Wire curling up in front of the wwiirree ffeeeedd rroollllss ((bbiirrdd nneessttiinngg))..' -> 'Wire curling up in front of the wire feed rolls (bird nesting).')"
+      ],
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    {
+      "row_id": "miller-49",
+      "case_id": "miller-15",
+      "symptom": "Wire curling up in front of the wire feed rolls (bird nesting).",
+      "cause": "Incorrect cable liner or gun contact tip size.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Cable Liner",
+        "field": "size_matches",
+        "value": false,
+        "kind": "parameter"
+      },
+      "observables": {
+        "wire_out@feeder": "low",
+        "wire_out@tip": "absent"
+      },
+      "tests": {
+        "tension_check": "ok",
+        "liner_tip_size_check": "wrong_size",
+        "connector_seated_check": "yes",
+        "liner_check": "wrong_size"
+      },
+      "basis": "8-17 p44: 'Incorrect cable liner or gun contact tip size.'",
+      "flags": [
+        "two parts in one cause (liner or tip size); the liner direction is recorded, the tip direction would read the same size check"
+      ],
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    {
+      "row_id": "miller-50",
+      "case_id": "miller-15",
+      "symptom": "Wire curling up in front of the wire feed rolls (bird nesting).",
+      "cause": "Gun end not inserted into drive housing properly.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "MIG Gun",
+        "field": "connector_seated",
+        "value": false,
+        "kind": "parameter"
+      },
+      "observables": {
+        "wire_out@feeder": "low",
+        "wire_out@tip": "absent"
+      },
+      "tests": {
+        "tension_check": "ok",
+        "liner_tip_size_check": "correct",
+        "connector_seated_check": "no",
+        "liner_check": "clear"
+      },
+      "basis": "8-17 p44: 'Gun end not inserted into drive housing properly.'",
+      "flags": [],
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    {
+      "row_id": "miller-51",
+      "case_id": "miller-15",
+      "symptom": "Wire curling up in front of the wire feed rolls (bird nesting).",
+      "cause": "Dirty or damaged (kinked) liner.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Gun Liner",
+        "field": "fault",
+        "value": "damaged",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "wire_out@feeder": "low",
+        "wire_out@tip": "absent"
+      },
+      "tests": {
+        "tension_check": "ok",
+        "liner_tip_size_check": "correct",
+        "connector_seated_check": "yes",
+        "liner_check": "damaged"
+      },
+      "basis": "8-17 p44: 'Dirty or damaged (kinked) liner.'",
+      "flags": [
+        "two directions in one cause (dirty or damaged); damaged is recorded, dirty would read liner clogged"
+      ],
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    {
+      "row_id": "miller-52",
+      "case_id": "miller-16",
+      "symptom": "Wire feeds, but no gas flows.",
+      "cause": "Gas cylinder empty.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Gas Cylinder",
+        "field": "level",
+        "value": "empty",
+        "kind": "parameter"
+      },
+      "observables": {
+        "gas_flow@gun": "absent",
+        "wire_out@tip": "normal"
+      },
+      "tests": {
+        "bottle_level_check": "empty",
+        "nozzle_check": "clear",
+        "gas_valve_check": "open",
+        "gas_line_check": "clear",
+        "solenoid_check": "ok",
+        "input_voltage_check": "normal"
+      },
+      "basis": "8-17 p44: 'Gas cylinder empty.'",
+      "flags": [],
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    {
+      "row_id": "miller-53",
+      "case_id": "miller-16",
+      "symptom": "Wire feeds, but no gas flows.",
+      "cause": "Gas nozzle plugged.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Gas Nozzle",
+        "field": "fault",
+        "value": "plugged",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "gas_flow@gun": "absent",
+        "wire_out@tip": "normal"
+      },
+      "tests": {
+        "bottle_level_check": "ok",
+        "nozzle_check": "plugged",
+        "gas_valve_check": "open",
+        "gas_line_check": "clear",
+        "solenoid_check": "ok",
+        "input_voltage_check": "normal"
+      },
+      "basis": "8-17 p44: 'Gas nozzle plugged.'",
+      "flags": [],
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    {
+      "row_id": "miller-54",
+      "case_id": "miller-16",
+      "symptom": "Wire feeds, but no gas flows.",
+      "cause": "Gas cylinder valve not open or flowmeter not adjusted.",
+      "category": "settings",
+      "fault": null,
+      "observables": {
+        "gas_flow@gun": "absent",
+        "wire_out@tip": "normal"
+      },
+      "tests": {
+        "bottle_level_check": "ok",
+        "nozzle_check": "clear",
+        "gas_valve_check": "closed",
+        "gas_line_check": "clear",
+        "solenoid_check": "ok",
+        "input_voltage_check": "normal"
+      },
+      "basis": "8-17 p44: 'Gas cylinder valve not open or flowmeter not adjusted.' A valve/flowmeter setting, not a fault injection.",
+      "flags": [
+        "two directions in one cause (valve closed or flowmeter unadjusted); the valve direction is recorded"
+      ],
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    {
+      "row_id": "miller-55",
+      "case_id": "miller-16",
+      "symptom": "Wire feeds, but no gas flows.",
+      "cause": "Restriction in gas line.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Gas Hose",
+        "field": "fault",
+        "value": "restricted",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "gas_flow@gun": "absent",
+        "wire_out@tip": "normal"
+      },
+      "tests": {
+        "bottle_level_check": "ok",
+        "nozzle_check": "clear",
+        "gas_valve_check": "open",
+        "gas_line_check": "restricted",
+        "solenoid_check": "ok",
+        "input_voltage_check": "normal"
+      },
+      "basis": "8-17 p44: 'Restriction in gas line.'",
+      "flags": [],
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    {
+      "row_id": "miller-56",
+      "case_id": "miller-16",
+      "symptom": "Wire feeds, but no gas flows.",
+      "cause": "Loose or broken wires to gas solenoid.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Gas Solenoid Valve",
+        "field": "fault",
+        "value": "wiring_fault",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "gas_flow@gun": "absent",
+        "wire_out@tip": "normal"
+      },
+      "tests": {
+        "bottle_level_check": "ok",
+        "nozzle_check": "clear",
+        "gas_valve_check": "open",
+        "gas_line_check": "clear",
+        "solenoid_check": "faulty",
+        "input_voltage_check": "normal"
+      },
+      "basis": "8-17 p44: 'Loose or broken wires to gas solenoid.'",
+      "flags": [
+        "indistinguishable from miller-57 on the modelled tests: both read solenoid faulty; they differ only in the fault injected (wiring vs valve) — recorded honestly, as in the OMNIPRO vocabulary case-6 note"
+      ],
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    {
+      "row_id": "miller-57",
+      "case_id": "miller-16",
+      "symptom": "Wire feeds, but no gas flows.",
+      "cause": "Gas solenoid valve not operating.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Gas Solenoid Valve",
+        "field": "fault",
+        "value": "faulty",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "gas_flow@gun": "absent",
+        "wire_out@tip": "normal"
+      },
+      "tests": {
+        "bottle_level_check": "ok",
+        "nozzle_check": "clear",
+        "gas_valve_check": "open",
+        "gas_line_check": "clear",
+        "solenoid_check": "faulty",
+        "input_voltage_check": "normal"
+      },
+      "basis": "8-17 p44: 'Gas solenoid valve not operating.'",
+      "flags": [
+        "indistinguishable from miller-56 on the modelled tests: both read solenoid faulty; they differ only in the fault injected (wiring vs valve)"
+      ],
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    {
+      "row_id": "miller-58",
+      "case_id": "miller-16",
+      "symptom": "Wire feeds, but no gas flows.",
+      "cause": "Incorrect primary voltage connected to welding power source.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Input Power",
+        "field": "input_voltage",
+        "value": "wrong",
+        "kind": "parameter"
+      },
+      "observables": {
+        "gas_flow@gun": "absent",
+        "wire_out@tip": "normal"
+      },
+      "tests": {
+        "bottle_level_check": "ok",
+        "nozzle_check": "clear",
+        "gas_valve_check": "open",
+        "gas_line_check": "clear",
+        "solenoid_check": "ok",
+        "input_voltage_check": "wrong"
+      },
+      "basis": "8-17 p44: 'Incorrect primary voltage connected to welding power source.'",
+      "flags": [
+        "grouping_as_printed: the table groups this row under 'Wire feeds, but no gas flows.' (its Problem cell is empty); a primary-voltage cause under a no-gas-flow problem is surprising but is what the PDF prints — see parser flags",
+        "grouping_as_printed: this row's Problem cell is empty, so the table groups it under 'Wire feeds, but no gas flows.'; a primary-voltage cause under a no-gas-flow problem is surprising but is what the PDF prints"
+      ],
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    {
+      "row_id": "miller-59",
+      "case_id": "miller-17",
+      "symptom": "Welding arc not stable.",
+      "cause": "Wire slipping in drive rolls.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Wire Feed Rolls",
+        "field": "tension",
+        "value": "low",
+        "kind": "parameter"
+      },
+      "observables": {
+        "arc": "unstable",
+        "wire_out@tip": "low"
+      },
+      "tests": {
+        "tension_check": "low",
+        "liner_tip_size_check": "correct",
+        "voltage_setting_check": "correct",
+        "cable_connection_check": "tight",
+        "gun_condition_check": "ok"
+      },
+      "basis": "8-17 p45: 'Wire slipping in drive rolls.'",
+      "flags": [],
+      "source_pages": [
+        49
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    {
+      "row_id": "miller-60",
+      "case_id": "miller-17",
+      "symptom": "Welding arc not stable.",
+      "cause": "Wrong size gun liner or contact tip.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "Cable Liner",
+        "field": "size_matches",
+        "value": false,
+        "kind": "parameter"
+      },
+      "observables": {
+        "arc": "unstable",
+        "wire_out@tip": "low"
+      },
+      "tests": {
+        "tension_check": "ok",
+        "liner_tip_size_check": "wrong_size",
+        "voltage_setting_check": "correct",
+        "cable_connection_check": "tight",
+        "gun_condition_check": "ok"
+      },
+      "basis": "8-17 p45: 'Wrong size gun liner or contact tip.'",
+      "flags": [
+        "two parts in one cause (liner or tip size); the liner direction is recorded, the tip direction would read the same size check"
+      ],
+      "source_pages": [
+        49
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    {
+      "row_id": "miller-61",
+      "case_id": "miller-17",
+      "symptom": "Welding arc not stable.",
+      "cause": "Incorrect voltage setting for selected wire feed speed on welding power source.",
+      "category": "settings",
+      "fault": null,
+      "observables": {
+        "arc": "unstable",
+        "wire_out@tip": "normal"
+      },
+      "tests": {
+        "tension_check": "ok",
+        "liner_tip_size_check": "correct",
+        "voltage_setting_check": "incorrect",
+        "cable_connection_check": "tight",
+        "gun_condition_check": "ok"
+      },
+      "basis": "8-17 p45: 'Incorrect voltage setting for selected wire feed speed on welding power source.' A setting mismatch, not a fault injection.",
+      "flags": [
+        "the manual states a mismatch between voltage and wire feed speed, not a direction; the voltage_setting value incorrect records the mismatch"
+      ],
+      "source_pages": [
+        49
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    {
+      "row_id": "miller-62",
+      "case_id": "miller-17",
+      "symptom": "Welding arc not stable.",
+      "cause": "Loose connections at the gun weld cable or work cable.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "MIG Gun",
+        "field": "fault",
+        "value": "loose",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "arc": "unstable",
+        "wire_out@tip": "normal"
+      },
+      "tests": {
+        "tension_check": "ok",
+        "liner_tip_size_check": "correct",
+        "voltage_setting_check": "correct",
+        "cable_connection_check": "loose",
+        "gun_condition_check": "ok"
+      },
+      "basis": "8-17 p45: 'Loose connections at the gun weld cable or work cable.'",
+      "flags": [
+        "two cables in one cause (gun weld cable or work cable); the gun-cable direction is recorded — the work-cable direction would read as a ground fault, and this case carries no ground observable"
+      ],
+      "source_pages": [
+        49
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    {
+      "row_id": "miller-63",
+      "case_id": "miller-17",
+      "symptom": "Welding arc not stable.",
+      "cause": "Gun in poor shape or loose connection inside gun.",
+      "category": "twin_expressible",
+      "fault": {
+        "component": "MIG Gun",
+        "field": "fault",
+        "value": "damaged",
+        "kind": "fault_state"
+      },
+      "observables": {
+        "arc": "unstable",
+        "wire_out@tip": "normal"
+      },
+      "tests": {
+        "tension_check": "ok",
+        "liner_tip_size_check": "correct",
+        "voltage_setting_check": "correct",
+        "cable_connection_check": "tight",
+        "gun_condition_check": "damaged"
+      },
+      "basis": "8-17 p45: 'Gun in poor shape or loose connection inside gun.'",
+      "flags": [
+        "two directions in one cause (poor shape or loose connection inside); damaged is recorded, loose would read gun_condition loose"
+      ],
+      "source_pages": [
+        49
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    }
+  ],
+  "answer_key": {
+    "miller-01": {
+      "cause": "Be sure line disconnect switch is On (see Section 4-13).",
+      "corrective_action": "Be sure line disconnect switch is On (see Section 4-13).",
+      "remedy_source": "remedy_column_only",
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    "miller-02": {
+      "cause": "Replace building line fuse or reset circuit breaker if open (see Section 4-13).",
+      "corrective_action": "Replace building line fuse or reset circuit breaker if open (see Section 4-13).",
+      "remedy_source": "remedy_column_only",
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    "miller-03": {
+      "cause": "Secure gun trigger connections (see welding gun Owner’s Manual).",
+      "corrective_action": "Secure gun trigger connections (see welding gun Owner’s Manual).",
+      "remedy_source": "remedy_column_only",
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    "miller-04": {
+      "cause": "HL.P 001 appears on meters. Turn power switch off and back on, if HL.P 001 appears on meters again, have Factory Authorized Service Agent check unit.",
+      "corrective_action": "HL.P 001 appears on meters. Turn power switch off and back on, if HL.P 001 appears on meters again, have Factory Authorized Service Agent check unit.",
+      "remedy_source": "remedy_column_only",
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    "miller-05": {
+      "cause": "HL.P 002 appears on meters. Thermistor T is detecting an overheating condition. Wait for unit to cool allowing the fan to run. After unit is cool, if HL.P 002 message remains, have Factory Authorized Service Agent check for an open Thermistor T (see Section 6-2).",
+      "corrective_action": "HL.P 002 appears on meters. Thermistor T is detecting an overheating condition. Wait for unit to cool allowing the fan to run. After unit is cool, if HL.P 002 message remains, have Factory Authorized Service Agent check for an open Thermistor T (see Section 6-2).",
+      "remedy_source": "remedy_column_only",
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    "miller-06": {
+      "cause": "HL.P 004 appears on meters. Reset message by releasing the trigger or removing stuck wire causing short circuit (see Section 5-2) . If message remains, have Factory Authorized Service Agent check for shorted trigger leads.",
+      "corrective_action": "HL.P 004 appears on meters. Reset message by releasing the trigger or removing stuck wire causing short circuit (see Section 5-2) . If message remains, have Factory Authorized Service Agent check for shorted trigger leads.",
+      "remedy_source": "remedy_column_only",
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    "miller-07": {
+      "cause": "Have Factory Authorized Service Agent check Power switch.",
+      "corrective_action": "Have Factory Authorized Service Agent check Power switch.",
+      "remedy_source": "remedy_column_only",
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    "miller-08": {
+      "cause": "Have Factory Authorized Service Agent check all board connections and main control board.",
+      "corrective_action": "Have Factory Authorized Service Agent check all board connections and main control board.",
+      "remedy_source": "remedy_column_only",
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    "miller-09": {
+      "cause": "Connect work clamp to get good metal to metal contact.",
+      "corrective_action": "Connect work clamp to get good metal to metal contact.",
+      "remedy_source": "remedy_column_only",
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    "miller-10": {
+      "cause": "Replace contact tip (see welding gun Owner’s Manual.",
+      "corrective_action": "Replace contact tip (see welding gun Owner’s Manual.",
+      "remedy_source": "remedy_column_only",
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    "miller-11": {
+      "cause": "HL.P 003 appears on meters, have Factory Authorized Service Agent check main control board and main rectifier.",
+      "corrective_action": "HL.P 003 appears on meters, have Factory Authorized Service Agent check main control board and main rectifier.",
+      "remedy_source": "remedy_column_only",
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    "miller-12": {
+      "cause": "Connect unit to proper input voltage or check for low line voltage (see Section 4-13).",
+      "corrective_action": "Connect unit to proper input voltage or check for low line voltage (see Section 4-13).",
+      "remedy_source": "remedy_column_only",
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    "miller-13": {
+      "cause": "Check input voltage jumper links and correct position if necessary (see Section 4-11).",
+      "corrective_action": "Check input voltage jumper links and correct position if necessary (see Section 4-11).",
+      "remedy_source": "remedy_column_only",
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    "miller-14": {
+      "cause": "Have Factory Authorized Service Agent check main control board.",
+      "corrective_action": "Have Factory Authorized Service Agent check main control board.",
+      "remedy_source": "remedy_column_only",
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    "miller-15": {
+      "cause": "Have Factory Authorized Service Agent check fan-on-demand circuit.",
+      "corrective_action": "Have Factory Authorized Service Agent check fan-on-demand circuit.",
+      "remedy_source": "remedy_column_only",
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    "miller-16": {
+      "cause": "Readjust front panel settings (see Section 5-1).",
+      "corrective_action": "Readjust front panel settings (see Section 5-1).",
+      "remedy_source": "remedy_column_only",
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    "miller-17": {
+      "cause": "Change to correct size drive rolls (see Section 6-3).",
+      "corrective_action": "Change to correct size drive rolls (see Section 6-3).",
+      "remedy_source": "remedy_column_only",
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    "miller-18": {
+      "cause": "Readjust drive roll pressure (see Section 4-14).",
+      "corrective_action": "Readjust drive roll pressure (see Section 4-14).",
+      "remedy_source": "remedy_column_only",
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    "miller-19": {
+      "cause": "Replace inlet guide, contact tip, and/or liner if necessary (see welding gun Owner’s Manual).",
+      "corrective_action": "Replace inlet guide, contact tip, and/or liner if necessary (see welding gun Owner’s Manual).",
+      "remedy_source": "remedy_column_only",
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    "miller-20": {
+      "cause": "Check position of input jumper links (see Section 4-11).",
+      "corrective_action": "Check position of input jumper links (see Section 4-11).",
+      "remedy_source": "remedy_column_only",
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    "miller-21": {
+      "cause": "Have Factory Authorized Service Agent check main control board.",
+      "corrective_action": "Have Factory Authorized Service Agent check main control board.",
+      "remedy_source": "remedy_column_only",
+      "source_pages": [
+        35
+      ],
+      "source_table": "6-5 Troubleshooting (p. 31)"
+    },
+    "miller-22": {
+      "cause": "Wire feed speed too high.",
+      "corrective_action": "Select lower wire feed speed.",
+      "remedy_source": "corrective_actions_column",
+      "source_pages": [
+        45
+      ],
+      "source_table": "8-8 Troubleshooting"
+    },
+    "miller-23": {
+      "cause": "Voltage too high.",
+      "corrective_action": "Select lower voltage range.",
+      "remedy_source": "corrective_actions_column",
+      "source_pages": [
+        45
+      ],
+      "source_table": "8-8 Troubleshooting"
+    },
+    "miller-24": {
+      "cause": "Electrode extension (stickout) too long.",
+      "corrective_action": "Use shorter electrode extension (stickout).",
+      "remedy_source": "corrective_actions_column",
+      "source_pages": [
+        45
+      ],
+      "source_table": "8-8 Troubleshooting"
+    },
+    "miller-25": {
+      "cause": "Workpiece dirty.",
+      "corrective_action": "Remove all grease, oil, moisture, rust, paint, undercoating, and dirt from work surface before welding.",
+      "remedy_source": "corrective_actions_column",
+      "source_pages": [
+        45
+      ],
+      "source_table": "8-8 Troubleshooting"
+    },
+    "miller-26": {
+      "cause": "Insufficient shielding gas at welding arc.",
+      "corrective_action": "Increase flow of shielding gas at regulator/flowmeter and/or prevent drafts near welding arc.",
+      "remedy_source": "corrective_actions_column",
+      "source_pages": [
+        45
+      ],
+      "source_table": "8-8 Troubleshooting"
+    },
+    "miller-27": {
+      "cause": "Dirty welding wire.",
+      "corrective_action": "Use clean, dry welding wire. Eliminate pickup of oil or lubricant on welding wire from feeder or liner.",
+      "remedy_source": "corrective_actions_column",
+      "source_pages": [
+        45
+      ],
+      "source_table": "8-8 Troubleshooting"
+    },
+    "miller-28": {
+      "cause": "Insufficient shielding gas at welding arc.",
+      "corrective_action": "Increase flow of shielding gas at regulator/flowmeter and/or prevent drafts near welding arc. Remove spatter from gun nozzle. Check gas hoses for leaks. Place nozzle 1/4 to 1/2 in (6-13 mm) from workpiece. Hold gun near bead at end of weld until molten metal solidifies.",
+      "remedy_source": "corrective_actions_column",
+      "source_pages": [
+        45
+      ],
+      "source_table": "8-9 Troubleshooting"
+    },
+    "miller-29": {
+      "cause": "Wrong gas.",
+      "corrective_action": "Use welding grade shielding gas; change to different gas.",
+      "remedy_source": "corrective_actions_column",
+      "source_pages": [
+        45
+      ],
+      "source_table": "8-9 Troubleshooting"
+    },
+    "miller-30": {
+      "cause": "Dirty welding wire.",
+      "corrective_action": "Use clean, dry welding wire. Eliminate pick up of oil or lubricant on welding wire from feeder or liner.",
+      "remedy_source": "corrective_actions_column",
+      "source_pages": [
+        45
+      ],
+      "source_table": "8-9 Troubleshooting"
+    },
+    "miller-31": {
+      "cause": "Workpiece dirty.",
+      "corrective_action": "Remove all grease, oil, moisture, rust, paint, coatings, and dirt from work surface before welding. Use a more highly deoxidizing welding wire (contact supplier).",
+      "remedy_source": "corrective_actions_column",
+      "source_pages": [
+        45
+      ],
+      "source_table": "8-9 Troubleshooting"
+    },
+    "miller-32": {
+      "cause": "Welding wire extends too far out of nozzle.",
+      "corrective_action": "Be sure welding wire extends not more than 1/2 in (13 mm) beyond nozzle.",
+      "remedy_source": "corrective_actions_column",
+      "source_pages": [
+        45
+      ],
+      "source_table": "8-9 Troubleshooting"
+    },
+    "miller-33": {
+      "cause": "Excessive heat input.",
+      "corrective_action": "Select lower voltage range and reduce wire feed speed. Increase travel speed.",
+      "remedy_source": "corrective_actions_column",
+      "source_pages": [
+        45
+      ],
+      "source_table": "8-10 Troubleshooting"
+    },
+    "miller-34": {
+      "cause": "Improper joint preparation.",
+      "corrective_action": "Material too thick. Joint preparation and design must provide access to bottom of groove while maintaining proper welding wire extension and arc characteristics.",
+      "remedy_source": "corrective_actions_column",
+      "source_pages": [
+        46
+      ],
+      "source_table": "8-11 Troubleshooting"
+    },
+    "miller-35": {
+      "cause": "Improper weld technique.",
+      "corrective_action": "Maintain normal gun angle of 0 to 15 degrees to achieve maximum penetration. Keep arc on leading edge of weld puddle. Be sure welding wire extends not more than 1/2 in (13 mm) beyond nozzle.",
+      "remedy_source": "corrective_actions_column",
+      "source_pages": [
+        46
+      ],
+      "source_table": "8-11 Troubleshooting"
+    },
+    "miller-36": {
+      "cause": "Insufficient heat input.",
+      "corrective_action": "Select higher wire feed speed and/or select higher voltage range. Reduce travel speed.",
+      "remedy_source": "corrective_actions_column",
+      "source_pages": [
+        46
+      ],
+      "source_table": "8-11 Troubleshooting"
+    },
+    "miller-37": {
+      "cause": "Workpiece dirty.",
+      "corrective_action": "Remove all grease, oil, moisture, rust, paint, undercoating, and dirt from work surface before welding.",
+      "remedy_source": "corrective_actions_column",
+      "source_pages": [
+        46
+      ],
+      "source_table": "8-12 Troubleshooting"
+    },
+    "miller-38": {
+      "cause": "Insufficient heat input.",
+      "corrective_action": "Select higher voltage range and/or adjust wire feed speed.",
+      "remedy_source": "corrective_actions_column",
+      "source_pages": [
+        46
+      ],
+      "source_table": "8-12 Troubleshooting"
+    },
+    "miller-39": {
+      "cause": "Improper welding technique.",
+      "corrective_action": "Place stringer bead in proper location(s) at joint during welding. Adjust work angle or widen groove to access bottom during welding. Momentarily hold arc on groove side walls when using weaving technique. Keep arc on leading edge of weld puddle. Use correct gun angle of 0 to 15 degrees.",
+      "remedy_source": "corrective_actions_column",
+      "source_pages": [
+        46
+      ],
+      "source_table": "8-12 Troubleshooting"
+    },
+    "miller-40": {
+      "cause": "Excessive heat input.",
+      "corrective_action": "Select lower voltage range and reduce wire feed speed. Increase and/or maintain steady travel speed.",
+      "remedy_source": "corrective_actions_column",
+      "source_pages": [
+        46
+      ],
+      "source_table": "8-13 Troubleshooting"
+    },
+    "miller-41": {
+      "cause": "Welding wire extends too far out of nozzle.",
+      "corrective_action": "Be sure welding wire extends not more than 1/2 in (13 mm) beyond nozzle.",
+      "remedy_source": "corrective_actions_column",
+      "source_pages": [
+        47
+      ],
+      "source_table": "8-14 Troubleshooting"
+    },
+    "miller-42": {
+      "cause": "Unsteady hand.",
+      "corrective_action": "Support hand on solid surface or use two hands.",
+      "remedy_source": "corrective_actions_column",
+      "source_pages": [
+        47
+      ],
+      "source_table": "8-14 Troubleshooting"
+    },
+    "miller-43": {
+      "cause": "Excessive heat input.",
+      "corrective_action": "Use restraint (clamp) to hold base metal in position. Make tack welds along joint before starting welding operation. Select lower voltage range and/or reduce wire feed speed. Increase travel speed. Weld in small segments and allow cooling between welds.",
+      "remedy_source": "corrective_actions_column",
+      "source_pages": [
+        47
+      ],
+      "source_table": "8-15 Troubleshooting"
+    },
+    "miller-44": {
+      "cause": "Too little pressure on wire feed rolls.",
+      "corrective_action": "Increase pressure setting on wire feed rolls.",
+      "remedy_source": "remedy_column",
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    "miller-45": {
+      "cause": "Incorrect wire feed rolls.",
+      "corrective_action": "Check size stamped on wire feed rolls, replace to match wire size and type if necessary.",
+      "remedy_source": "remedy_column",
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    "miller-46": {
+      "cause": "Wire spool brake pressure too high.",
+      "corrective_action": "Decrease brake pressure on wire spool.",
+      "remedy_source": "remedy_column",
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    "miller-47": {
+      "cause": "Restriction in the gun and/or assembly.",
+      "corrective_action": "Check and replace cable, gun, and contact tip if damaged. Check size of contact tip and cable liner, replace if necessary.",
+      "remedy_source": "remedy_column",
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    "miller-48": {
+      "cause": "Too much pressure on wire feed rolls.",
+      "corrective_action": "Decrease pressure setting on wire feed rolls.",
+      "remedy_source": "remedy_column",
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    "miller-49": {
+      "cause": "Incorrect cable liner or gun contact tip size.",
+      "corrective_action": "Check size of contact tip and check cable liner length and diameter, replace if necessary.",
+      "remedy_source": "remedy_column",
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    "miller-50": {
+      "cause": "Gun end not inserted into drive housing properly.",
+      "corrective_action": "Loosen gun securing bolt in drive housing and push gun end into housing just enough so it does not touch wire feed rolls.",
+      "remedy_source": "remedy_column",
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    "miller-51": {
+      "cause": "Dirty or damaged (kinked) liner.",
+      "corrective_action": "Replace liner.",
+      "remedy_source": "remedy_column",
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    "miller-52": {
+      "cause": "Gas cylinder empty.",
+      "corrective_action": "Replace empty gas cylinder.",
+      "remedy_source": "remedy_column",
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    "miller-53": {
+      "cause": "Gas nozzle plugged.",
+      "corrective_action": "Clean or replace gas nozzle.",
+      "remedy_source": "remedy_column",
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    "miller-54": {
+      "cause": "Gas cylinder valve not open or flowmeter not adjusted.",
+      "corrective_action": "Open gas valve at cylinder and adjust flow rate.",
+      "remedy_source": "remedy_column",
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    "miller-55": {
+      "cause": "Restriction in gas line.",
+      "corrective_action": "Check gas hose between flowmeter and wire feeder, and gas hose in gun and cable assembly.",
+      "remedy_source": "remedy_column",
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    "miller-56": {
+      "cause": "Loose or broken wires to gas solenoid.",
+      "corrective_action": "Have Factory Authorized Service Agent repair wiring.",
+      "remedy_source": "remedy_column",
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    "miller-57": {
+      "cause": "Gas solenoid valve not operating.",
+      "corrective_action": "Have Factory Authorized Service Agent replace gas solenoid valve.",
+      "remedy_source": "remedy_column",
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    "miller-58": {
+      "cause": "Incorrect primary voltage connected to welding power source.",
+      "corrective_action": "Check primary voltage and relink welding power source for correct voltage.",
+      "remedy_source": "remedy_column",
+      "source_pages": [
+        48
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    "miller-59": {
+      "cause": "Wire slipping in drive rolls.",
+      "corrective_action": "Adjust pressure setting on wire feed rolls. Replace worn drive rolls if necessary.",
+      "remedy_source": "remedy_column",
+      "source_pages": [
+        49
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    "miller-60": {
+      "cause": "Wrong size gun liner or contact tip.",
+      "corrective_action": "Match liner and contact tip to wire size and type.",
+      "remedy_source": "remedy_column",
+      "source_pages": [
+        49
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    "miller-61": {
+      "cause": "Incorrect voltage setting for selected wire feed speed on welding power source.",
+      "corrective_action": "Readjust welding parameters.",
+      "remedy_source": "remedy_column",
+      "source_pages": [
+        49
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    "miller-62": {
+      "cause": "Loose connections at the gun weld cable or work cable.",
+      "corrective_action": "Check and tighten all connections.",
+      "remedy_source": "remedy_column",
+      "source_pages": [
+        49
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    },
+    "miller-63": {
+      "cause": "Gun in poor shape or loose connection inside gun.",
+      "corrective_action": "Repair or replace gun as necessary.",
+      "remedy_source": "remedy_column",
+      "source_pages": [
+        49
+      ],
+      "source_table": "8-17 Troubleshooting Guide for Semiautomatic Welding Equipment"
+    }
+  },
+  "denominator": {
+    "total": 63,
+    "twin_expressible": 38,
+    "settings": 16,
+    "technique": 9,
+    "cross_reference": 0,
+    "unmappable": 0
+  }
+}

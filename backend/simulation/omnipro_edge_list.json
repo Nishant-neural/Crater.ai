@@ -1,0 +1,494 @@
+{
+  "created": "2026-11-13",
+  "edges": [
+    {
+      "cases": [
+        "omni-06",
+        "omni-09"
+      ],
+      "fault_override": null,
+      "id": "edge:cord-to-button",
+      "note": "The Input Power Cord (A1 source) supplies the Reset Button (A2 breaker). The cord's power_out is the mains power entering the welder.",
+      "source_component": "Input Power Cord",
+      "source_port": "power_out",
+      "sources": [
+        "owner-manual p7 (Power Input 120/240 VAC)",
+        "owner-manual p43 case 6 (breaker/GFCI, plug rating, cord)"
+      ],
+      "target_component": "Reset Button",
+      "target_port": "power_in",
+      "value_map": "identity"
+    },
+    {
+      "cases": [
+        "omni-06"
+      ],
+      "fault_override": null,
+      "id": "edge:button-to-welder",
+      "note": "The Reset Button (circuit breaker) is in series between the cord and the Welder. When it trips, the Welder gets no power.",
+      "source_component": "Reset Button",
+      "source_port": "power_out",
+      "sources": [
+        "owner-manual p43 case 6 cause 4 (Circuit breaker has tripped due to high input amperage)"
+      ],
+      "target_component": "Welder",
+      "target_port": "power_in",
+      "value_map": "identity"
+    },
+    {
+      "cases": [
+        "omni-05",
+        "omni-06",
+        "omni-09"
+      ],
+      "fault_override": null,
+      "id": "edge:welder-to-trigger",
+      "note": "The Welder's switched power feeds the Trigger (A2 switch). The trigger is the switch that enables the welding circuit.",
+      "source_component": "Welder",
+      "source_port": "power_out",
+      "sources": [
+        "owner-manual p43 case 5 (Welder Does Not Function When Switched On)",
+        "owner-manual p45 wiring schematic"
+      ],
+      "target_component": "Trigger",
+      "target_port": "power_in",
+      "value_map": "identity"
+    },
+    {
+      "cases": [
+        "omni-05",
+        "omni-06",
+        "omni-09"
+      ],
+      "fault_override": null,
+      "id": "edge:welder-to-motor",
+      "note": "The Welder's switched power feeds the Wire Feed Motor (A3 converter). The motor's power_in is the mains-derived power; its enable_in comes from the Trigger.",
+      "source_component": "Welder",
+      "source_port": "power_out",
+      "sources": [
+        "owner-manual p45 wiring schematic (WIRE FEED M)"
+      ],
+      "target_component": "Wire Feed Motor",
+      "target_port": "power_in",
+      "value_map": "identity"
+    },
+    {
+      "cases": [
+        "omni-05",
+        "omni-06"
+      ],
+      "fault_override": null,
+      "id": "edge:welder-to-lcd",
+      "note": "The Welder's switched power feeds the LCD Display (A11 interface). No power -> the LCD is blank.",
+      "source_component": "Welder",
+      "source_port": "power_out",
+      "sources": [
+        "owner-manual p43 case 6 (LCD Display Does Not Light When Welder is Switched On)"
+      ],
+      "target_component": "LCD Display",
+      "target_port": "power_in",
+      "value_map": "identity"
+    },
+    {
+      "cases": [
+        "omni-05",
+        "omni-07",
+        "omni-09"
+      ],
+      "fault_override": null,
+      "id": "edge:trigger-to-gun",
+      "note": "The Trigger's switched power is the welding current that flows through the MIG Gun (A8 conductor) to the Contact Tip and the arc. The trigger is the contactor for the welding circuit.",
+      "source_component": "Trigger",
+      "source_port": "power_out",
+      "sources": [
+        "owner-manual p17 step 27 (press and hold the Trigger to feed the wire)",
+        "owner-manual p43 case 5 cause 3 (faulty Trigger -> welder does not function)",
+        "owner-manual p45 wiring schematic"
+      ],
+      "target_component": "MIG Gun",
+      "target_port": "energy_in",
+      "value_map": "identity"
+    },
+    {
+      "cases": [
+        "omni-01",
+        "omni-05"
+      ],
+      "fault_override": null,
+      "id": "edge:trigger-to-motor",
+      "note": "Trigger is the A2 switch instance in the proof twin; the relay itself is exercised by the same A2 rows in unit tests and enters the required chain with cases 5/6.",
+      "source_component": "Trigger",
+      "source_port": "power_out",
+      "sources": [
+        "owner-manual p17 step 27 (press and hold Trigger to feed the wire)",
+        "owner-manual p43 case 5 cause 3 (faulty or improperly connected Trigger -> welder does not function)",
+        "owner-manual p45 wiring schematic"
+      ],
+      "target_component": "Wire Feed Motor",
+      "target_port": "enable_in",
+      "value_map": "switch_to_enable"
+    },
+    {
+      "cases": [
+        "omni-02",
+        "omni-03"
+      ],
+      "fault_override": null,
+      "id": "edge:spool-to-feeder",
+      "note": "The Wire Spool (A9 storage) supplies wire to the Wire Feed Mechanism (A4 transmission). The feeder's A4 rows read material_in (3C: T-material-low / T-material-absent), so a tangled spool starves the feeder.",
+      "source_component": "Wire Spool",
+      "source_port": "material_out",
+      "sources": [
+        "owner-manual p10 (Wire Spool installation: spool unwinds clockwise to feed wire; Wingnut secures the spool over the Spool Spindle)",
+        "owner-manual p42 case 2 cause 4 (tangled spool -> wire stops)"
+      ],
+      "target_component": "Wire Feed Mechanism",
+      "target_port": "material_in",
+      "value_map": "identity"
+    },
+    {
+      "cases": [
+        "omni-01",
+        "omni-02"
+      ],
+      "fault_override": null,
+      "id": "edge:motor-to-feeder",
+      "note": "First link of the case-1 required O5 chain (Amendments Fix 3: motor -> feeder -> wire).",
+      "required_chain": [
+        "omni-01"
+      ],
+      "source_component": "Wire Feed Motor",
+      "source_port": "motion_out",
+      "sources": [
+        "owner-manual p42 case 1 symptom premise (Wire Feed Motor Runs but Wire Does Not Feed Properly \u2014 the motor drives the feed; the symptom is a transmission failure, not a motor failure)",
+        "owner-manual p45 wiring schematic (WIRE FEEDER / motor block)"
+      ],
+      "target_component": "Wire Feed Mechanism",
+      "target_port": "motion_in",
+      "value_map": "identity"
+    },
+    {
+      "cases": [
+        "omni-01",
+        "omni-02",
+        "omni-03"
+      ],
+      "fault_override": null,
+      "id": "edge:feeder-to-liner",
+      "note": "The Wire Feed Mechanism feeds wire into the liner assembly (A8 conductor). The value map is material_to_liner (3C oracle fix): a low or high feeder output does not enter the liner \u2014 low = the wire slips and never reaches the tip (cases 1/2: feeder low, tip absent, arc absent; p42 case 1, p17 step 27 wire stops = tension too low); high = excess pressure piles the wire up at the feeder (case 3(a)). Only a normal feed enters the liner. The 3B feeder->gun fault override is retired; the A8 rows carry the gun/tip/arc path once the wire is in the liner.",
+      "required_chain": [
+        "omni-01"
+      ],
+      "source_component": "Wire Feed Mechanism",
+      "source_port": "material_out",
+      "sources": [
+        "owner-manual p13 steps 13-14 (Gun Cable Connector inserted into the socket on the Wire Feed mechanism \u2014 the wire path from feeder into the gun)",
+        "owner-manual p42 case 1 (arc=absent for every cause: a low feed means no wire at the tip)",
+        "owner-manual p17 step 27 (wire stops = tension too low \u2014 the wire does not advance)",
+        "owner-manual p42 case 2 cause 2 (gun liner clogged or worn -> wire stops)"
+      ],
+      "target_component": "liner assembly",
+      "target_port": "material_in",
+      "value_map": "material_to_liner"
+    },
+    {
+      "cases": [
+        "omni-02",
+        "omni-03"
+      ],
+      "fault_override": null,
+      "id": "edge:liner-to-gun",
+      "note": "The liner assembly (inside the gun cable) delivers wire to the MIG Gun (A8 conductor). A clogged, damaged or wrong-size liner blocks the wire here.",
+      "source_component": "liner assembly",
+      "source_port": "material_out",
+      "sources": [
+        "owner-manual p42 case 2 cause 2 (Gun liner is clogged or worn)",
+        "owner-manual p42 case 2 cause 3 (Gun liner is too small for welding wire)",
+        "owner-manual p42 case 3 cause 4 (Damaged liner)"
+      ],
+      "target_component": "MIG Gun",
+      "target_port": "material_in",
+      "value_map": "identity"
+    },
+    {
+      "cases": [
+        "omni-03",
+        "omni-04",
+        "omni-07"
+      ],
+      "fault_override": null,
+      "id": "edge:gun-to-tip",
+      "note": "The MIG Gun delivers wire to the Contact Tip (A8 conductor), the last stop before the arc. A wrong-size or worn tip is what the tip's A8 rows model.",
+      "source_component": "MIG Gun",
+      "source_port": "material_out",
+      "sources": [
+        "owner-manual p42 case 3 cause 2 (Incorrect Contact Tip size)",
+        "owner-manual p42 case 7 cause 2 (Improperly sized Contact Tip)",
+        "owner-manual p41 (Contact Tip inspection)"
+      ],
+      "target_component": "Contact Tip",
+      "target_port": "material_in",
+      "value_map": "identity"
+    },
+    {
+      "cases": [
+        "omni-04",
+        "omni-05",
+        "omni-07",
+        "omni-09"
+      ],
+      "fault_override": null,
+      "id": "edge:gun-to-tip-energy",
+      "note": "The MIG Gun carries the welding current to the Contact Tip. The tip's energy_out is what ignites the arc; a worn or wrong-size tip passes no (or degraded) energy.",
+      "source_component": "MIG Gun",
+      "source_port": "energy_out",
+      "sources": [
+        "owner-manual p45 wiring schematic",
+        "owner-manual p42 case 7 (wire feeds but arc does not ignite \u2014 the tip conducts the welding current)"
+      ],
+      "target_component": "Contact Tip",
+      "target_port": "energy_in",
+      "value_map": "identity"
+    },
+    {
+      "cases": [
+        "omni-04",
+        "omni-08"
+      ],
+      "fault_override": null,
+      "id": "edge:gun-to-arc-gas",
+      "note": "The MIG Gun delivers shielding gas to the welding arc (A7 load). A connector not fully inserted leaks gas here (p13 step 14 note).",
+      "source_component": "MIG Gun",
+      "source_port": "gas_out",
+      "sources": [
+        "owner-manual p13 step 14 note (a connector not fully inserted leaks gas, preventing shielding gas from reaching the welding arc)",
+        "owner-manual p43 case 8 (shielding gas flow)"
+      ],
+      "target_component": "Welding Arc",
+      "target_port": "gas_in",
+      "value_map": "identity"
+    },
+    {
+      "cases": [
+        "omni-01",
+        "omni-02",
+        "omni-03",
+        "omni-04",
+        "omni-07"
+      ],
+      "fault_override": null,
+      "id": "edge:tip-to-arc",
+      "note": "The Contact Tip delivers wire to the welding arc (A7 load). No wire at the tip -> no arc.",
+      "required_chain": [
+        "omni-01"
+      ],
+      "source_component": "Contact Tip",
+      "source_port": "material_out",
+      "sources": [
+        "owner-manual p42 case 1 (arc=absent for every cause: no wire at the tip means no arc)",
+        "owner-manual p42 case 7 (wire feeds, but arc does not ignite)"
+      ],
+      "target_component": "Welding Arc",
+      "target_port": "material_in",
+      "value_map": "identity"
+    },
+    {
+      "cases": [
+        "omni-04",
+        "omni-05",
+        "omni-07",
+        "omni-09"
+      ],
+      "fault_override": null,
+      "id": "edge:tip-to-arc-energy",
+      "note": "The Contact Tip delivers the welding current to the arc. The tip is the arc's energy input; a worn or wrong-size tip passes no energy -> no arc.",
+      "source_component": "Contact Tip",
+      "source_port": "energy_out",
+      "sources": [
+        "owner-manual p45 wiring schematic",
+        "owner-manual p42 case 7 cause 3 (Excessively worn Contact Tip)"
+      ],
+      "target_component": "Welding Arc",
+      "target_port": "energy_in",
+      "value_map": "identity"
+    },
+    {
+      "cases": [
+        "omni-04",
+        "omni-07"
+      ],
+      "fault_override": null,
+      "id": "edge:ground-to-arc",
+      "note": "The Ground Clamp (A8 conductor) is the arc's return path. A poor ground degrades the return (energy low -> the arc is unstable); a fully open ground gives no arc.",
+      "source_component": "Ground Clamp",
+      "source_port": "energy_out",
+      "sources": [
+        "owner-manual p42 case 4 cause 8 (Poor connection with workpiece)",
+        "owner-manual p43 case 7 cause 1 (Improper ground connection)"
+      ],
+      "target_component": "Welding Arc",
+      "target_port": "ground_in",
+      "value_map": "identity"
+    },
+    {
+      "cases": [
+        "omni-08"
+      ],
+      "fault_override": null,
+      "id": "edge:bottle-to-valve",
+      "note": "The Shielding Gas Bottle (A9 storage) supplies gas to the gas valve (A10) through its optional supply output. An empty bottle supplies nothing.",
+      "source_component": "Shielding Gas Bottle",
+      "source_port": "supply_out",
+      "sources": [
+        "owner-manual p43 case 8 cause 1 (Shielding gas bottle is empty)"
+      ],
+      "target_component": "Gas Valve",
+      "target_port": "fluid_in",
+      "value_map": "identity"
+    },
+    {
+      "cases": [
+        "omni-08"
+      ],
+      "fault_override": null,
+      "id": "edge:valve-to-gun",
+      "note": "The gas valve (A10) delivers shielding gas to the MIG Gun (A8 gas_in). The gun's gas_out is what the arc's gas_in reads.",
+      "source_component": "Gas Valve",
+      "source_port": "fluid_out",
+      "sources": [
+        "owner-manual p43 case 8 cause 2 (Not enough or too much shielding gas)"
+      ],
+      "target_component": "MIG Gun",
+      "target_port": "gas_in",
+      "value_map": "identity"
+    },
+    {
+      "cases": [
+        "omni-01",
+        "omni-04",
+        "omni-07",
+        "omni-09"
+      ],
+      "fault_override": null,
+      "id": "edge:arc-to-welder",
+      "note": "The welding arc (A7 load) is on the Welder (machine root). The arc observable's port owner is the Welder, so this link gives the arc a proper port owner on the machine root (the 3B gun->arc link is retired; the A7 rows now produce the arc value).",
+      "required_chain": [
+        "omni-01"
+      ],
+      "source_component": "Welding Arc",
+      "source_port": "effect_out",
+      "sources": [
+        "owner-manual p42 case 1 (arc=absent for every cause)",
+        "owner-manual p42 case 7 (wire feeds, but arc does not ignite)"
+      ],
+      "target_component": "Welder",
+      "target_port": "arc",
+      "value_map": "arc_identity"
+    }
+  ],
+  "product": {
+    "manual": "owner-manual.pdf (Item 57812), 48 pp",
+    "manufacturer": "Harbor Freight",
+    "model": "OMNIPRO 220"
+  },
+  "reference_chain_full": [
+    {
+      "component": "Input Power Cord",
+      "label": "mains",
+      "note": "A1 source \u2014 3C (cases 5/6/9)"
+    },
+    {
+      "component": "Reset Button",
+      "label": "breaker",
+      "note": "A2 switch \u2014 3C (case 6)"
+    },
+    {
+      "component": "Trigger",
+      "label": "trigger",
+      "note": "A2 switch \u2014 in the proof twin as the motor enable and the welding-current contactor"
+    },
+    {
+      "component": "Relay",
+      "label": "relay",
+      "note": "A2 switch \u2014 3C (cases 5/6); no separate relay entity is named in the OMNIPRO manual's case-1 path"
+    },
+    {
+      "component": "Wire Feed Motor",
+      "label": "motor",
+      "note": "A3 converter \u2014 3B"
+    },
+    {
+      "component": "Wire Feed Mechanism",
+      "label": "feeder",
+      "note": "A4 transmission \u2014 3B/3C"
+    },
+    {
+      "component": "liner assembly",
+      "label": "liner",
+      "note": "A8 conductor \u2014 3C (cases 2/3)"
+    },
+    {
+      "component": "MIG Gun",
+      "label": "wire",
+      "note": "A8 conductor \u2014 link-carried in 3B, A8 rows in 3C"
+    },
+    {
+      "component": "Contact Tip",
+      "label": "tip",
+      "note": "A8 conductor \u2014 3C (cases 3/4/7)"
+    },
+    {
+      "component": "Welding Arc",
+      "label": "arc",
+      "note": "A7 load \u2014 link-carried in 3B, A7 rows in 3C"
+    },
+    {
+      "component": "Welder",
+      "label": "machine",
+      "note": "A1 source (power stage) + machine root \u2014 3C"
+    }
+  ],
+  "review": {
+    "note": "Human-confirmed edges (design v3, Amendments Fix 2): each edge is recorded here with its source (manual wiring-diagram or procedure page), not inferred by the diagram handler. The diagram handler (schematic pages -> topology) is the follow-up that replaces hand-confirmed edges; it is not built in 3C. Invent NO edges: an edge not in this list does not exist for the compiler. v3 (3C oracle fix): 20 edges \u2014 the power chain (cord -> button -> welder -> trigger/motor/lcd), the wire chain (spool -> feeder -> liner -> gun -> tip -> arc), the gas chain (bottle -> valve -> gun -> arc), the ground return (ground -> arc), and the arc -> welder link. The feeder->liner edge carries the material_to_liner threshold (a low/high feeder output does not enter the liner), restoring the 3B material_to_tip reading on the new edge \u2014 the 3C oracle measured that the A8 rows pass low through, so the threshold belongs on the link. The 3B feeder->gun fault override and the gun->arc threshold link stay retired (A8/A7 rows take over once the wire is in the liner).",
+    "reviewed_at": null,
+    "reviewer": null,
+    "status": "draft-for-review"
+  },
+  "scope_note": "The full Appendix A reference chain is mains -> breaker -> trigger -> relay -> motor -> feeder -> wire -> arc. The case-1 required O5 chain (Amendments Fix 3) starts at the motor: motor -> feeder -> wire. Relay and source enter the required chain with cases 5 and 6 (3C). This list records the full reference chain; the 3C proof twin uses the whole chain (power, wire, gas, ground).",
+  "status": "reviewed-edge-list",
+  "value_map_notes": {
+    "arc_identity": "The arc value (absent/low/normal/unstable, A7 'arc' domain) is copied unchanged from the Welding Arc to the Welder's arc port, which is the observable's port owner.",
+    "switch_to_enable": "A closed switch passes power (electrical normal); the motor's enable input is a signal (high = asserted, v3 \u00a73 signal domain). The link maps electrical normal -> signal high. 3C adds low -> low: a switch with a low input passes the degraded power through as a low enable, and the converter's enable-low row (M2c) turns the motor off. The 3B material_to_tip / material_to_arc threshold maps are retired in 3C v2 and replaced by material_to_liner (this version): the threshold now sits on the feeder->liner edge, not the feeder->gun edge, because the 3C wire path goes feeder -> liner -> gun -> tip -> arc.",
+    "material_to_liner": "3C oracle fix (restores the 3B material_to_tip threshold on the new feeder->liner edge): a low or high feeder output does not reach the liner. Low = the wire slips / feeds too little to advance through the liner (cases 1/2: feeder low, tip absent, arc absent); high = excess pressure piles the wire up at the feeder (case 3(a): feeder high, tip absent). Only a normal feed enters the liner. The 3C v2 note retired this threshold on the assumption that the A8 rows carry it \u2014 the oracle measured that they do not (A8 c-material-low passes low through), so it is restored here as a reviewed link map. NOTE: case 9(a)/(b) (input voltage low / cord gauge wrong) also produce a low feeder output, and the threshold makes their arc read absent where the vocabulary expects low (a weak arc with the wire reaching the tip slowly). The twin cannot distinguish a slipping feeder from a slow motor on the feeder's material_out alone; the threshold is the majority reading (6 rows) and case 9(a)/(b) are documented O2 mismatches on the arc port. See PHASE3C_BUILD_NOTES.md."
+  },
+  "value_maps": {
+    "arc_identity": {
+      "absent": "absent",
+      "low": "low",
+      "normal": "normal",
+      "unknown": "unknown",
+      "unstable": "unstable"
+    },
+    "identity": {
+      "absent": "absent",
+      "high": "high",
+      "low": "low",
+      "normal": "normal",
+      "unknown": "unknown"
+    },
+    "switch_to_enable": {
+      "absent": "absent",
+      "low": "low",
+      "normal": "high",
+      "unknown": "unknown"
+    },
+    "material_to_liner": {
+      "absent": "absent",
+      "low": "absent",
+      "normal": "normal",
+      "high": "absent",
+      "unknown": "unknown"
+    }
+  },
+  "version": "omnipro-edge-list-v3"
+}

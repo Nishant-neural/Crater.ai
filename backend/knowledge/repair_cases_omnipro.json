@@ -1,0 +1,695 @@
+{
+  "cases": [
+    {
+      "causes": [
+        {
+          "cause": "Insufficient wire feed pressure.",
+          "components": [
+            "Feed Tensioner"
+          ],
+          "fix": "Increase wire feed pressure properly. Follow step 27 on page 17.",
+          "test": "Feed wire against wood 2-3 inches away; the wire should bend, not stop.",
+          "fault_injection": {
+            "instance": "Wire Feed Mechanism",
+            "parameter": "tension",
+            "value": "low"
+          }
+        },
+        {
+          "cause": "Incorrect wire feed roller size.",
+          "components": [
+            "Feed Roller"
+          ],
+          "fix": "Flip roll to correct size. Follow the Feed Roller instructions on page 12.",
+          "test": "Check the Feed Roller groove matches the wire size marked on the spool.",
+          "fault_injection": {
+            "instance": "Wire Feed Mechanism",
+            "parameter": "groove_matches",
+            "value": false
+          }
+        },
+        {
+          "cause": "Damaged MIG Gun, cable, or liner assembly.",
+          "components": [
+            "MIG Gun",
+            "cable",
+            "liner assembly"
+          ],
+          "fix": "Have a qualified technician inspect these parts and replace as necessary.",
+          "test": "Inspect the MIG Gun, cable, and liner for damage.",
+          "fault_injection": {
+            "instance": "MIG Gun",
+            "fault_state": "open"
+          }
+        },
+        {
+          "cause": "Feed Tensioner is too tight.",
+          "components": [
+            "Feed Tensioner"
+          ],
+          "fix": "Loosen Feed Tensioner so it applies only enough pressure to prevent continued spinning after the Gun Trigger is released.",
+          "test": "Release the Gun Trigger and observe whether the wire continues to spin afterwards.",
+          "fault_injection": {
+            "instance": "Wire Feed Mechanism",
+            "parameter": "tension",
+            "value": "high"
+          }
+        }
+      ],
+      "id": "omni-01-wire-not-feeding",
+      "library_types": [
+        "wire_feeder",
+        "dc_motor"
+      ],
+      "rank": 1,
+      "symptom": "Wire Feed Motor Runs but Wire Does Not Feed Properly",
+      "table_page": 42,
+      "tier1_pages": [
+        42,
+        17,
+        12,
+        7
+      ]
+    },
+    {
+      "causes": [
+        {
+          "cause": "Gun cable is severely bent and Wire Feed mechanism cannot feed wire.",
+          "components": [
+            "MIG Gun"
+          ],
+          "fix": "Straighten Gun cable.",
+          "test": "Straighten the cable and check whether the wire feeds.",
+          "fault_injection": {
+            "instance": "MIG Gun",
+            "fault_state": "bent"
+          }
+        },
+        {
+          "cause": "Gun liner is clogged or worn.",
+          "components": [
+            "liner assembly"
+          ],
+          "fix": "Check gun liner for obstruction. Replace if necessary.",
+          "test": "Check the liner for obstruction or wear.",
+          "fault_injection": {
+            "instance": "liner assembly",
+            "fault_state": "clogged"
+          }
+        },
+        {
+          "cause": "Gun liner is too small for welding wire being used.",
+          "components": [
+            "liner assembly"
+          ],
+          "fix": "Check that gun liner is correct size for wire.",
+          "test": "Compare the liner size with the wire diameter.",
+          "fault_injection": {
+            "instance": "liner assembly",
+            "parameter": "size_matches",
+            "value": false
+          }
+        },
+        {
+          "cause": "Wire is tangled on the spool.",
+          "components": [
+            "Wire Spool"
+          ],
+          "fix": "Check wire for cross winding or tangled spool.",
+          "test": "Inspect the spool for tangled or cross-wound wire.",
+          "fault_injection": {
+            "instance": "Wire Spool",
+            "fault_state": "tangled"
+          }
+        },
+        {
+          "cause": "Wire is not making contact with Feed Rollers.",
+          "components": [
+            "Feed Roller"
+          ],
+          "fix": "Check Feed Rollers and ensure correct groove for wire diameter is being used.",
+          "test": "Check the Feed Roller groove matches the wire diameter.",
+          "fault_injection": {
+            "instance": "Wire Feed Mechanism",
+            "parameter": "groove_matches",
+            "value": false
+          }
+        },
+        {
+          "cause": "Feed Roller is not making enough contact with wire or is crushing flux-cored wire.",
+          "components": [
+            "Feed Roller",
+            "Feed Tensioner"
+          ],
+          "fix": "Check Feed Tensioner and ensure it is set properly.",
+          "test": "Check the Feed Tensioner setting; adjust per step 27 on page 17.",
+          "fault_injection": {
+            "instance": "Wire Feed Mechanism",
+            "parameter": "tension",
+            "value": "low"
+          }
+        }
+      ],
+      "id": "omni-02-wire-stops",
+      "library_types": [
+        "wire_feeder"
+      ],
+      "rank": 2,
+      "symptom": "Wire Stops During Welding",
+      "table_page": 42,
+      "tier1_pages": [
+        42,
+        12,
+        17
+      ]
+    },
+    {
+      "causes": [
+        {
+          "cause": "Excess wire feed pressure.",
+          "components": [
+            "Feed Tensioner"
+          ],
+          "fix": "Adjust wire feed pressure properly. Follow step 27 on page 17.",
+          "test": "Feed wire against wood 2-3 inches away; the wire should bend, not stop.",
+          "fault_injection": {
+            "instance": "Wire Feed Mechanism",
+            "parameter": "tension",
+            "value": "excess"
+          }
+        },
+        {
+          "cause": "Incorrect Contact Tip size.",
+          "components": [
+            "Contact Tip"
+          ],
+          "fix": "Replace with the proper tip for wire used.",
+          "test": "Check the Contact Tip size against the wire diameter.",
+          "fault_injection": {
+            "instance": "Contact Tip",
+            "parameter": "size_matches",
+            "value": false
+          }
+        },
+        {
+          "cause": "MIG Gun Cable Connector not fully inserted into Wire Feed mechanism.",
+          "components": [
+            "MIG Gun",
+            "Wire Feed Mechanism"
+          ],
+          "fix": "Insert Gun Cable Connector properly. Follow steps 13 and 14 on page 13.",
+          "test": "Check the connector is fully inserted into the Wire Feed mechanism.",
+          "fault_injection": {
+            "instance": "MIG Gun",
+            "parameter": "connector_seated",
+            "value": false
+          }
+        },
+        {
+          "cause": "Damaged liner.",
+          "components": [
+            "liner assembly"
+          ],
+          "fix": "Have a qualified technician inspect and repair/replace as necessary.",
+          "test": "Inspect the liner for damage.",
+          "fault_injection": {
+            "instance": "liner assembly",
+            "fault_state": "damaged"
+          }
+        }
+      ],
+      "id": "omni-03-birds-nest",
+      "library_types": [
+        "wire_feeder"
+      ],
+      "rank": 3,
+      "symptom": "Wire Creates a Bird's Nest During Operation",
+      "table_page": 42,
+      "tier1_pages": [
+        42,
+        17,
+        13,
+        41,
+        7
+      ]
+    },
+    {
+      "causes": [
+        {
+          "cause": "Wire not feeding properly.",
+          "components": [
+            "Wire Feed Mechanism"
+          ],
+          "fix": "See first Troubleshooting section above (case 1).",
+          "test": "Run the case 1 checks: pressure, roller size, tensioner.",
+          "fault_injection": null
+        },
+        {
+          "cause": "Incorrect Contact Tip or liner size or excessive wear.",
+          "components": [
+            "Contact Tip",
+            "liner assembly"
+          ],
+          "fix": "Replace with the proper tip or liner size for wire used.",
+          "test": "Check tip and liner size and wear against the wire used.",
+          "fault_injection": {
+            "instance": "Contact Tip",
+            "fault_state": "worn"
+          }
+        },
+        {
+          "cause": "Incorrect wire feed speed.",
+          "components": [
+            "Wire Feed Mechanism"
+          ],
+          "fix": "Adjust wire feed speed to achieve a more stable arc.",
+          "test": "Adjust the wire feed speed and observe arc stability.",
+          "fault_injection": null
+        },
+        {
+          "cause": "Loose MIG Gun cable or ground cable.",
+          "components": [
+            "MIG Gun",
+            "Ground Clamp"
+          ],
+          "fix": "Check to ensure that all connections are tight.",
+          "test": "Check the gun and ground cable connections are tight.",
+          "fault_injection": {
+            "instance": "MIG Gun",
+            "fault_state": "loose"
+          }
+        },
+        {
+          "cause": "Damaged MIG Gun or loose connection within Gun.",
+          "components": [
+            "MIG Gun"
+          ],
+          "fix": "Have a qualified technician inspect and repair/replace as necessary.",
+          "test": "Inspect the gun and its internal connections for damage or looseness.",
+          "fault_injection": {
+            "instance": "MIG Gun",
+            "fault_state": "damaged"
+          }
+        },
+        {
+          "cause": "Incorrect polarity for process being run.",
+          "components": [
+            "Ground Clamp"
+          ],
+          "fix": "Ensure polarity is correct for operation: DCEP for MIG welding and DCEN for Flux-Cored self-shielded welding.",
+          "test": "Check polarity: DCEP for MIG, DCEN for flux-cored.",
+          "fault_injection": null
+        },
+        {
+          "cause": "Gas coverage may be insufficient or too high.",
+          "components": [
+            "MIG Gun"
+          ],
+          "fix": "Ensure gas flow rate is set according to Settings Chart. Make sure MIG Gun Cable Connector is fully inserted into Wire Feed mechanism with no O-Rings exposed.",
+          "test": "Check the gas flow per the Settings Chart and that the connector is fully inserted.",
+          "fault_injection": {
+            "instance": "MIG Gun",
+            "parameter": "gas_flow",
+            "value": "low"
+          }
+        },
+        {
+          "cause": "Poor connection with workpiece.",
+          "components": [
+            "Ground Clamp"
+          ],
+          "fix": "Check the ground clamp connection to the workpiece and machine. Ensure the MIG Gun is properly secured.",
+          "test": "Check the ground clamp contact with the workpiece.",
+          "fault_injection": {
+            "instance": "Ground Clamp",
+            "fault_state": "poor_connection"
+          }
+        }
+      ],
+      "id": "omni-04-arc-not-stable",
+      "library_types": [
+        "wire_feeder",
+        "dc_motor"
+      ],
+      "rank": 4,
+      "symptom": "Welding Arc Not Stable",
+      "table_page": 42,
+      "tier1_pages": [
+        42,
+        13,
+        41
+      ]
+    },
+    {
+      "causes": [
+        {
+          "cause": "Tripped thermal protection device.",
+          "components": [
+            "Power Switch"
+          ],
+          "fix": "Allow the unit to cool with the Power Switch ON; observe the duty cycle (page 19).",
+          "test": "Check the LCD for a thermal warning; let the unit cool with the Power Switch ON.",
+          "fault_injection": {
+            "instance": "Welder",
+            "fault_state": "thermal_trip"
+          }
+        },
+        {
+          "cause": "Circuit supplies insufficient voltage or amperage.",
+          "components": [],
+          "fix": "Check the input voltage and amperage against the Specifications table on page 7.",
+          "test": "Measure the input voltage and amperage; compare with page 7.",
+          "fault_injection": {
+            "instance": "Welder",
+            "parameter": "input_voltage",
+            "value": "very_low"
+          }
+        },
+        {
+          "cause": "Faulty or improperly connected Trigger.",
+          "components": [
+            "Trigger"
+          ],
+          "fix": "Check that the gun connection is seated; a qualified technician checks, secures, or replaces the Trigger.",
+          "test": "Check the Trigger connection is seated.",
+          "fault_injection": {
+            "instance": "Trigger",
+            "fault_state": "faulty"
+          }
+        },
+        {
+          "cause": "Low or over-voltage protection is active.",
+          "components": [
+            "Reset Button"
+          ],
+          "fix": "Check the input voltage is in range, then press the Reset Button on the back of the unit.",
+          "test": "Check the input voltage is in range, then press the Reset Button.",
+          "fault_injection": {
+            "instance": "Welder",
+            "parameter": "protection",
+            "value": "active"
+          }
+        },
+        {
+          "cause": "Incorrect mode selected.",
+          "components": [],
+          "fix": "Select the correct mode for the process being run.",
+          "test": "Check the selected mode matches the process.",
+          "fault_injection": null
+        }
+      ],
+      "id": "omni-05-does-not-function",
+      "library_types": [
+        "relay",
+        "dc_motor"
+      ],
+      "rank": 5,
+      "referenced_pages": [
+        19
+      ],
+      "symptom": "Welder Does Not Function When Switched On",
+      "table_page": 43,
+      "tier1_pages": [
+        43,
+        7
+      ]
+    },
+    {
+      "causes": [
+        {
+          "cause": "Unit not connected to outlet properly.",
+          "components": [
+            "Input Power Cord"
+          ],
+          "fix": "Connect the unit to the outlet properly.",
+          "test": "Check the plug is fully seated in the outlet.",
+          "fault_injection": {
+            "instance": "Input Power Cord",
+            "fault_state": "not_connected"
+          }
+        },
+        {
+          "cause": "Outlet is unpowered; breaker or GFCI tripped.",
+          "components": [],
+          "fix": "Determine and remedy the cause before resetting the breaker or GFCI.",
+          "test": "Check the outlet for power; check the breaker and GFCI.",
+          "fault_injection": {
+            "instance": "Input Power Cord",
+            "parameter": "power_in",
+            "value": "absent"
+          }
+        },
+        {
+          "cause": "Plug rating is wrong.",
+          "components": [],
+          "fix": "Check the plug rating against the Specifications table on page 7.",
+          "test": "Compare the plug rating with the page 7 specifications.",
+          "fault_injection": {
+            "instance": "Input Power Cord",
+            "parameter": "plug_rating",
+            "value": "wrong"
+          }
+        },
+        {
+          "cause": "Circuit breaker tripped from high input amperage.",
+          "components": [
+            "Reset Button"
+          ],
+          "fix": "Press the Reset Button.",
+          "test": "Check the breaker; press the Reset Button after remedying the cause.",
+          "fault_injection": {
+            "instance": "Reset Button",
+            "fault_state": "tripped"
+          }
+        },
+        {
+          "cause": "Input Power Cord is not seated.",
+          "components": [
+            "Input Power Cord"
+          ],
+          "fix": "Ensure the twist-lock is fully secured.",
+          "test": "Check the Input Power Cord twist-lock is fully secured.",
+          "fault_injection": {
+            "instance": "Input Power Cord",
+            "fault_state": "not_seated"
+          }
+        }
+      ],
+      "id": "omni-06-lcd-dark",
+      "library_types": [
+        "relay"
+      ],
+      "rank": 6,
+      "symptom": "LCD Display Does Not Light When Welder is Switched On",
+      "table_page": 43,
+      "tier1_pages": [
+        43,
+        7
+      ]
+    },
+    {
+      "causes": [
+        {
+          "cause": "Improper ground connection.",
+          "components": [
+            "Ground Clamp"
+          ],
+          "fix": "Check the ground clamp contact; clean the workpiece near the clamp and the weld location.",
+          "test": "Check the ground clamp contact and clean the workpiece.",
+          "fault_injection": {
+            "instance": "Ground Clamp",
+            "fault_state": "poor_connection"
+          }
+        },
+        {
+          "cause": "Improperly sized Contact Tip.",
+          "components": [
+            "Contact Tip"
+          ],
+          "fix": "Replace with a correctly sized Contact Tip.",
+          "test": "Check the Contact Tip size against the wire used.",
+          "fault_injection": {
+            "instance": "Contact Tip",
+            "parameter": "size_matches",
+            "value": false
+          }
+        },
+        {
+          "cause": "Excessively worn Contact Tip.",
+          "components": [
+            "Contact Tip"
+          ],
+          "fix": "Replace the Contact Tip if the hole is deformed or enlarged.",
+          "test": "Inspect the tip hole for deformation or enlargement.",
+          "fault_injection": {
+            "instance": "Contact Tip",
+            "fault_state": "worn"
+          }
+        },
+        {
+          "cause": "Dirty Contact Tip.",
+          "components": [
+            "Contact Tip"
+          ],
+          "fix": "Clean the Contact Tip.",
+          "test": "Inspect the tip for dirt or spatter.",
+          "fault_injection": null
+        }
+      ],
+      "id": "omni-07-no-arc",
+      "library_types": [
+        "wire_feeder"
+      ],
+      "rank": 7,
+      "symptom": "Wire Feeds, but Arc Does Not Ignite",
+      "table_page": 43,
+      "tier1_pages": [
+        43,
+        41,
+        7
+      ]
+    },
+    {
+      "causes": [
+        {
+          "cause": "Empty shielding-gas bottle.",
+          "components": [],
+          "fix": "Replace or refill the shielding-gas bottle.",
+          "test": "Check the gas bottle level.",
+          "fault_injection": {
+            "instance": "Shielding Gas Bottle",
+            "parameter": "level",
+            "value": "empty"
+          }
+        },
+        {
+          "cause": "Wrong gas flow.",
+          "components": [],
+          "fix": "Adjust the regulator to the correct gas flow.",
+          "test": "Check the gas flow at the regulator.",
+          "fault_injection": {
+            "instance": "MIG Gun",
+            "parameter": "gas_flow",
+            "value": "low"
+          }
+        },
+        {
+          "cause": "Dirty workpiece.",
+          "components": [],
+          "fix": "Clean the workpiece to bare metal.",
+          "test": "Inspect the workpiece for dirt, rust, or paint.",
+          "fault_injection": null
+        },
+        {
+          "cause": "Gun too far from workpiece.",
+          "components": [
+            "MIG Gun"
+          ],
+          "fix": "Reduce the contact-tip-to-work distance.",
+          "test": "Check the gun-to-workpiece distance.",
+          "fault_injection": null
+        },
+        {
+          "cause": "Incorrect polarity.",
+          "components": [
+            "Ground Clamp"
+          ],
+          "fix": "Set the polarity: DCEP for MIG, DCEN for flux-cored.",
+          "test": "Check polarity: DCEP for MIG, DCEN for flux-cored.",
+          "fault_injection": null
+        },
+        {
+          "cause": "Dirty wire.",
+          "components": [
+            "Welding Wire"
+          ],
+          "fix": "Clean or replace the wire; check for rust or residues.",
+          "test": "Inspect the wire for rust or residues.",
+          "fault_injection": null
+        }
+      ],
+      "id": "omni-08-porosity",
+      "library_types": [
+        "wire_feeder"
+      ],
+      "rank": 8,
+      "symptom": "Porosity in the Weld Metal",
+      "table_page": 43,
+      "tier1_pages": [
+        43,
+        41
+      ]
+    },
+    {
+      "causes": [
+        {
+          "cause": "Incorrect line voltage.",
+          "components": [],
+          "fix": "Check the line voltage and, if insufficient, have a licensed electrician remedy the situation.",
+          "test": "Measure the line voltage.",
+          "fault_injection": {
+            "instance": "Welder",
+            "parameter": "input_voltage",
+            "value": "low"
+          }
+        },
+        {
+          "cause": "Improper gauge or length of cord.",
+          "components": [
+            "Input Power Cord"
+          ],
+          "fix": "Do not use an extension cord on this Welder. Use only one of the supplied power cords or an identical replacement cord.",
+          "test": "Check the cord is the supplied cord, with no extension cord.",
+          "fault_injection": {
+            "instance": "Input Power Cord",
+            "parameter": "cord_gauge",
+            "value": "wrong_gauge"
+          }
+        },
+        {
+          "cause": "Not enough current.",
+          "components": [],
+          "fix": "Switch the current to the proper setting for metal thickness.",
+          "test": "Check the current setting against the metal thickness.",
+          "fault_injection": null
+        }
+      ],
+      "id": "omni-09-weak-arc",
+      "library_types": [
+        "relay"
+      ],
+      "rank": 9,
+      "symptom": "Weak Arc Strength",
+      "table_page": 42,
+      "tier1_pages": [
+        42,
+        7
+      ]
+    }
+  ],
+  "document": "owner-manual.pdf",
+  "page_count": 48,
+  "product_family": "OMNIPRO",
+  "product_manufacturer": "Harbor Freight",
+  "product_model": "220",
+  "source": "omni-top-repair-cases-v1.md (12 Nov 2026); each case is one row of the manual's own troubleshooting tables (p42/p43) -- no case invented.",
+  "tier1_pages": [
+    7,
+    12,
+    13,
+    17,
+    41,
+    42,
+    43
+  ],
+  "tier3_note": "Welding-technique / weld-appearance pages (pp35-40) are skill guidance, not repair cases; skipped in v1. TIG/Stick (p44) is Tier 2 for v1.",
+  "tier3_pages": [
+    35,
+    36,
+    37,
+    38,
+    39,
+    40
+  ],
+  "tier2_default": true
+}
